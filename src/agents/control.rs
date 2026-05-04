@@ -106,27 +106,8 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
             while let Ok(ev) = rx.recv().await {
                 match ev {
                     AgentEvent::BrainOutcomeReady(brain) => {
-                        // Only send Telegram notification for GO and WAIT signals
-                        // (skip NO-GO — not actionable)
-                        if !matches!(brain.decision.decision, crate::llm::engine::Decision::NoGo) {
-                            let tg_signal = build_signal_notification(&brain);
-                            let tg_client = Client::builder()
-                                .timeout(std::time::Duration::from_secs(5))
-                                .build()
-                                .unwrap_or_default();
-                            let tg_token = tg_token_sub.clone();
-                            let tg_chat = tg_chat_sub.clone();
-                            let sig_group = sig_group_sub.clone();
-                            let sig_topic = sig_topic_sub;
-                            tokio::spawn(async move {
-                                // Send to DM (owner)
-                                send_telegram_html(&tg_client, &tg_token, &tg_chat, &tg_signal).await;
-                                // Also send to group topic if configured
-                                if let (Some(gid), Some(tid)) = (sig_group, sig_topic) {
-                                    send_telegram_html_to_topic(&tg_client, &tg_token, &gid, tid, &tg_signal).await;
-                                }
-                            });
-                        }
+                        // Signal notification is handled by monitor.rs (inline, ordered).
+                        // Do NOT send here — fire-and-forget causes race with position notif.
 
                         let mut st = ctrl_state.lock();
                         // Deduplicate: keep only latest per symbol

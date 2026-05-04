@@ -30,15 +30,14 @@ pub struct RegimeDetector;
 
 impl RegimeDetector {
     /// Derive the regime from the latest indicator snapshot.
+    /// Uses available indicators to make best guess even on cold start.
     pub fn detect(state: &SymbolState) -> Regime {
-        let adx = match state.last_adx {
-            Some(a) => a,
-            None => return Regime::Unknown,
-        };
         let chop = state.last_choppiness.unwrap_or(50.0);
         let bb = state.last_bb;
         let kupper = state.last_keltner_upper;
         let klower = state.last_keltner_lower;
+        let plus = state.last_di_plus.unwrap_or(0.0);
+        let minus = state.last_di_minus.unwrap_or(0.0);
 
         // Squeeze: BB inside Keltner
         if let (Some(bb), Some(u), Some(l)) = (bb, kupper, klower) {
@@ -47,24 +46,61 @@ impl RegimeDetector {
             }
         }
 
-        if adx >= 40.0 {
-            return Regime::Volatile;
+        // If ADX available, use it for precise classification
+        if let Some(adx) = state.last_adx {
+            if adx >= 40.0 {
+                return Regime::Volatile;
+            }
+            if adx >= 25.0 && chop < 38.2 {
+                if plus >= minus {
+                    return Regime::TrendingBullish;
+                }
+                return Regime::TrendingBearish;
+            }
+            if adx < 20.0 || chop > 61.8 {
+                return Regime::Ranging;
+            }
         }
 
-        if adx >= 25.0 && chop < 38.2 {
-            // Lean on DI+/DI- to decide bull vs bear.
-            let plus = state.last_di_plus.unwrap_or(0.0);
-            let minus = state.last_di_minus.unwrap_or(0.0);
+        // Fallback: use DI+/DI- and choppiness when ADX not available (cold start)
+        if plus > 0.0 || minus > 0.0 {
+            let di_sum = plus + minus;
+            if di_sum > 30.0 {
+                // Strong directional signal
+                if chop < 45.0 {
+                    if plus >= minus {
+                        return Regime::TrendingBullish;
+                    }
+                    return Regime::TrendingBearish;
+                }
+            }
+        }
+
+        // BB width as volatility proxy
+        if let Some(bb) = bb {
+            let bb_width = if bb.upper > 0.0 {
+                (bb.upper - bb.lower) / bb.upper * 100.0
+            } else {
+                0.0
+            };
+            if bb_width > 3.0 {
+                return Regime::Volatile;
+            }
+        }
+
+        // Choppiness-only fallback
+        if chop > 61.8 {
+            return Regime::Ranging;
+        }
+        if chop < 38.2 {
+            // Likely trending but can't determine direction
             if plus >= minus {
                 return Regime::TrendingBullish;
             }
             return Regime::TrendingBearish;
         }
 
-        if adx < 20.0 || chop > 61.8 {
-            return Regime::Ranging;
-        }
-
-        Regime::Unknown
+        // Last resort: classify as Ranging instead of Unknown
+        Regime::Ranging
     }
 }

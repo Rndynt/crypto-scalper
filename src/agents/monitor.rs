@@ -685,6 +685,40 @@ fn build_open_notification(
 ) -> String {
     let side_emoji = if side_label == "BUY" { "🟢" } else { "🔴" };
 
+    // Partial TP levels
+    let partial_tp_section = if let Some(b) = brain {
+        let entry = entry_price;
+        let sl_raw = b.signal.stop_loss;
+        let tp_raw = b.signal.take_profit;
+        if entry > 0.0 && sl_raw > 0.0 && tp_raw > 0.0 {
+            let risk_dist = (sl_raw - entry).abs();
+            let is_long = b.signal.side == crate::data::Side::Long;
+            // Partial TP at 1R (50% close)
+            let partial_tp_price = if is_long {
+                entry + risk_dist
+            } else {
+                entry - risk_dist
+            };
+            // Breakeven SL (move SL to entry after partial TP)
+            let be_sl = entry;
+            format!(
+                "\n📊 <b>TP Plan</b>\n\
+                 ├ 🎯 TP₁ (50%): <code>{tp1:.4}</code> @ 1R\n\
+                 ├ 🛡 SL → Breakeven: <code>{be:.4}</code>\n\
+                 ├ 🎯 TP₂ (50%): <code>{tp2:.4}</code>\n\
+                 └ 📐 Risk: <code>{risk:.4}$</code>\n",
+                tp1 = partial_tp_price,
+                be = be_sl,
+                tp2 = tp_raw,
+                risk = risk_dist * size,
+            )
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     // Risk:Reward ratio
     let rr_line = if let Some(b) = brain {
         let rr = b.signal.rr();
@@ -764,6 +798,7 @@ fn build_open_notification(
          🎯 TP: <code>{tp}</code>\n\
          💼 Size: <code>{size:.4}</code> {sym_short}\n\
          {rr_line}\
+         {partial_tp_section}\
          {ai_section}\
          {context_section}\
          {risk_section}\
@@ -778,6 +813,7 @@ fn build_open_notification(
         size = size,
         sym_short = sym_short,
         rr_line = rr_line,
+        partial_tp_section = partial_tp_section,
         ai_section = ai_section,
         context_section = context_section,
         risk_section = risk_section,
