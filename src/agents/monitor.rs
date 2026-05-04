@@ -917,9 +917,10 @@ fn log_open_trade(
         llm_latency_ms: Some(brain.latency_ms),
         fear_greed: None,
         social_sentiment: None,
-        funding_rate: None,
         news_score: None,
+        funding_rate: None,
         top_news_titles: None,
+        user_id: 7773988648,
     };
     journal.insert_trade(&record)?;
     Ok(())

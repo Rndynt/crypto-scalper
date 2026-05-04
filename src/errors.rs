@@ -19,6 +19,9 @@ pub enum ScalperError {
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
 
+    #[error("postgres error: {0}")]
+    Postgres(String),
+
     #[error("exchange error: {0}")]
     Exchange(String),
 

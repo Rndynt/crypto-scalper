@@ -2,6 +2,8 @@
 //! trade journal and broadcasts the refresh event.
 //!
 //! Also feeds closed trade PnL into the QuantEngine for Kelly sizing.
+//! Persists learning state snapshots to `data/learning_state.json` for
+//! fast startup after rebuilds.
 
 use crate::agents::messages::{AgentEvent, AgentId};
 use crate::agents::MessageBus;
@@ -9,7 +11,7 @@ use crate::learning::{
     lessons::{LessonConfig, LessonExtractor},
     LearningPolicy, PerformanceMemory,
 };
-use crate::monitoring::TradeJournal;
+use crate::monitoring::{logger::LearningStateSnapshot, TradeJournal};
 use crate::quant::QuantEngine;
 use chrono::Utc;
 use std::sync::Arc;
@@ -27,6 +29,18 @@ pub fn spawn(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!(refresh_secs, "learning agent starting");
+
+        // Try to load persisted learning state for fast startup.
+        let saved = LearningStateSnapshot::load();
+        if saved.overall_trades > 0 {
+            info!(
+                trades = saved.overall_trades,
+                wins = saved.overall_wins,
+                lessons = saved.lessons_count,
+                "loaded persisted learning state"
+            );
+        }
+
         let extractor = LessonExtractor::new(cfg);
         let mut tick = tokio::time::interval(Duration::from_secs(refresh_secs.max(60)));
         // Independent heartbeat task — learning's own refresh interval
@@ -80,17 +94,35 @@ pub fn spawn(
 
                     let mem = PerformanceMemory::build(&trades);
                     let lessons = extractor.extract(&mem);
+                    let trades_count = mem.overall.trades;
+                    let wins = mem.overall.wins;
+                    let losses = mem.overall.losses;
+                    let net_pnl = mem.overall.net_pnl_usd;
+                    let lessons_count = lessons.len();
+
                     info!(
-                        trades = trades.len(),
-                        lessons = lessons.len(),
+                        trades = trades_count,
+                        lessons = lessons_count,
                         "learning agent: policy refreshed"
                     );
-                    let count = lessons.len();
                     policy.update(mem, lessons);
                     bus.publish(AgentEvent::PolicyRefreshed {
-                        lessons_count: count,
+                        lessons_count,
                         ts: Utc::now(),
                     });
+
+                    // Persist learning state to JSON for survival across rebuilds.
+                    let snapshot = LearningStateSnapshot {
+                        lessons_count,
+                        last_refresh_ts: Some(Utc::now().to_rfc3339()),
+                        overall_trades: trades_count,
+                        overall_wins: wins,
+                        overall_losses: losses,
+                        overall_net_pnl: net_pnl,
+                    };
+                    if let Err(e) = snapshot.save() {
+                        warn!(error = %e, "failed to persist learning state");
+                    }
                 }
                 Err(e) => {
                     warn!(error = %e, "learning agent: failed to read journal");
