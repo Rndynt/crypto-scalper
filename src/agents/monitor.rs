@@ -37,11 +37,15 @@ struct StatusCounters {
     manager_vetoes: u64,
     orders_filled: u64,
     trades_total: u64,
+    wins: u64,
+    losses: u64,
+    daily_pnl: f64,
     last_signal: Option<SignalSnapshot>,
     last_signal_eval: Option<SignalEvalSnapshot>,
     last_block: Option<DecisionSnapshot>,
     last_brain: Option<DecisionSnapshot>,
     last_manager: Option<DecisionSnapshot>,
+    open_times: HashMap<String, DateTime<Utc>>,
 }
 
 #[derive(Clone)]
@@ -152,6 +156,22 @@ fn fmt_signal_eval(s: &Option<SignalEvalSnapshot>) -> String {
         ),
         None => "-".to_string(),
     }
+}
+
+/// Truncate a string to `max_len` chars, appending "…" if truncated.
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len.saturating_sub(1)])
+    }
+}
+
+/// Escape HTML special chars for Telegram parse_mode=HTML.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub fn spawn(
@@ -344,23 +364,28 @@ pub fn spawn(
                         .lock()
                         .insert(brain.signal.symbol.clone(), brain.clone());
                     record_brain(&metrics, &brain);
-                    let mut c = counters.lock();
-                    c.brain_calls += 1;
-                    match brain.decision.decision {
-                        Decision::Go => c.brain_go += 1,
-                        Decision::NoGo => c.brain_nogo += 1,
-                        Decision::Wait => c.brain_wait += 1,
-                    }
-                    c.last_brain = Some(DecisionSnapshot {
-                        symbol: brain.signal.symbol.clone(),
-                        stage: "brain",
-                        reason: format!(
-                            "{:?}/{}: {}",
-                            brain.decision.decision,
-                            brain.decision.confidence,
-                            brain.decision.reasoning.summary
-                        ),
-                    });
+                    {
+                        let mut c = counters.lock();
+                        c.brain_calls += 1;
+                        match brain.decision.decision {
+                            Decision::Go => c.brain_go += 1,
+                            Decision::NoGo => c.brain_nogo += 1,
+                            Decision::Wait => c.brain_wait += 1,
+                        }
+                        c.last_brain = Some(DecisionSnapshot {
+                            symbol: brain.signal.symbol.clone(),
+                            stage: "brain",
+                            reason: format!(
+                                "{:?}/{}: {}",
+                                brain.decision.decision,
+                                brain.decision.confidence,
+                                brain.decision.reasoning.summary
+                            ),
+                        });
+                    } // guard dropped here, before .await
+
+                    // ─── Signal Notification ───────────────────────────────
+                    send_signal_notification(&telegram, &brain).await;
                 }
                 AgentEvent::ManagerVerdictEmitted(v) => {
                     {
@@ -444,6 +469,7 @@ pub fn spawn(
                         let mut c = counters.lock();
                         c.orders_filled += 1;
                         c.trades_total += 1;
+                        c.open_times.insert(client_id.clone(), Utc::now());
                         c.trades_total
                     };
 
@@ -483,24 +509,18 @@ pub fn spawn(
                         "—".to_string()
                     };
 
-                    let msg = format!(
-                        "🟢 <b>POSISI DIBUKA</b>\n\
-                         ──────────\n\
-                         📊 {} #{} · {}\n\
-                         📍 Entry: <code>{:.4}</code>\n\
-                         🛡 SL: <code>{}</code>\n\
-                         🎯 TP: <code>{}</code>\n\
-                         💼 Size: <code>{:.4}</code> {}\n\
-                         🔧 Strategi: {}",
+                    // ─── Enhanced open notification ────────────────────────
+                    let msg = build_open_notification(
                         side_label,
                         trade_no,
-                        short_sym(&symbol),
+                        &symbol,
                         ack.avg_fill_price,
-                        sl_line,
-                        tp_line,
+                        &sl_line,
+                        &tp_line,
                         size,
-                        short_sym(&symbol),
-                        strategy,
+                        &short_sym(&symbol),
+                        &strategy,
+                        brain.as_ref(),
                     );
                     let _ = telegram.send(&msg).await;
                 }
@@ -535,19 +555,37 @@ pub fn spawn(
                         m.trades_today += 1;
                     });
 
-                    let trade_no = { counters.lock().trades_total };
+                    // Update counters with win/loss tracking
+                    let (trade_no, win_rate, daily_pnl, total_wins, total_losses, open_time) = {
+                        let mut c = counters.lock();
+                        c.daily_pnl += pnl_usd;
+                        if pnl_usd >= 0.0 {
+                            c.wins += 1;
+                        } else {
+                            c.losses += 1;
+                        }
+                        let total = c.wins + c.losses;
+                        let wr = if total > 0 {
+                            c.wins as f64 / total as f64 * 100.0
+                        } else {
+                            0.0
+                        };
+                        let ot = c.open_times.remove(&client_id);
+                        (c.trades_total, wr, c.daily_pnl, c.wins, c.losses, ot)
+                    };
+
                     let side_label = if side == crate::data::Side::Long {
                         "BUY"
                     } else {
                         "SELL"
                     };
-                    let is_win = pnl_usd > 0.0;
+                    let is_win = pnl_usd >= 0.0;
 
                     let header = match reason {
                         crate::execution::PositionExitReason::TakeProfit => {
-                            "✅ <b>TAKE PROFIT HIT!</b>"
+                            "🎯 <b>TAKE PROFIT HIT!</b>"
                         }
-                        crate::execution::PositionExitReason::StopLoss => "❌ <b>STOP LOSS HIT</b>",
+                        crate::execution::PositionExitReason::StopLoss => "🛑 <b>STOP LOSS HIT</b>",
                         crate::execution::PositionExitReason::Trailing => "🔄 <b>TRAILING STOP</b>",
                         crate::execution::PositionExitReason::TimeExit => "⏰ <b>TIME EXIT</b>",
                         crate::execution::PositionExitReason::Manual => "🔧 <b>MANUAL CLOSE</b>",
@@ -558,36 +596,63 @@ pub fn spawn(
                             "🎯 <b>PARTIAL TAKE PROFIT</b>"
                         }
                     };
-                    let result_line = if is_win {
-                        "🏆 Result: <b>WIN</b>"
-                    } else {
-                        "📉 Result: <b>LOSS</b>"
-                    };
+                    let result_emoji = if is_win { "🏆" } else { "💔" };
+                    let result_text = if is_win { "WIN" } else { "LOSS" };
                     let pnl_sign = if pnl_usd >= 0.0 { "+" } else { "" };
+                    let pnl_emoji = if is_win { "📈" } else { "📉" };
+
+                    // Duration
+                    let duration_str = if let Some(opened) = open_time {
+                        let dur = Utc::now() - opened;
+                        let mins = dur.num_minutes();
+                        if mins >= 60 {
+                            format!("{}h {}m", mins / 60, mins % 60)
+                        } else {
+                            format!("{}m", mins)
+                        }
+                    } else {
+                        "—".to_string()
+                    };
+
+                    let daily_pnl_sign = if daily_pnl >= 0.0 { "+" } else { "" };
 
                     let msg = format!(
-                        "{}\n\
+                        "{header}\n\
                          ──────────\n\
-                         📊 {} #{} · {}\n\
-                         📍 Entry: <code>{:.4}</code>\n\
-                         🏁 Exit:  <code>{:.4}</code>\n\
-                         💼 Size:  <code>{:.4}</code> {}\n\
-                         💰 PnL:   <code>{}{:.2}$</code> ({}{:.4}%)\n\
-                         {}\n\
+                         📊 <b>{side_label}</b> #{trade_no} · <code>{sym}</code>\n\
+                         📍 Entry: <code>{entry:.4}</code>\n\
+                         🏁 Exit:  <code>{exit:.4}</code>\n\
+                         💼 Size:  <code>{size:.4}</code> {sym_short}\n\
+                         {pnl_emoji} PnL:   <code>{pnl_sign}{pnl:.2}$</code> ({pnl_sign}{pnl_pct_val:.4}%)\n\
+                         ⏱ Duration: <code>{duration}</code>\n\
+                         {result_emoji} Result: <b>{result_text}</b>\n\
+                         ──────────\n\
+                         📊 <b>Session Stats</b>\n\
+                         ├ Daily PnL: <code>{daily_sign}{daily:.2}$</code>\n\
+                         ├ Win Rate: <code>{wr:.1}%</code> ({wins}W/{losses}L)\n\
+                         └ Total Trades: {total}\n\
                          🤖 ARIA v1.0",
-                        header,
-                        side_label,
-                        trade_no,
-                        short_sym(&symbol),
-                        entry_price,
-                        exit_price,
-                        size,
-                        short_sym(&symbol),
-                        pnl_sign,
-                        pnl_usd,
-                        pnl_sign,
-                        pnl_pct.abs(),
-                        result_line,
+                        header = header,
+                        side_label = side_label,
+                        trade_no = trade_no,
+                        sym = short_sym(&symbol),
+                        entry = entry_price,
+                        exit = exit_price,
+                        size = size,
+                        sym_short = short_sym(&symbol),
+                        pnl_emoji = pnl_emoji,
+                        pnl_sign = pnl_sign,
+                        pnl = pnl_usd,
+                        pnl_pct_val = pnl_pct.abs(),
+                        duration = duration_str,
+                        result_emoji = result_emoji,
+                        result_text = result_text,
+                        daily_sign = daily_pnl_sign,
+                        daily = daily_pnl,
+                        wr = win_rate,
+                        wins = total_wins,
+                        losses = total_losses,
+                        total = trade_no,
                     );
                     let _ = telegram.send(&msg).await;
                 }
@@ -598,6 +663,172 @@ pub fn spawn(
             }
         }
     })
+}
+
+/// Build a rich HTML notification for an opened position.
+#[allow(clippy::too_many_arguments)]
+fn build_open_notification(
+    side_label: &str,
+    trade_no: u64,
+    symbol: &str,
+    entry_price: f64,
+    sl_line: &str,
+    tp_line: &str,
+    size: f64,
+    sym_short: &str,
+    strategy: &str,
+    brain: Option<&BrainOutcome>,
+) -> String {
+    let side_emoji = if side_label == "BUY" { "🟢" } else { "🔴" };
+
+    // Risk:Reward ratio
+    let rr_line = if let Some(b) = brain {
+        let rr = b.signal.rr();
+        if rr > 0.0 {
+            format!("⚖ R:R Ratio: <code>1:{:.1}</code>\n", rr)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    // AI reasoning section
+    let ai_section = if let Some(b) = brain {
+        let decision_emoji = match b.decision.decision {
+            Decision::Go => "✅",
+            Decision::NoGo => "❌",
+            Decision::Wait => "⏳",
+        };
+        let decision_label = match b.decision.decision {
+            Decision::Go => "GO",
+            Decision::NoGo => "NO-GO",
+            Decision::Wait => "WAIT",
+        };
+        let summary = truncate(&b.decision.reasoning.summary, 150);
+        format!(
+            "\n🧠 <b>AI Analysis</b>\n\
+             ├ Decision: {decision_emoji} <b>{decision_label}</b> (confidence: {conf}%)\n\
+             ├ Summary: <i>{summary}</i>\n\
+             ├ TA Score: <code>{ta}</code> · Sentiment: <code>{sent}</code> · Risk: <code>{risk_s}</code>\n\
+             └ Composite: <code>{comp}</code>/100\n",
+            conf = b.decision.confidence,
+            summary = html_escape(&summary),
+            ta = b.decision.market_context_score.ta_score,
+            sent = b.decision.market_context_score.sentiment_score,
+            risk_s = b.decision.market_context_score.risk_score,
+            comp = b.decision.market_context_score.composite_score,
+        )
+    } else {
+        String::new()
+    };
+
+    // Market context section
+    let context_section = if let Some(b) = brain {
+        format!(
+            "\n🌐 <b>Market Context</b>\n\
+             ├ Regime: <code>{regime}</code>\n\
+             └ Strategy: <code>{strategy}</code>\n",
+            regime = b.regime.as_str(),
+            strategy = strategy,
+        )
+    } else {
+        format!(
+            "\n🔧 Strategy: <code>{strategy}</code>\n",
+            strategy = strategy,
+        )
+    };
+
+    // Risk factors
+    let risk_section = if let Some(b) = brain {
+        let risks = truncate(&b.decision.reasoning.risk_factors, 100);
+        if !risks.is_empty() {
+            format!("⚠ <i>Risks: {risks}</i>\n", risks = html_escape(&risks))
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    format!(
+        "{side_emoji} <b>POSITION OPENED</b>\n\
+         ──────────\n\
+         📊 <b>{side_label}</b> #{trade_no} · <code>{sym}</code>\n\
+         📍 Entry: <code>{entry:.4}</code>\n\
+         🛡 SL: <code>{sl}</code>\n\
+         🎯 TP: <code>{tp}</code>\n\
+         💼 Size: <code>{size:.4}</code> {sym_short}\n\
+         {rr_line}\
+         {ai_section}\
+         {context_section}\
+         {risk_section}\
+         🤖 ARIA v1.0",
+        side_emoji = side_emoji,
+        side_label = side_label,
+        trade_no = trade_no,
+        sym = short_sym(symbol),
+        entry = entry_price,
+        sl = sl_line,
+        tp = tp_line,
+        size = size,
+        sym_short = sym_short,
+        rr_line = rr_line,
+        ai_section = ai_section,
+        context_section = context_section,
+        risk_section = risk_section,
+    )
+}
+
+/// Send a signal notification when the brain produces an outcome.
+async fn send_signal_notification(telegram: &TelegramNotifier, brain: &BrainOutcome) {
+    let symbol = &brain.signal.symbol;
+    let side_label = if brain.signal.side == crate::data::Side::Long {
+        "📈 LONG"
+    } else {
+        "📉 SHORT"
+    };
+    let decision_emoji = match brain.decision.decision {
+        Decision::Go => "✅",
+        Decision::NoGo => "🚫",
+        Decision::Wait => "⏳",
+    };
+    let decision_label = match brain.decision.decision {
+        Decision::Go => "<b>APPROVED</b>",
+        Decision::NoGo => "<b>VETOED</b>",
+        Decision::Wait => "<b>WAITING</b>",
+    };
+    let summary = truncate(&brain.decision.reasoning.summary, 120);
+
+    let msg = format!(
+        "🔔 <b>SIGNAL DETECTED</b>\n\
+         ──────────\n\
+         📊 Symbol: <code>{sym}</code>\n\
+         ➡ Direction: {side}\n\
+         🎯 Confidence: <code>{conf}%</code>\n\
+         📋 Strategy: <code>{strat}</code>\n\
+         \n\
+         🤖 <b>AI Assessment:</b> {decision_emoji} {decision_label}\n\
+         💬 <i>{summary}</i>\n\
+         \n\
+         📊 <b>Scores</b>\n\
+         ├ TA: <code>{ta}</code> · Sentiment: <code>{sent}</code>\n\
+         ├ Fundamental: <code>{fund}</code> · Risk: <code>{risk_s}</code>\n\
+         └ Composite: <code>{comp}</code>/100",
+        sym = short_sym(symbol),
+        side = side_label,
+        conf = brain.decision.confidence,
+        strat = brain.signal.strategy.as_str(),
+        decision_emoji = decision_emoji,
+        decision_label = decision_label,
+        summary = html_escape(&summary),
+        ta = brain.decision.market_context_score.ta_score,
+        sent = brain.decision.market_context_score.sentiment_score,
+        fund = brain.decision.market_context_score.fundamental_score,
+        risk_s = brain.decision.market_context_score.risk_score,
+        comp = brain.decision.market_context_score.composite_score,
+    );
+    let _ = telegram.send(&msg).await;
 }
 
 fn record_brain(metrics: &MetricsState, brain: &BrainOutcome) {

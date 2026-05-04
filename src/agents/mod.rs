@@ -23,6 +23,7 @@ pub mod learning;
 pub mod manager;
 pub mod messages;
 pub mod monitor;
+pub mod orchestrator;
 pub mod risk;
 pub mod signal;
 pub mod survival;
@@ -34,3 +35,4 @@ pub use messages::{
     ManagerProposal, ManagerVerdict, RiskOutcome, RiskVerdictMsg, SignalEvaluationMsg,
     SurvivalMode, SurvivalState,
 };
+pub use orchestrator::{OrchestratorConfig, OrchestratorState};

@@ -292,7 +292,8 @@ impl QuantEngine {
 
         // 1. Kelly criterion
         let outcomes = self.trade_outcomes.lock();
-        let kelly = if outcomes.total_trades() >= self.cfg.kelly_min_trades {
+        let outcomes_total = outcomes.total_trades();
+        let kelly = if outcomes_total >= self.cfg.kelly_min_trades {
             let kf = kelly_fraction(
                 outcomes.win_rate(),
                 outcomes.avg_win(),
@@ -330,8 +331,13 @@ impl QuantEngine {
             reasons.push(format!("vol-mult={:.2}", vol_mult));
         }
 
-        // 3. VaR check
-        let var_rejected = self.var_check(symbol, entry, stop_loss, equity);
+        // 3. VaR check — skip during cold-start (no trade history)
+        //    to avoid the bootstrap paradox: can't trade → can't build history.
+        let var_rejected = if outcomes_total >= self.cfg.kelly_min_trades {
+            self.var_check(symbol, entry, stop_loss, equity)
+        } else {
+            false
+        };
         if var_rejected {
             reasons.push("VaR cap exceeded".into());
         }

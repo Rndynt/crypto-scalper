@@ -591,6 +591,17 @@ async fn run_agents(cfg: Config) -> Result<()> {
         initial_equity: cfg.risk.equity_usd,
     });
 
+    // --- Orchestrator Agent (central coordinator) ---
+    let orchestrator_state = Arc::new(PlRwLock::new(
+        crypto_scalper::agents::orchestrator::OrchestratorState::default(),
+    ));
+    let _orchestrator = crypto_scalper::agents::orchestrator::spawn(
+        bus.clone(),
+        crypto_scalper::agents::orchestrator::OrchestratorConfig::default(),
+        Some(policy.clone()),
+        Arc::clone(&orchestrator_state),
+    );
+
     let _control = crypto_scalper::agents::control::spawn(ControlAgentDeps {
         bus: bus.clone(),
         cfg: cfg.control.clone(),
@@ -600,6 +611,8 @@ async fn run_agents(cfg: Config) -> Result<()> {
         book: Arc::clone(&book),
         exchange: exchange.clone(),
         control_file: Some(PathBuf::from("/tmp/aria.control")),
+        metrics: Arc::clone(&metrics),
+        survival_state: Arc::clone(&survival_state),
     });
 
     let _watchdog = crypto_scalper::agents::watchdog::spawn(bus.clone(), WatchdogConfig::default());

@@ -1,50 +1,105 @@
-# Aggressive paper overlay for fast local visibility.
-# Keeps dry_run=true: no real Binance orders are sent with this overlay.
+# AGGRESSIVE HFT overlay — paper mode for testing.
+# Designed for high-frequency scalping with AI-driven decisions.
+# Using Xiaomi MiMo-V2.5-Pro for analysis
 
 [mode]
 run_mode = "paper"
 dry_run = true
 
 [pairs]
+symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 timeframes = ["1m", "5m", "15m"]
 
 [strategy]
-min_ta_confidence = 55
+mode   = "adaptive"
+active = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
+min_ta_confidence = 40
 paper_scout_enabled = true
 
+[advanced_alpha]
+enabled = true
+min_abs_score = 0.15
+reduce_confidence_delta = 3
+feed_max_age_secs = 300
+
 [llm]
-timeout_secs = 20
-min_confidence = 60
-fallback_ta_threshold = 60
-
-[risk]
-risk_per_trade_pct = 0.75
-max_open_positions = 3
-max_daily_loss_pct = 4.0
-max_drawdown_pct = 12.0
-max_spread_pct = 0.08
-min_reward_risk = 1.05
-min_net_edge_bps = 0.0
-max_position_notional_pct = 100.0
-assumed_daily_volume_usd = 1000000000000.0
-equity_usd = 5000.0
-
-[backtest]
-slippage_bps = 0.0
-market_impact_bps = 0.0
+# Xiaomi MiMo — reasoning model needs more tokens
+provider = "openai"
+model    = "mimo-v2-omni"
+api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
+timeout_secs = 60
+min_confidence = 40
+fallback_ta_threshold = 50
+max_tokens = 1024
 
 [manager]
 enabled = true
-timeout_secs = 20
-fast_approve_min_conf = 60
+provider = "openai"
+api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
+model    = "mimo-v2-omni"
+timeout_secs = 45
+max_tokens   = 1024
+fast_approve_min_conf = 55
 fail_open_on_error = true
 
+[risk]
+# Aggressive HFT risk profile — more trades, tighter stops
+risk_per_trade_pct = 1.5
+max_open_positions = 6
+max_daily_loss_pct = 6.0
+max_drawdown_pct   = 18.0
+max_leverage       = 5
+max_spread_pct     = 0.10
+min_reward_risk    = 0.3
+min_net_edge_bps   = 0.0
+max_position_notional_pct = 100.0
+assumed_daily_volume_usd = 1000000000000.0
+equity_usd         = 5000.0
+
+[schedule]
+# 24/7 trading — no dead zone
+dead_zone_start_hour_wib = 0
+dead_zone_end_hour_wib   = 0
+
+[backtest]
+slippage_bps = 1.0
+market_impact_bps = 0.5
+
 [survival]
-loss_streak_short = 3
-loss_streak_short_cooldown_min = 30
-loss_streak_long = 5
-loss_streak_long_window_min = 60
-loss_streak_long_cooldown_min = 180
-daily_loss_count = 8
-auto_flat_drawdown_pct = 8.0
-daily_pnl_ratchet_pct = 2.0
+# More forgiving for HFT — allow more losses before freezing
+enabled                            = true
+death_line_pct                     = 0.60
+loss_streak_short                  = 12
+loss_streak_short_cooldown_min     = 15
+loss_streak_long                   = 12
+loss_streak_long_window_min        = 60
+loss_streak_long_cooldown_min      = 120
+daily_loss_count                   = 20
+auto_flat_drawdown_pct             = 15.0
+refresh_secs                       = 10
+equity_refresh_secs                = 30
+vol_spike_mult                     = 2.5
+news_panic_threshold               = -0.8
+news_euphoria_threshold            = 0.9
+daily_pnl_ratchet_pct              = 5.0
+
+[control]
+telegram_commands_enabled = true
+allowed_user_ids          = [7773988648]
+poll_secs                 = 3
+
+[quant]
+enabled                = true
+kelly_cap              = 0.40
+kelly_min_trades       = 10
+target_vol_annual      = 0.30
+max_vol_multiplier     = 3.0
+vol_window             = 30
+var_confidence         = 0.95
+max_var_pct            = 0.05
+ic_window              = 30
+ic_min_abs             = 0.03
+ic_max_boost           = 15
+kalman_process_noise   = 0.005
+kalman_measurement_noise = 0.5
+kalman_min_velocity_bps = 2.0

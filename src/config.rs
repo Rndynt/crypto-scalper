@@ -579,29 +579,47 @@ impl Config {
                 self.manager.api_base = v;
             }
         }
-        // LLM key — checked in priority order. The first non-empty match wins,
-        // so a user can have multiple keys exported simultaneously and the
-        // active provider just picks its own.
-        let llm_env_var = match self.llm.provider.to_ascii_lowercase().as_str() {
-            "anthropic" | "claude" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            "together" => "TOGETHER_API_KEY",
-            "groq" => "GROQ_API_KEY",
-            // openrouter, custom, etc.
-            _ => "OPENROUTER_API_KEY",
+        // LLM key — fully dynamic loading. Priority:
+        // 1. Provider-specific key (e.g., OPENAI_API_KEY for "openai" provider)
+        // 2. Generic LLM_API_KEY (works for ANY provider)
+        // 3. Any available key from known providers
+        let provider_lower = self.llm.provider.to_ascii_lowercase();
+        let provider_env_var = match provider_lower.as_str() {
+            "anthropic" | "claude" => Some("ANTHROPIC_API_KEY"),
+            "openai" => Some("OPENAI_API_KEY"),
+            "together" => Some("TOGETHER_API_KEY"),
+            "groq" => Some("GROQ_API_KEY"),
+            "openrouter" => Some("OPENROUTER_API_KEY"),
+            // Any custom provider (xiaomi, deepseek, etc.) — no provider-specific key
+            _ => None,
         };
-        if let Ok(v) = std::env::var(llm_env_var) {
-            if !v.is_empty() {
-                self.llm.api_key = v;
+
+        // Try provider-specific key first
+        if let Some(var_name) = provider_env_var {
+            if let Ok(v) = std::env::var(var_name) {
+                if !v.is_empty() {
+                    self.llm.api_key = v;
+                }
             }
         }
-        // Fallbacks for users who export a generic LLM key.
+
+        // Try generic LLM_API_KEY (works for ANY provider)
+        if self.llm.api_key.is_empty() {
+            if let Ok(v) = std::env::var("LLM_API_KEY") {
+                if !v.is_empty() {
+                    self.llm.api_key = v;
+                }
+            }
+        }
+
+        // Try all known provider keys as fallback
         if self.llm.api_key.is_empty() {
             for k in [
+                "OPENAI_API_KEY",
                 "OPENROUTER_API_KEY",
                 "ANTHROPIC_API_KEY",
-                "OPENAI_API_KEY",
-                "LLM_API_KEY",
+                "TOGETHER_API_KEY",
+                "GROQ_API_KEY",
             ] {
                 if let Ok(v) = std::env::var(k) {
                     if !v.is_empty() {

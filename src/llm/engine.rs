@@ -211,13 +211,27 @@ impl LlmEngine {
 
         let resp: serde_json::Value = req.send().await?.json().await?;
 
-        let text = resp
+        // Some reasoning models (MiMo, DeepSeek-R1) put the response in
+        // "reasoning_content" instead of "content". Check both.
+        let message = resp
             .get("choices")
             .and_then(|c| c.get(0))
-            .and_then(|c| c.get("message"))
+            .and_then(|c| c.get("message"));
+
+        let text = message
             .and_then(|m| m.get("content"))
             .and_then(|t| t.as_str())
-            .ok_or_else(|| ScalperError::Llm(format!("empty response: {resp}")))?;
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                message
+                    .and_then(|m| m.get("reasoning_content"))
+                    .and_then(|t| t.as_str())
+            })
+            .unwrap_or("");
+
+        if text.is_empty() {
+            return Err(ScalperError::Llm(format!("empty response: {resp}")));
+        }
 
         info!(llm_raw = %text, "LLM response");
         parse_trade_decision(text)

@@ -24,7 +24,7 @@ use crate::execution::RiskManager;
 use crate::learning::LearningPolicy;
 use crate::quant::{QuantEngine, QuantSizingInput};
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -76,6 +76,8 @@ pub fn spawn(
     let survival: Arc<Mutex<Option<SurvivalState>>> = Arc::new(Mutex::new(None));
     let funding: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     let spreads: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
+    // Track symbols with open positions to prevent duplicate entries.
+    let open_symbols: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     tokio::spawn(async move {
         info!("risk agent starting");
@@ -84,6 +86,14 @@ pub fn spawn(
                 AgentEvent::Shutdown => break,
                 AgentEvent::SurvivalUpdated(s) => {
                     *survival.lock() = Some(s);
+                    continue;
+                }
+                AgentEvent::OrderFilled { symbol, .. } => {
+                    open_symbols.lock().insert(symbol);
+                    continue;
+                }
+                AgentEvent::PositionClosed { symbol, .. } => {
+                    open_symbols.lock().remove(&symbol);
                     continue;
                 }
                 AgentEvent::FeedsSnapshot(FeedsSnapshotMsg {
@@ -110,6 +120,23 @@ pub fn spawn(
                     continue;
                 }
                 AgentEvent::PreSignalEmitted { signal, regime } => {
+                    // Block if symbol already has an open position.
+                    if open_symbols.lock().contains(&signal.symbol) {
+                        warn!(symbol = %signal.symbol, "risk blocked: duplicate position");
+                        bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
+                            signal: signal.clone(),
+                            regime,
+                            outcome: RiskOutcome::Blocked,
+                            size: 0.0,
+                            size_multiplier: 1.0,
+                            effective_ta_threshold: 0,
+                            effective_llm_floor: 0,
+                            matched_lessons: Vec::new(),
+                            reason: Some(format!("position already open for {}", signal.symbol)),
+                        }));
+                        continue;
+                    }
+
                     // Survival hard-gate: refuse outright when frozen or dead.
                     let surv = survival.lock().clone();
                     if let Some(s) = &surv {
@@ -234,9 +261,52 @@ pub fn spawn(
                         continue;
                     }
 
+                    // Scalping SL/TP cap — tight ranges for 3-15min holds
+                    // SL: max 0.5%, TP: max 1% (R:R ~1:2)
+                    let max_sl_pct = 0.005; // 0.5%
+                    let max_tp_pct = 0.01;  // 1%
+                    let sl_dist = (signal.entry - signal.stop_loss).abs() / signal.entry;
+                    let tp_dist = (signal.entry - signal.take_profit).abs() / signal.entry;
+
+                    let (effective_entry, effective_sl, effective_tp) = {
+                        let capped_sl = if sl_dist > max_sl_pct && signal.entry > 0.0 {
+                            if signal.side == Side::Long {
+                                signal.entry * (1.0 - max_sl_pct)
+                            } else {
+                                signal.entry * (1.0 + max_sl_pct)
+                            }
+                        } else {
+                            signal.stop_loss
+                        };
+
+                        let capped_tp = if tp_dist > max_tp_pct && signal.entry > 0.0 {
+                            if signal.side == Side::Long {
+                                signal.entry * (1.0 + max_tp_pct)
+                            } else {
+                                signal.entry * (1.0 - max_tp_pct)
+                            }
+                        } else {
+                            signal.take_profit
+                        };
+
+                        if sl_dist > max_sl_pct || tp_dist > max_tp_pct {
+                            warn!(
+                                symbol = %signal.symbol,
+                                original_sl = %signal.stop_loss,
+                                capped_sl = %capped_sl,
+                                original_tp = %signal.take_profit,
+                                capped_tp = %capped_tp,
+                                "SL/TP capped for scalping: SL {:.2}%->0.5% TP {:.2}%->1%",
+                                sl_dist * 100.0, tp_dist * 100.0
+                            );
+                        }
+
+                        (signal.entry, capped_sl, capped_tp)
+                    };
+
                     // RiskManager.calculate_size already multiplies by
                     // the SurvivalAgent-controlled size_multiplier.
-                    let base_size = risk.calculate_size(signal.entry, signal.stop_loss);
+                    let base_size = risk.calculate_size(effective_entry, effective_sl);
 
                     // Apply quant engine sizing (Kelly, vol-target, VaR, Kalman)
                     let (size, _quant_reason) = if let Some(ref qe) = quant_engine {
@@ -244,8 +314,8 @@ pub fn spawn(
                             symbol: &signal.symbol,
                             strategy: signal.strategy.as_str(),
                             side: signal.side,
-                            entry: signal.entry,
-                            stop_loss: signal.stop_loss,
+                            entry: effective_entry,
+                            stop_loss: effective_sl,
                             equity: risk.equity(),
                             base_risk_pct: cfg.base_risk_pct,
                         });
@@ -283,8 +353,14 @@ pub fn spawn(
                         }));
                         continue;
                     }
+
+                    // Update signal with capped SL/TP for downstream (brain, execution)
+                    let mut capped_signal = signal.clone();
+                    capped_signal.stop_loss = effective_sl;
+                    capped_signal.take_profit = effective_tp;
+
                     bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
-                        signal,
+                        signal: capped_signal,
                         regime,
                         outcome: RiskOutcome::Allowed,
                         size,
