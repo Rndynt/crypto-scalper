@@ -657,6 +657,8 @@ pub fn spawn(
                         total = trade_no,
                     );
                     let _ = telegram.send(&msg).await;
+                    // Also send to group topic
+                    let _ = telegram.send_signal(&msg).await;
                 }
                 AgentEvent::PolicyRefreshed { lessons_count, .. } => {
                     metrics.update(|m| m.active_lessons = lessons_count as u64);

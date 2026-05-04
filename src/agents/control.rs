@@ -267,6 +267,17 @@ async fn telegram_loop(
                         .and_then(|f| f.get("id"))
                         .and_then(|i| i.as_i64())
                         .unwrap_or(0);
+                    // Get originating chat_id (could be DM or group)
+                    let origin_chat_id = msg
+                        .get("chat")
+                        .and_then(|c| c.get("id"))
+                        .and_then(|i| i.as_i64())
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| chat_id.clone());
+                    // Get thread_id if message is in a forum topic
+                    let origin_thread_id = msg
+                        .get("message_thread_id")
+                        .and_then(|t| t.as_i64());
                     let text = msg
                         .get("text")
                         .and_then(|t| t.as_str())
@@ -276,7 +287,7 @@ async fn telegram_loop(
                         send_telegram(
                             &client,
                             &token,
-                            &chat_id,
+                            &origin_chat_id,
                             &format!("⛔ user {from_id} not allowed"),
                         )
                         .await;
@@ -284,7 +295,19 @@ async fn telegram_loop(
                     }
                     let reply = handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state);
                     if !reply.is_empty() {
-                        send_telegram_html(&client, &token, &chat_id, &reply).await;
+                        // Reply to originating chat (DM or group topic)
+                        if let Some(thread_id) = origin_thread_id {
+                            send_telegram_html_to_topic(
+                                &client,
+                                &token,
+                                &origin_chat_id,
+                                thread_id,
+                                &reply,
+                            )
+                            .await;
+                        } else {
+                            send_telegram_html(&client, &token, &origin_chat_id, &reply).await;
+                        }
                     }
                 }
             }

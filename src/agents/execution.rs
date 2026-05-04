@@ -63,8 +63,8 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
         trail_atr_mult: 0.5,       // Trail at 0.5× ATR
         trail_activate_r: 1.0,     // Activate trailing at 1R profit
         breakeven_r: 0.5,          // Move SL to entry at 0.5R profit
-        partial_tp_enabled: false, // Disabled — broker handles TP
-        partial_tp_r: 1.0,
+        partial_tp_enabled: true,  // Take 50% at 1R profit
+        partial_tp_r: 1.0,         // Trigger at 1R profit
     };
 
     tokio::spawn(async move {

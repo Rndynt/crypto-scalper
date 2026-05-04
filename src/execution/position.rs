@@ -213,8 +213,30 @@ impl PositionBook {
 
                     let profit_r = (price - p.entry_price) / r;
 
-                    // Breakeven: move SL to entry after 0.5R profit
-                    if !p.breakeven_activated && profit_r >= cfg.breakeven_r {
+                    // Partial TP: close 50% at 1R profit, move SL to breakeven
+                    if cfg.partial_tp_enabled && !p.partial_taken && profit_r >= cfg.partial_tp_r {
+                        p.partial_taken = true;
+                        let reduce_size = p.size * 0.5;
+                        // Move SL to breakeven after partial
+                        p.stop_loss = p.entry_price;
+                        sl_updates.push((id.clone(), p.entry_price));
+                        out.push((
+                            Position {
+                                size: reduce_size,
+                                ..p.clone()
+                            },
+                            PositionExitReason::PartialTP,
+                        ));
+                        // Reduce remaining size
+                        p.size -= reduce_size;
+                        if p.size <= 0.0 {
+                            to_remove.push(id.clone());
+                            continue;
+                        }
+                    }
+
+                    // Breakeven: move SL to entry after 0.5R profit (if partial not taken)
+                    if !p.breakeven_activated && !p.partial_taken && profit_r >= cfg.breakeven_r {
                         p.breakeven_activated = true;
                         p.stop_loss = p.entry_price;
                         sl_updates.push((id.clone(), p.entry_price));
@@ -258,7 +280,27 @@ impl PositionBook {
 
                     let profit_r = (p.entry_price - price) / r;
 
-                    if !p.breakeven_activated && profit_r >= cfg.breakeven_r {
+                    // Partial TP: close 50% at 1R profit, move SL to breakeven
+                    if cfg.partial_tp_enabled && !p.partial_taken && profit_r >= cfg.partial_tp_r {
+                        p.partial_taken = true;
+                        let reduce_size = p.size * 0.5;
+                        p.stop_loss = p.entry_price;
+                        sl_updates.push((id.clone(), p.entry_price));
+                        out.push((
+                            Position {
+                                size: reduce_size,
+                                ..p.clone()
+                            },
+                            PositionExitReason::PartialTP,
+                        ));
+                        p.size -= reduce_size;
+                        if p.size <= 0.0 {
+                            to_remove.push(id.clone());
+                            continue;
+                        }
+                    }
+
+                    if !p.breakeven_activated && !p.partial_taken && profit_r >= cfg.breakeven_r {
                         p.breakeven_activated = true;
                         p.stop_loss = p.entry_price;
                         sl_updates.push((id.clone(), p.entry_price));
