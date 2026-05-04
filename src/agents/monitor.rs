@@ -384,8 +384,10 @@ pub fn spawn(
                         });
                     } // guard dropped here, before .await
 
-                    // ─── Signal Notification ───────────────────────────────
-                    send_signal_notification(&telegram, &brain).await;
+                    // ─── Signal Notification (only GO/WAIT to group) ───────
+                    if !matches!(brain.decision.decision, Decision::NoGo) {
+                        send_signal_notification(&telegram, &brain).await;
+                    }
                 }
                 AgentEvent::ManagerVerdictEmitted(v) => {
                     {
@@ -828,7 +830,7 @@ async fn send_signal_notification(telegram: &TelegramNotifier, brain: &BrainOutc
         risk_s = brain.decision.market_context_score.risk_score,
         comp = brain.decision.market_context_score.composite_score,
     );
-    let _ = telegram.send(&msg).await;
+    let _ = telegram.send_signal(&msg).await;
 }
 
 fn record_brain(metrics: &MetricsState, brain: &BrainOutcome) {

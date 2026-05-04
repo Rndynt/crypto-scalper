@@ -39,6 +39,9 @@ pub struct ControlAgentDeps {
     pub cfg: ControlCfg,
     pub telegram_token: String,
     pub telegram_chat_id: String,
+    /// Optional group+topic for signal notifications.
+    pub telegram_signal_group_id: String,
+    pub telegram_signal_topic_id: Option<i64>,
     pub risk: Arc<RiskManager>,
     pub book: Arc<PositionBook>,
     pub exchange: Arc<dyn Exchange>,
@@ -66,6 +69,8 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         cfg,
         telegram_token,
         telegram_chat_id,
+        telegram_signal_group_id,
+        telegram_signal_topic_id,
         risk,
         book,
         exchange: _exchange,
@@ -90,6 +95,12 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let survival_state = survival_state.clone();
         let tg_token_sub = telegram_token.clone();
         let tg_chat_sub = telegram_chat_id.clone();
+        let sig_group_sub: Option<String> = if telegram_signal_group_id.is_empty() {
+            None
+        } else {
+            Some(telegram_signal_group_id.clone())
+        };
+        let sig_topic_sub: Option<i64> = telegram_signal_topic_id;
         tokio::spawn(async move {
             let mut rx = bus_sub.subscribe();
             while let Ok(ev) = rx.recv().await {
@@ -105,8 +116,15 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
                                 .unwrap_or_default();
                             let tg_token = tg_token_sub.clone();
                             let tg_chat = tg_chat_sub.clone();
+                            let sig_group = sig_group_sub.clone();
+                            let sig_topic = sig_topic_sub;
                             tokio::spawn(async move {
+                                // Send to DM (owner)
                                 send_telegram_html(&tg_client, &tg_token, &tg_chat, &tg_signal).await;
+                                // Also send to group topic if configured
+                                if let (Some(gid), Some(tid)) = (sig_group, sig_topic) {
+                                    send_telegram_html_to_topic(&tg_client, &tg_token, &gid, tid, &tg_signal).await;
+                                }
                             });
                         }
 
@@ -301,6 +319,27 @@ async fn send_telegram_html(client: &Client, token: &str, chat_id: &str, text: &
     });
     if let Err(e) = client.post(&url).json(&body).send().await {
         warn!(error = %e, "telegram send failed");
+    }
+}
+
+/// Send HTML message to a forum topic (message_thread_id).
+async fn send_telegram_html_to_topic(
+    client: &Client,
+    token: &str,
+    group_id: &str,
+    thread_id: i64,
+    text: &str,
+) {
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let body = serde_json::json!({
+        "chat_id": group_id,
+        "message_thread_id": thread_id,
+        "text": text,
+        "disable_web_page_preview": true,
+        "parse_mode": "HTML",
+    });
+    if let Err(e) = client.post(&url).json(&body).send().await {
+        warn!(error = %e, "telegram topic send failed");
     }
 }
 

@@ -241,6 +241,12 @@ pub struct Monitoring {
     pub telegram_bot_token: String,
     #[serde(default)]
     pub telegram_chat_id: String,
+    /// Optional: group chat ID for forum topic posting (format: -100xxxxxxxxxx).
+    #[serde(default)]
+    pub telegram_group_id: String,
+    /// Optional: message_thread_id of the signal topic in the group.
+    #[serde(default)]
+    pub telegram_signal_topic_id: Option<i64>,
     pub log_level: String,
     pub db_path: String,
     pub metrics_bind: String,

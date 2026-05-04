@@ -247,10 +247,31 @@ async fn run_agents(cfg: Config) -> Result<()> {
 
     let book = Arc::new(PositionBook::new());
     let journal = Arc::new(TradeJournal::open(&cfg.monitoring.db_path)?);
+    // Build optional signal topic destination from env or config.
+    let signal_topic = {
+        let group_id = std::env::var("TELEGRAM_GROUP_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| cfg.monitoring.telegram_group_id.clone());
+        let thread_id = std::env::var("TELEGRAM_SIGNAL_TOPIC_ID")
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .or(cfg.monitoring.telegram_signal_topic_id);
+        if !group_id.is_empty() {
+            thread_id.map(|tid| crypto_scalper::monitoring::telegram::TgDestination::Topic {
+                chat_id: group_id,
+                thread_id: tid,
+            })
+        } else {
+            None
+        }
+    };
+
     let telegram = Arc::new(TelegramNotifier::new(
         cfg.monitoring.telegram_bot_token.clone(),
         std::env::var("TELEGRAM_CHAT_ID")
             .unwrap_or_else(|_| cfg.monitoring.telegram_chat_id.clone()),
+        signal_topic,
     ));
 
     let metrics = MetricsState::new(&cfg.mode.run_mode);
@@ -607,6 +628,8 @@ async fn run_agents(cfg: Config) -> Result<()> {
         cfg: cfg.control.clone(),
         telegram_token: cfg.monitoring.telegram_bot_token.clone(),
         telegram_chat_id: cfg.monitoring.telegram_chat_id.clone(),
+        telegram_signal_group_id: cfg.monitoring.telegram_group_id.clone(),
+        telegram_signal_topic_id: cfg.monitoring.telegram_signal_topic_id,
         risk: Arc::clone(&risk),
         book: Arc::clone(&book),
         exchange: exchange.clone(),
