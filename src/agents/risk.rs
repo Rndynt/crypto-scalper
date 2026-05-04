@@ -262,9 +262,10 @@ pub fn spawn(
                     }
 
                     // Scalping SL/TP cap — tight ranges for 3-15min holds
-                    // SL: max 0.5%, TP: max 1% (R:R ~1:2)
-                    let max_sl_pct = 0.005; // 0.5%
-                    let max_tp_pct = 0.01;  // 1%
+                    // SL: max 0.3%, TP: max 0.6% (R:R ~1:2 for high leverage)
+                    // At 100x: 0.3% SL = 30% position loss, 0.6% TP = 60% gain
+                    let max_sl_pct = 0.003; // 0.3%
+                    let max_tp_pct = 0.006; // 0.6%
                     let sl_dist = (signal.entry - signal.stop_loss).abs() / signal.entry;
                     let tp_dist = (signal.entry - signal.take_profit).abs() / signal.entry;
 

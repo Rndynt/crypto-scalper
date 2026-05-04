@@ -1,6 +1,6 @@
-# AGGRESSIVE HFT overlay — paper mode for testing.
+# AGGRESSIVE HFT overlay — 50-100x leverage scalping.
 # Designed for high-frequency scalping with AI-driven decisions.
-# Using Xiaomi MiMo-V2.5-Pro for analysis
+# WARNING: High leverage = high risk. Tight SL/TP mandatory.
 
 [mode]
 run_mode = "paper"
@@ -27,30 +27,30 @@ feed_max_age_secs = 300
 provider = "openai"
 model    = "mimo-v2-omni"
 api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
-timeout_secs = 60
+timeout_secs = 30
 min_confidence = 40
 fallback_ta_threshold = 50
-max_tokens = 1024
+max_tokens = 512
 
 [manager]
 enabled = true
 provider = "openai"
 api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
 model    = "mimo-v2-omni"
-timeout_secs = 45
-max_tokens   = 1024
+timeout_secs = 20
+max_tokens   = 512
 fast_approve_min_conf = 55
 fail_open_on_error = true
 
 [risk]
-# Aggressive HFT risk profile — more trades, tighter stops
-risk_per_trade_pct = 1.5
+# High leverage HFT risk profile — tight stops, small risk per trade
+risk_per_trade_pct = 0.5
 max_open_positions = 6
-max_daily_loss_pct = 6.0
-max_drawdown_pct   = 18.0
-max_leverage       = 5
-max_spread_pct     = 0.10
-min_reward_risk    = 0.3
+max_daily_loss_pct = 4.0
+max_drawdown_pct   = 10.0
+max_leverage       = 100
+max_spread_pct     = 0.08
+min_reward_risk    = 1.5
 min_net_edge_bps   = 0.0
 max_position_notional_pct = 100.0
 assumed_daily_volume_usd = 1000000000000.0
@@ -66,40 +66,40 @@ slippage_bps = 1.0
 market_impact_bps = 0.5
 
 [survival]
-# More forgiving for HFT — allow more losses before freezing
+# Stricter for high leverage — protect capital aggressively
 enabled                            = true
-death_line_pct                     = 0.60
-loss_streak_short                  = 12
-loss_streak_short_cooldown_min     = 15
-loss_streak_long                   = 12
+death_line_pct                     = 0.70
+loss_streak_short                  = 8
+loss_streak_short_cooldown_min     = 30
+loss_streak_long                   = 8
 loss_streak_long_window_min        = 60
 loss_streak_long_cooldown_min      = 120
-daily_loss_count                   = 20
-auto_flat_drawdown_pct             = 15.0
-refresh_secs                       = 10
-equity_refresh_secs                = 30
-vol_spike_mult                     = 2.5
-news_panic_threshold               = -0.8
-news_euphoria_threshold            = 0.9
-daily_pnl_ratchet_pct              = 5.0
+daily_loss_count                   = 12
+auto_flat_drawdown_pct             = 8.0
+refresh_secs                       = 5
+equity_refresh_secs                = 15
+vol_spike_mult                     = 2.0
+news_panic_threshold               = -0.7
+news_euphoria_threshold            = 0.8
+daily_pnl_ratchet_pct              = 3.0
 
 [control]
 telegram_commands_enabled = true
 allowed_user_ids          = [7773988648]
-poll_secs                 = 3
+poll_secs                 = 2
 
 [quant]
 enabled                = true
-kelly_cap              = 0.40
+kelly_cap              = 0.20
 kelly_min_trades       = 10
-target_vol_annual      = 0.30
-max_vol_multiplier     = 3.0
+target_vol_annual      = 0.50
+max_vol_multiplier     = 2.0
 vol_window             = 30
 var_confidence         = 0.95
-max_var_pct            = 0.05
+max_var_pct            = 0.03
 ic_window              = 30
 ic_min_abs             = 0.03
-ic_max_boost           = 15
+ic_max_boost           = 10
 kalman_process_noise   = 0.005
 kalman_measurement_noise = 0.5
 kalman_min_velocity_bps = 2.0

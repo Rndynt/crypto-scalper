@@ -636,6 +636,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         control_file: Some(PathBuf::from("/tmp/aria.control")),
         metrics: Arc::clone(&metrics),
         survival_state: Arc::clone(&survival_state),
+        journal: Some(Arc::clone(&journal)),
     });
 
     let _watchdog = crypto_scalper::agents::watchdog::spawn(bus.clone(), WatchdogConfig::default());

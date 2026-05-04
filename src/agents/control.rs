@@ -19,7 +19,7 @@ use crate::agents::messages::{AgentEvent, BrainOutcome, ControlCommand, Survival
 use crate::agents::MessageBus;
 use crate::config::ControlCfg;
 use crate::execution::{Exchange, PositionBook, RiskManager};
-use crate::monitoring::MetricsState;
+use crate::monitoring::{MetricsState, TradeJournal};
 use chrono::Utc;
 use parking_lot::{Mutex, RwLock};
 use reqwest::Client;
@@ -51,6 +51,8 @@ pub struct ControlAgentDeps {
     pub metrics: Arc<MetricsState>,
     /// Shared survival state (updated by SurvivalAgent events).
     pub survival_state: Arc<RwLock<Option<SurvivalState>>>,
+    /// Trade journal for /history command.
+    pub journal: Option<Arc<TradeJournal>>,
 }
 
 /// State tracked by the control agent from bus events.
@@ -77,6 +79,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         control_file,
         metrics,
         survival_state,
+        journal,
     } = deps;
 
     let allowed: HashSet<i64> = cfg.allowed_user_ids.iter().copied().collect();
@@ -141,6 +144,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let book_t = book.clone();
         let metrics_t = metrics.clone();
         let ctrl_state_t = ctrl_state.clone();
+        let journal_t = journal.clone();
         let token = telegram_token.clone();
         let chat_id = telegram_chat_id.clone();
         let poll_secs = cfg.poll_secs.max(1);
@@ -154,6 +158,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
                 book_t,
                 metrics_t,
                 ctrl_state_t,
+                journal_t,
                 poll_secs,
             )
             .await;
@@ -166,8 +171,9 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let book_s = book.clone();
         let metrics_s = metrics.clone();
         let ctrl_state_s = ctrl_state.clone();
+        let journal_s = journal.clone();
         tokio::spawn(async move {
-            stdin_loop(bus_s, risk_s, book_s, metrics_s, ctrl_state_s).await;
+            stdin_loop(bus_s, risk_s, book_s, metrics_s, ctrl_state_s, journal_s).await;
         });
     }
 
@@ -209,6 +215,7 @@ async fn telegram_loop(
     book: Arc<PositionBook>,
     metrics: Arc<MetricsState>,
     ctrl_state: Arc<Mutex<ControlState>>,
+    journal: Option<Arc<TradeJournal>>,
     poll_secs: u64,
 ) {
     let client = Client::builder()
@@ -274,7 +281,7 @@ async fn telegram_loop(
                         .await;
                         continue;
                     }
-                    let reply = handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state);
+                    let reply = handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state, &journal);
                     if !reply.is_empty() {
                         // Reply to originating chat (DM or group topic)
                         if let Some(thread_id) = origin_thread_id {
@@ -353,13 +360,14 @@ async fn stdin_loop(
     book: Arc<PositionBook>,
     metrics: Arc<MetricsState>,
     ctrl_state: Arc<Mutex<ControlState>>,
+    journal: Option<Arc<TradeJournal>>,
 ) {
     let mut lines = io::BufReader::new(io::stdin()).lines();
     info!("stdin control ready — type `help`, then press Enter");
     loop {
         match lines.next_line().await {
             Ok(Some(line)) => {
-                let reply = handle_command(&line, &bus, &risk, &book, &metrics, &ctrl_state);
+                let reply = handle_command(&line, &bus, &risk, &book, &metrics, &ctrl_state, &journal);
                 if !reply.is_empty() {
                     // Strip HTML tags for terminal output
                     let plain = strip_html(&reply);
@@ -398,6 +406,7 @@ fn handle_command(
     book: &Arc<PositionBook>,
     metrics: &Arc<MetricsState>,
     ctrl_state: &Arc<Mutex<ControlState>>,
+    journal: &Option<Arc<TradeJournal>>,
 ) -> String {
     let cmd = text.trim().to_lowercase();
     match cmd.as_str() {
@@ -415,6 +424,7 @@ fn handle_command(
         "/health" | "health" => cmd_health(bus, risk, metrics),
         "/brain" | "brain" => cmd_brain(ctrl_state),
         "/risk" | "risk" => cmd_risk(risk),
+        "/history" | "history" => cmd_history(journal),
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -434,6 +444,7 @@ fn cmd_help() -> String {
      ├ <code>/performance</code> — Daily/weekly performance stats\n\
      ├ <code>/survival</code> — Survival mode details\n\
      ├ <code>/risk</code> — Current risk metrics & limits\n\
+     ├ <code>/history</code> — Recent trade history (NeonDB)\n\
      └ <code>/health</code> — System health check\n\
      \n\
      🎮 <b>Control</b>\n\
@@ -1007,6 +1018,69 @@ fn cmd_risk(risk: &Arc<RiskManager>) -> String {
             .as_ref()
             .map(|r| format!("\n├ Freeze Reason: <code>{}</code>", html_escape_ctrl(r)))
             .unwrap_or_default(),
+    )
+}
+
+fn cmd_history(journal: &Option<Arc<TradeJournal>>) -> String {
+    let j = match journal {
+        Some(j) => j,
+        None => return "📭 <b>Trade History</b>\n──────────\n⚠ Journal not configured\n🤖 ARIA v1.0".to_string(),
+    };
+
+    let trades = match j.closed_trades(20) {
+        Ok(t) => t,
+        Err(e) => return format!("❌ Error: {e}"),
+    };
+
+    if trades.is_empty() {
+        return "📭 <b>Trade History</b>\n──────────\nNo closed trades yet\n🤖 ARIA v1.0".to_string();
+    }
+
+    let total_trades = trades.len();
+    let wins = trades.iter().filter(|t| t.is_win()).count();
+    let losses = total_trades - wins;
+    let total_pnl: f64 = trades.iter().map(|t| t.pnl_usd).sum();
+    let win_rate = if total_trades > 0 {
+        wins as f64 / total_trades as f64 * 100.0
+    } else {
+        0.0
+    };
+    let pnl_sign = if total_pnl >= 0.0 { "+" } else { "" };
+
+    let mut lines = Vec::new();
+    for t in &trades {
+        let emoji = if t.is_win() { "🟢" } else { "🔴" };
+        let pnl_s = if t.pnl_usd >= 0.0 { "+" } else { "" };
+        let ts = t
+            .entry_time
+            .format("%m/%d %H:%M")
+            .to_string();
+        lines.push(format!(
+            "{emoji} {ts} · {dir} <code>{sym}</code> · {pnl_s}{pnl:.2}$",
+            dir = t.direction,
+            sym = short_sym_ctrl(&t.symbol),
+            pnl_s = pnl_s,
+            pnl = t.pnl_usd,
+        ));
+    }
+
+    format!(
+        "📜 <b>Trade History</b> (last {count})\n\
+         ──────────\n\
+         {lines}\n\
+         ──────────\n\
+         📊 Total: {total} ({wins}W/{losses}L)\n\
+         💰 PnL: <code>{pnl_sign}{pnl:.2}$</code>\n\
+         🎯 Win Rate: <code>{wr:.1}%</code>\n\
+         🤖 ARIA v1.0",
+        count = total_trades,
+        lines = lines.join("\n"),
+        total = total_trades,
+        wins = wins,
+        losses = losses,
+        pnl_sign = pnl_sign,
+        pnl = total_pnl,
+        wr = win_rate,
     )
 }
 

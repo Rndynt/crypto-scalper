@@ -59,8 +59,8 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
     let exec_quality = Arc::new(PlMutex::new(ExecutionQuality::default()));
     let decision_prices: SharedMap<f64> = Arc::new(PlMutex::new(HashMap::new()));
     let pos_cfg = PositionConfig {
-        max_hold_secs: 1800,       // 30 min max hold for scalping
-        trail_atr_mult: 0.5,       // Trail at 0.5× ATR
+        max_hold_secs: 900,        // 15 min max hold for HFT
+        trail_atr_mult: 0.3,       // Tighter trail at 0.3× ATR
         trail_activate_r: 1.0,     // Activate trailing at 1R profit
         breakeven_r: 0.5,          // Move SL to entry at 0.5R profit
         partial_tp_enabled: true,  // Take 50% at 1R profit

@@ -14,9 +14,14 @@ use crate::strategy::state::SymbolState;
 use parking_lot::RwLock as PlRwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+
+/// Minimum seconds between LLM calls for the same symbol.
+/// Prevents redundant API calls when multiple signals fire in quick succession.
+const LLM_COOLDOWN_SECS: u64 = 45;
 
 pub fn spawn(
     bus: MessageBus,
@@ -26,6 +31,10 @@ pub fn spawn(
     feeds_cache: Arc<PlRwLock<HashMap<String, ExternalSnapshot>>>,
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
+    // Track last LLM call time per symbol for deduplication
+    let last_llm_call: Arc<PlRwLock<HashMap<String, Instant>>> =
+        Arc::new(PlRwLock::new(HashMap::new()));
+
     tokio::spawn(async move {
         info!("brain agent starting");
         while let Ok(ev) = rx.recv().await {
@@ -42,6 +51,23 @@ pub fn spawn(
                     let signal = (*risk.signal).clone();
                     let regime = risk.regime;
                     let symbol = signal.symbol.clone();
+
+                    // Deduplication: skip if same symbol analyzed recently
+                    {
+                        let mut cache = last_llm_call.write();
+                        if let Some(last) = cache.get(&symbol) {
+                            if last.elapsed().as_secs() < LLM_COOLDOWN_SECS {
+                                debug!(
+                                    symbol = %symbol,
+                                    elapsed_ms = last.elapsed().as_millis() as u64,
+                                    cooldown_ms = LLM_COOLDOWN_SECS * 1000,
+                                    "brain: LLM cooldown active — skipping"
+                                );
+                                continue;
+                            }
+                        }
+                        cache.insert(symbol.clone(), Instant::now());
+                    }
 
                     let external = feeds_cache.read().get(&symbol).cloned().unwrap_or_default();
 

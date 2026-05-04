@@ -98,6 +98,8 @@ impl LlmEngine {
         let client = Client::builder()
             .timeout(Duration::from_secs(cfg.timeout_secs + 2))
             .user_agent("ARIA-Scalper/0.1")
+            .pool_max_idle_per_host(4)
+            .tcp_keepalive(Duration::from_secs(30))
             .build()
             .unwrap_or_default();
         Self { client, cfg }
