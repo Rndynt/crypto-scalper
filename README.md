@@ -4,7 +4,7 @@
 
 ARIA is a multi-agent autonomous trading bot for Binance Futures that uses Large Language Models (LLM) for trade decisions. Every layer of the stack — from signal detection to risk management to execution — runs as an independent async agent communicating over a typed message bus. An AI "Trader Manager" oversees all decisions and can veto or adjust trades before they reach the exchange.
 
-> **Status:** Paper mode active · NeonDB persistent journal · Telegram monitoring live
+> **Status:** Paper mode active · 100x leverage HFT · NeonDB persistent journal · Telegram monitoring live · AI self-learning
 
 ---
 
@@ -47,34 +47,45 @@ ARIA is a multi-agent autonomous trading bot for Binance Futures that uses Large
 - **Alpha Gate** — External signal gating with configurable thresholds
 
 ### 🛡️ Risk & Survival
-- **Per-trade risk sizing** — Configurable % of equity per position
-- **Maximum drawdown protection** — Auto-flat at configurable drawdown %
-- **Loss streak cooldowns** — Short/long streak detection with automatic freeze
-- **Daily loss limits** — Maximum daily loss count and P&L ratchet
-- **Volatility spike detection** — Auto-freeze on abnormal market moves
+- **100x leverage support** — High-leverage futures trading with tight SL/TP
+- **Per-trade risk sizing** — 0.5% equity per trade (Kelly + vol-target adjusted)
+- **Maximum drawdown protection** — Auto-flat at 8% drawdown
+- **Loss streak cooldowns** — 8 losses → 30min freeze, 8 in 1hr → 2hr freeze
+- **Daily loss limits** — 12 losses/day → 24hr freeze + P&L ratchet at +3%
+- **Volatility spike detection** — Auto-freeze on 2.5× abnormal volume
 - **News panic filter** — Blocks trades during extreme sentiment events
 - **Duplicate position prevention** — Blocks multiple entries on same symbol
-- **Death line** — Hard equity floor that triggers emergency shutdown
+- **Death line** — 70% equity floor triggers emergency shutdown (manual unfreeze required)
 
 ### 💰 Partial Take Profit System
 - **50% close at 1R profit** — Lock in partial gains early
 - **Breakeven stop** — SL moves to entry price after partial TP
-- **Trailing stop** — Remaining 50% trails at 0.5× ATR
-- **Time-based exit** — Auto-close after 30 minutes max hold
+- **Trailing stop** — Remaining 50% trails at 0.3× ATR (tighter for HFT)
+- **Time-based exit** — Auto-close after 15 minutes max hold
 
 ### 📱 Telegram Monitoring
 - **Signal notifications** — AI analysis, confidence scores, entry/SL/TP to DM and group topic
 - **Position opened** — Full details including partial TP plan, R:R ratio, AI reasoning
 - **Position closed** — PnL, duration, win/loss result, daily stats
-- **Command panel** — 12+ slash commands for real-time monitoring
+- **Command panel** — 13 slash commands for real-time monitoring
 - **Group topic support** — Signals posted to dedicated forum topic
+- **Trade history** — Query NeonDB/SQLite for past trades via `/history`
 
 ### 📈 Quantitative Engine
-- **Kelly Criterion** — Optimal position sizing based on historical win rate
-- **Volatility targeting** — Dynamic sizing based on realized volatility
-- **VaR (Value at Risk)** — Portfolio-level risk monitoring
-- **Information Coefficient** — Signal quality tracking
-- **Kalman smoothing** — Noise-reduced price estimation
+- **Kelly Criterion** — Optimal position sizing based on historical win rate (capped at 20%)
+- **Volatility targeting** — Dynamic sizing based on realized volatility (50% annual target)
+- **VaR (Value at Risk)** — 95% confidence, max 3% portfolio risk
+- **Information Coefficient** — Signal quality tracking with decay detection
+- **Kalman smoothing** — Noise-reduced price estimation for entry timing
+
+### 🧠 AI Self-Learning System
+- **Per-strategy stats** — Win rate tracked per strategy (EMA, Momentum, VWAP, etc.)
+- **Per-regime stats** — Strategy performance in Trending/Ranging/Volatile/Squeeze markets
+- **Auto-lesson extraction** — After 10+ trades, bot identifies losing patterns and blacklists them
+- **Policy updates** — Confidence thresholds raised for bad strategy+regime combos
+- **Persistent memory** — Learning state saved to `data/learning_state.json` (survives rebuild)
+- **NeonDB journal** — Full trade history with AI reasoning for post-analysis
+- **LLM dedup cache** — 45s cooldown per symbol prevents redundant API calls
 
 ### 💾 Persistent Storage
 - **NeonDB (PostgreSQL)** — All trades, positions, and LLM decisions persist across rebuilds
@@ -236,18 +247,18 @@ symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 timeframes = ["1m", "5m", "15m"]
 
 [risk]
-risk_per_trade_pct = 1.5    # % of equity per trade
+risk_per_trade_pct = 0.5    # % of equity per trade (low for high leverage)
 max_open_positions = 6       # Max concurrent positions
-max_daily_loss_pct = 6.0     # Daily loss limit
-max_drawdown_pct = 18.0      # Max drawdown before freeze
-max_leverage = 5             # Maximum leverage multiplier
+max_daily_loss_pct = 4.0     # Daily loss limit
+max_drawdown_pct = 10.0      # Max drawdown before freeze
+max_leverage = 100           # Maximum leverage multiplier
 equity_usd = 5000.0          # Starting paper equity
 
 [survival]
-death_line_pct = 0.60        # Emergency stop at 60% equity
-loss_streak_short = 12       # Losses before short cooldown
-auto_flat_drawdown_pct = 15.0 # Auto-close all at 15% DD
-
+death_line_pct = 0.70        # Emergency stop at 70% equity
+loss_streak_short = 8        # Losses before short cooldown
+auto_flat_drawdown_pct = 8.0 # Auto-close all at 8% DD
+```
 [quant]
 enabled = true               # Enable quant engine
 kelly_cap = 0.40             # Max Kelly fraction
@@ -272,10 +283,12 @@ ARIA_CONFIG_OVERLAY=config/aggressive.toml ./target/release/aria
 
 ```bash
 # 1. Set your Binance API keys in .env
-# 2. Change run_mode to "live" in config overlay
-# 3. Start with low risk settings first!
-ARIA_CONFIG_OVERLAY=config/production.toml ./target/release/aria
+# 2. Use the HFT live config overlay
+# 3. Test thoroughly in paper mode first!
+ARIA_CONFIG_OVERLAY=config/hft-live.toml ./target/release/aria
 ```
+
+> **⚠️ WARNING:** Always test in paper mode for at least 1-2 weeks before going live. Start with small equity ($500-1000) and monitor closely via Telegram.
 
 ### Backtest Mode
 
@@ -309,10 +322,11 @@ Send these commands to your bot in DM or group:
 | `/status` | Bot status, equity, P&L, signal counts |
 | `/positions` | List open positions with current P&L |
 | `/signals` | Recent AI signals and decisions |
+| `/brain` | Last AI brain decision details |
 | `/performance` | Win rate, daily P&L, trade statistics |
 | `/survival` | Survival mode status and cooldowns |
 | `/risk` | Risk limits, current exposure, VaR |
-| `/brain` | Last AI brain decision details |
+| `/history` | Recent trade history from NeonDB/SQLite |
 | `/health` | System health check (agents, latency) |
 | `/freeze` | Manually freeze trading |
 | `/unfreeze` | Resume trading after freeze |
@@ -335,9 +349,10 @@ Send these commands to your bot in DM or group:
 | Profile | File | Description |
 |---------|------|-------------|
 | Default | `config/default.toml` | Base config, always loaded |
-| Aggressive | `config/aggressive.toml` | HFT scalping, tight SL/TP, 24/7 |
+| Aggressive | `config/aggressive.toml` | Paper mode, 100x leverage, tight SL/TP, 24/7 |
+| HFT Live | `config/hft-live.toml` | **LIVE mode**, 100x leverage, conservative risk, fail-closed |
 | Paper | `config/paper.toml` | Paper trading with conservative settings |
-| Production | `config/production.toml` | Live trading with safety limits |
+| Production | `config/production.toml` | Live trading with balanced safety limits |
 | LLM Anthropic | `config/llm-anthropic.toml` | Anthropic Claude as LLM provider |
 | LLM OpenRouter | `config/llm-openrouter-cheap.toml` | OpenRouter cheap models |
 
@@ -526,7 +541,8 @@ crypto-scalper/
 │   └── learning/                  # Learning system (lessons, policy, memory)
 ├── config/
 │   ├── default.toml               # Base configuration
-│   ├── aggressive.toml            # HFT scalping overlay
+│   ├── aggressive.toml            # Paper mode, 100x leverage HFT overlay
+│   ├── hft-live.toml              # LIVE mode, 100x leverage, conservative risk
 │   ├── paper.toml                 # Paper trading overlay
 │   ├── production.toml            # Live trading overlay
 │   ├── llm-anthropic.toml         # Anthropic LLM config
@@ -542,24 +558,73 @@ crypto-scalper/
 ## 🛡️ Risk Management
 
 ### Position Sizing
-- **Per-trade risk:** 1.5% of equity (configurable)
+- **Per-trade risk:** 0.5% of equity (Kelly + vol-target adjusted, capped at 20%)
 - **Kelly Criterion:** Optimal fraction based on historical win rate
-- **Volatility targeting:** Size adjusts inversely to realized volatility
+- **Volatility targeting:** Size adjusts inversely to realized volatility (50% annual target)
 - **Max position:** 100% of equity notional
+- **Leverage:** Up to 100x on Binance Futures
 
-### Stop Loss / Take Profit
-- **SL:** Max 2% from entry (hardcoded cap for scalping)
-- **TP:** 1% from entry (tight R:R for HFT)
+### Stop Loss / Take Profit (High Leverage)
+- **SL:** Max 0.3% from entry (at 100x = 30% position loss)
+- **TP:** Max 0.6% from entry (at 100x = 60% position gain)
+- **R:R Ratio:** Minimum 1:2 (reward:risk)
 - **Partial TP:** 50% close at 1R profit
 - **Breakeven:** SL moves to entry after partial TP
-- **Trailing:** 0.5× ATR trailing on remaining position
+- **Trailing:** 0.3× ATR trailing on remaining position
+- **Max hold:** 15 minutes (time-based exit)
 
 ### Circuit Breakers
-- **Death line:** 60% of starting equity → emergency shutdown
-- **Auto-flat:** 15% drawdown → close all positions
-- **Loss streak:** 12 consecutive losses → 15min cooldown
-- **Daily loss:** 20 loss count → 2hr cooldown
+- **Death line:** 70% of starting equity → emergency shutdown (manual unfreeze)
+- **Auto-flat:** 8% drawdown → close all positions
+- **Loss streak (short):** 8 consecutive losses → 30min cooldown
+- **Loss streak (long):** 8 losses in 1 hour → 2hr cooldown
+- **Daily loss count:** 12 losses today → 24hr cooldown
+- **Daily PnL ratchet:** +3% daily gain → freeze (lock profits)
 - **Volatility spike:** 2.5× normal volume → freeze trading
+
+### AI Learning Protections
+- **Strategy blacklisting:** Win rate < 30% after 12 trades → strategy disabled for that regime
+- **Symbol blacklisting:** Consistent losses on specific symbol → reduce confidence
+- **Regime awareness:** Bot learns which strategies work in which market conditions
+- **Confidence decay:** Stale signals (>45s) automatically skipped (LLM dedup cache)
+
+---
+
+## 🧠 How the Bot Learns
+
+ARIA continuously learns from every trade and adapts its behavior:
+
+### Learning Cycle
+
+```
+Trade 1:  LOSS → Record: EMA ribbon + RANGING = loss
+Trade 2:  LOSS → Record: SOL + volatile = loss
+Trade 3:  WIN  → Record: Momentum + TRENDING_BULLISH = win
+...
+Trade 10: → Extract lesson: "EMA ribbon in RANGING has 30% WR"
+          → Update policy: raise TA threshold for EMA+RANGING combo
+Trade 12: → Blacklist: "EMA ribbon disabled in RANGING regime"
+Trade 20: → Extract lesson: "SOL mean_reversion has 25% WR"
+          → Blacklist: "Skip SOL for mean_reversion strategy"
+```
+
+### What Gets Learned
+
+| Data | Persisted To | Survives Rebuild |
+|------|-------------|-----------------|
+| Per-strategy win rate | `data/learning_state.json` + NeonDB | ✅ |
+| Per-regime performance | `data/learning_state.json` + NeonDB | ✅ |
+| Lessons (blacklist rules) | `data/learning_state.json` | ✅ |
+| Trade history (full) | NeonDB (PostgreSQL) | ✅ |
+| LLM decisions | NeonDB (PostgreSQL) | ✅ |
+| Orchestrator state | `data/orchestrator_state.json` | ✅ |
+
+### How Lessons Affect Trading
+
+1. **TA threshold raised** — Bad strategy+regime combos need higher TA confidence to pass
+2. **Strategy disabled** — Blacklisted strategies are skipped entirely for specific regimes
+3. **Symbol reduced** — Consistent losers get lower confidence scores
+4. **Manager informed** — LLM Manager gets historical summary to make better veto decisions
 
 ---
 
@@ -579,3 +644,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 ---
 
 **🤖 ARIA v1.0** — Autonomous Realtime Intelligence Analyst
+*Multi-agent HFT quant trading bot with AI self-learning*
