@@ -110,6 +110,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                             exit_price: trade.price,
                             pnl_usd: pnl,
                             reason,
+                            strategy: pos.strategy.clone(),
                         });
                     }
                 }
@@ -189,6 +190,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 exit_price: mark,
                                 pnl_usd: pnl,
                                 reason: PositionExitReason::Manual,
+                                strategy: closed.strategy.clone(),
                             });
                         }
                     }
@@ -340,6 +342,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 atr_at_entry: 0.0, // Will use profit-based fallback
                                 partial_taken: false,
                                 breakeven_activated: false,
+                                strategy: v.proposal.strategy.clone(),
                             };
                             book.open(pos.clone());
 

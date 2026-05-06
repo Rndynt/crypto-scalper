@@ -29,6 +29,7 @@ pub fn spawn(
     states: Arc<Mutex<HashMap<String, SymbolState>>>,
     policy: LearningPolicy,
     feeds_cache: Arc<PlRwLock<HashMap<String, ExternalSnapshot>>>,
+    shared_state: Option<Arc<crate::shared_state::SharedState>>,
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
     // Track last LLM call time per symbol for deduplication
@@ -71,6 +72,18 @@ pub fn spawn(
 
                     let external = feeds_cache.read().get(&symbol).cloned().unwrap_or_default();
 
+                    // CONFLUENCE CHECK — don't call LLM for weak signals
+                    let ta_strong = signal.ta_confidence >= 60;
+                    
+                    if !ta_strong {
+                        info!(
+                            symbol = %symbol,
+                            ta_confidence = signal.ta_confidence,
+                            "brain: SKIPPED — weak signal (TA too low)"
+                        );
+                        continue;
+                    }
+
                     let mut ctx = {
                         let states = states.lock().await;
                         match states.get(&symbol) {
@@ -83,6 +96,20 @@ pub fn spawn(
                         regime.as_str(),
                         &symbol,
                     );
+
+                    // Populate strategy performance data from SharedState
+                    if let Some(ref ss) = shared_state {
+                        let strategy_perf = ss.get_strategy_health(signal.strategy.as_str());
+                        let overall_perf = ss.get_overall_stats();
+                        
+                        ctx.strategy_win_rate = strategy_perf.win_rate;
+                        ctx.strategy_total_trades = strategy_perf.total_trades;
+                        ctx.strategy_recent_pnl = strategy_perf.total_pnl;
+                        ctx.strategy_loss_streak = strategy_perf.loss_streak;
+                        ctx.overall_win_rate = overall_perf.win_rate;
+                        ctx.overall_total_trades = overall_perf.total_trades;
+                        ctx.recent_trade_pnl = overall_perf.last_trade_pnl;
+                    }
 
                     info!(
                         symbol = %symbol,

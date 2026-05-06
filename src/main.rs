@@ -416,6 +416,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
                         atr_at_entry: 0.0,
                         partial_taken: false,
                         breakeven_activated: false,
+                        strategy: "recon".to_string(),
                     };
                     recon.push(pos);
                     risk.on_position_opened();
@@ -516,6 +517,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         Arc::clone(&states),
         policy.clone(),
         Arc::clone(&feeds_cache),
+        Some(Arc::clone(&shared_state)),
     );
     let _manager = crypto_scalper::agents::manager::spawn(
         bus.clone(),
@@ -574,6 +576,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
                         atr_at_entry: 0.0,
                         partial_taken: false,
                         breakeven_activated: false,
+                        strategy: "recovered".to_string(),
                     })
                     .collect();
                 if !recovered.is_empty() {

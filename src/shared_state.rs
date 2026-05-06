@@ -26,6 +26,15 @@ pub struct StrategyHealth {
     pub disable_reason: Option<String>,
 }
 
+/// Overall trading statistics
+#[derive(Debug, Clone, Default)]
+pub struct OverallStats {
+    pub total_trades: u64,
+    pub win_rate: f64,
+    pub total_pnl: f64,
+    pub last_trade_pnl: f64,
+}
+
 impl StrategyHealth {
     pub fn new(name: &str) -> Self {
         Self {
@@ -345,6 +354,40 @@ impl SharedState {
             "No data yet".to_string()
         } else {
             summary
+        }
+    }
+
+    /// Get strategy health data for LLM context
+    pub fn get_strategy_health(&self, strategy: &str) -> StrategyHealth {
+        let health = self.strategy_health.read();
+        match health.get(strategy) {
+            Some(h) => h.clone(),
+            None => StrategyHealth::new(strategy),
+        }
+    }
+
+    /// Get overall trading stats
+    pub fn get_overall_stats(&self) -> OverallStats {
+        let health = self.strategy_health.read();
+        let mut total_trades = 0u64;
+        let mut total_wins = 0u64;
+        let mut total_pnl = 0.0f64;
+        let mut last_trade_pnl = 0.0f64;
+        
+        for h in health.values() {
+            total_trades += h.total_trades;
+            total_wins += h.wins;
+            total_pnl += h.total_pnl;
+            if h.last_trade_ts.is_some() {
+                last_trade_pnl = h.avg_pnl; // Use avg as proxy for last
+            }
+        }
+        
+        OverallStats {
+            total_trades,
+            win_rate: if total_trades > 0 { total_wins as f64 / total_trades as f64 } else { 0.0 },
+            total_pnl,
+            last_trade_pnl,
         }
     }
 

@@ -536,6 +536,7 @@ pub fn spawn(
                     exit_price,
                     pnl_usd,
                     reason,
+                    strategy,
                 } => {
                     let pnl_pct = if entry_price > 0.0 {
                         (exit_price - entry_price) / entry_price * 100.0

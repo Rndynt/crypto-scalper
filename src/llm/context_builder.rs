@@ -41,6 +41,21 @@ pub struct MarketContext {
     /// Empty string when the journal is cold.
     #[serde(default)]
     pub historical_summary: String,
+    /// Strategy performance data for smarter decisions
+    #[serde(default)]
+    pub strategy_win_rate: f64,
+    #[serde(default)]
+    pub strategy_total_trades: u64,
+    #[serde(default)]
+    pub strategy_recent_pnl: f64,
+    #[serde(default)]
+    pub strategy_loss_streak: u64,
+    #[serde(default)]
+    pub overall_win_rate: f64,
+    #[serde(default)]
+    pub overall_total_trades: u64,
+    #[serde(default)]
+    pub recent_trade_pnl: f64,
 }
 
 pub struct ContextBuilder;
@@ -89,6 +104,13 @@ impl ContextBuilder {
             best_ask: state.order_book.best_ask(),
             external,
             historical_summary: String::new(),
+            strategy_win_rate: 0.0,
+            strategy_total_trades: 0,
+            strategy_recent_pnl: 0.0,
+            strategy_loss_streak: 0,
+            overall_win_rate: 0.0,
+            overall_total_trades: 0,
+            recent_trade_pnl: 0.0,
         }
     }
 }
@@ -206,6 +228,31 @@ impl MarketContext {
             for line in self.historical_summary.lines() {
                 let _ = writeln!(s, "  {line}");
             }
+        }
+
+        // Strategy performance data — critical for smart decisions
+        let _ = writeln!(s, "\n[STRATEGY PERFORMANCE]");
+        let _ = writeln!(s, "  Strategy        : {}", self.strategy);
+        let _ = writeln!(s, "  Win rate        : {:.1}% ({}/{} trades)", 
+            self.strategy_win_rate * 100.0, 
+            (self.strategy_win_rate * self.strategy_total_trades as f64) as u64,
+            self.strategy_total_trades);
+        let _ = writeln!(s, "  Recent PnL      : ${:.2}", self.strategy_recent_pnl);
+        let _ = writeln!(s, "  Loss streak     : {}", self.strategy_loss_streak);
+        let _ = writeln!(s, "  Overall WR      : {:.1}% ({}/{} trades)",
+            self.overall_win_rate * 100.0,
+            (self.overall_win_rate * self.overall_total_trades as f64) as u64,
+            self.overall_total_trades);
+        if self.recent_trade_pnl != 0.0 {
+            let _ = writeln!(s, "  Last trade PnL  : ${:.2}", self.recent_trade_pnl);
+        }
+
+        // Warning if strategy is performing poorly
+        if self.strategy_total_trades >= 3 && self.strategy_win_rate < 0.40 {
+            let _ = writeln!(s, "  ⚠️ WARNING: This strategy has LOW win rate — be EXTRA selective!");
+        }
+        if self.strategy_loss_streak >= 3 {
+            let _ = writeln!(s, "  ⚠️ WARNING: {} consecutive losses — consider WAITING!", self.strategy_loss_streak);
         }
 
         if let Some(n) = &self.external.news {

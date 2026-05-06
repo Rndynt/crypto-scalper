@@ -100,6 +100,7 @@ pub enum AgentEvent {
         exit_price: f64,
         pnl_usd: f64,
         reason: PositionExitReason,
+        strategy: String,
     },
     /// Heartbeat for liveness monitoring.
     Heartbeat { from: AgentId, ts: DateTime<Utc> },

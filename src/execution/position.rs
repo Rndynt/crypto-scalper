@@ -35,6 +35,9 @@ pub struct Position {
     /// Whether SL has been moved to breakeven.
     #[serde(default)]
     pub breakeven_activated: bool,
+    /// Strategy name that opened this position.
+    #[serde(default)]
+    pub strategy: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

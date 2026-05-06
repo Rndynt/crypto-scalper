@@ -80,7 +80,7 @@ pub fn spawn(
                 while let Ok(ev) = rx.recv().await {
                     if let AgentEvent::PositionClosed {
                         pnl_usd,
-                        ref reason,
+                        ref strategy,
                         ..
                     } = ev
                     {
@@ -93,25 +93,13 @@ pub fn spawn(
                         ss_rt.update_equity(pnl_usd);
                         ss_rt.on_position_closed();
 
-                        // Extract strategy from position (we need to get it from the position data)
-                        // For now, we'll track by symbol and use the reason to determine strategy
-                        // The reason format is typically "strategy_name:sl" or "strategy_name:tp"
-                        let strategy = match &reason {
-                            PositionExitReason::StopLoss => "stop_loss".to_string(),
-                            PositionExitReason::TakeProfit => "take_profit".to_string(),
-                            PositionExitReason::Trailing => "trailing".to_string(),
-                            PositionExitReason::TimeExit => "time_exit".to_string(),
-                            PositionExitReason::Manual => "manual".to_string(),
-                            _ => "unknown".to_string(),
-                        };
-                        
-                        // Update strategy health (using reason as strategy for now)
-                        ss_rt.record_strategy_trade(&strategy, pnl_usd);
+                        // Update strategy health using ACTUAL strategy name
+                        ss_rt.record_strategy_trade(strategy, pnl_usd);
 
                         // Add lesson if strategy is performing poorly
                         let (should_disable, should_reduce, win_rate, loss_streak, total_pnl, enabled) = {
                             let health = ss_rt.strategy_health.read();
-                            if let Some(h) = health.get(&strategy) {
+                            if let Some(h) = health.get(strategy.as_str()) {
                                 (h.should_disable(), h.should_reduce_size(), h.win_rate, h.loss_streak, h.total_pnl, h.enabled)
                             } else {
                                 (false, false, 0.0, 0, 0.0, true)
