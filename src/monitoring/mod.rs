@@ -8,4 +8,4 @@ pub use logger::{TradeJournal, TradeRecord, LearningStateSnapshot};
 pub use metrics::{
     spawn_dashboard_server, spawn_metrics_server, DashboardState, MetricsSnapshot, MetricsState,
 };
-pub use telegram::TelegramNotifier;
+pub use telegram::{TelegramNotifier, InlineButton};

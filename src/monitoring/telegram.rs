@@ -1,7 +1,8 @@
-//! Telegram Bot API notifier with forum topic support.
+//! Telegram Bot API notifier with forum topic support and inline keyboard.
 
 use crate::errors::Result;
 use reqwest::Client;
+use serde_json::json;
 use tracing::warn;
 
 /// Destination for a Telegram message.
@@ -14,6 +15,13 @@ pub enum TgDestination {
         chat_id: String,
         thread_id: i64,
     },
+}
+
+/// A single inline keyboard button.
+#[derive(Debug, Clone)]
+pub struct InlineButton {
+    pub text: String,
+    pub callback_data: String,
 }
 
 pub struct TelegramNotifier {
@@ -63,7 +71,7 @@ impl TelegramNotifier {
             return Ok(());
         }
         let url = format!("https://api.telegram.org/bot{}/sendMessage", self.token);
-        let mut body = serde_json::json!({
+        let mut body = json!({
             "text": text,
             "disable_web_page_preview": true,
             "parse_mode": "HTML",
@@ -71,11 +79,11 @@ impl TelegramNotifier {
 
         match dest {
             TgDestination::Chat(chat_id) => {
-                body["chat_id"] = serde_json::json!(chat_id);
+                body["chat_id"] = json!(chat_id);
             }
             TgDestination::Topic { chat_id, thread_id } => {
-                body["chat_id"] = serde_json::json!(chat_id);
-                body["message_thread_id"] = serde_json::json!(thread_id);
+                body["chat_id"] = json!(chat_id);
+                body["message_thread_id"] = json!(thread_id);
             }
         }
 
@@ -84,6 +92,75 @@ impl TelegramNotifier {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
             warn!(status = %status, body = %body_text, "telegram send failed");
+        }
+        Ok(())
+    }
+
+    /// Send a message with inline keyboard buttons.
+    pub async fn send_with_buttons(
+        &self,
+        chat_id: &str,
+        text: &str,
+        buttons: Vec<Vec<InlineButton>>,
+    ) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", self.token);
+
+        // Build inline keyboard JSON
+        let keyboard: Vec<Vec<serde_json::Value>> = buttons
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|btn| {
+                        json!({
+                            "text": btn.text,
+                            "callback_data": btn.callback_data,
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let body = json!({
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": true,
+            "parse_mode": "HTML",
+            "reply_markup": {
+                "inline_keyboard": keyboard,
+            },
+        });
+
+        let resp = self.client.post(&url).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            warn!(status = %status, body = %body_text, "telegram send_with_buttons failed");
+        }
+        Ok(())
+    }
+
+    /// Answer a callback query (button click) to remove the loading state.
+    pub async fn answer_callback(&self, callback_id: &str, text: Option<&str>) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let url = format!("https://api.telegram.org/bot{}/answerCallbackQuery", self.token);
+        let mut body = json!({
+            "callback_query_id": callback_id,
+        });
+        if let Some(t) = text {
+            body["text"] = json!(t);
+            body["show_alert"] = json!(false);
+        }
+
+        let resp = self.client.post(&url).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            warn!(status = %status, body = %body_text, "telegram answer_callback failed");
         }
         Ok(())
     }

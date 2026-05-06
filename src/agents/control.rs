@@ -19,7 +19,7 @@ use crate::agents::messages::{AgentEvent, BrainOutcome, ControlCommand, Survival
 use crate::agents::MessageBus;
 use crate::config::ControlCfg;
 use crate::execution::{Exchange, PositionBook, RiskManager};
-use crate::monitoring::{MetricsState, TradeJournal};
+use crate::monitoring::{MetricsState, TradeJournal, telegram::InlineButton};
 use chrono::Utc;
 use parking_lot::{Mutex, RwLock};
 use reqwest::Client;
@@ -249,6 +249,60 @@ async fn telegram_loop(
                     if update_id > *last_update_id.lock() {
                         *last_update_id.lock() = update_id;
                     }
+
+                    // ─── Handle callback queries (inline button clicks) ───
+                    if let Some(cb) = upd.get("callback_query") {
+                        let cb_id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let data = cb.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                        let cb_from = cb.get("from").and_then(|f| f.get("id")).and_then(|i| i.as_i64()).unwrap_or(0);
+                        let cb_chat = cb.get("message")
+                            .and_then(|m| m.get("chat"))
+                            .and_then(|c| c.get("id"))
+                            .and_then(|i| i.as_i64())
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| chat_id.clone());
+
+                        if !allowed.is_empty() && !allowed.contains(&cb_from) {
+                            let _ = send_telegram(&client, &token, &cb_chat, "⛔ not allowed").await;
+                            continue;
+                        }
+
+                        // Map callback data to command
+                        let cmd = match data {
+                            "btn_status" => "/status",
+                            "btn_positions" => "/positions",
+                            "btn_signals" => "/signals",
+                            "btn_performance" => "/performance",
+                            "btn_risk" => "/risk",
+                            "btn_history" => "/history",
+                            "btn_leverage" => "/leverage",
+                            "btn_survival" => "/survival",
+                            "btn_brain" => "/brain",
+                            "btn_health" => "/health",
+                            "btn_freeze" => "/freeze",
+                            "btn_unfreeze" => "/unfreeze",
+                            "btn_flat" => "/flat",
+                            "btn_help" => "/help",
+                            _ => "",
+                        };
+
+                        if !cmd.is_empty() {
+                            let reply = handle_command(cmd, &bus, &risk, &book, &metrics, &ctrl_state, &journal);
+                            if !reply.is_empty() {
+                                send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                            }
+                        }
+
+                        // Answer callback to remove loading indicator
+                        let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+                        let _ = client.post(&answer_url)
+                            .json(&serde_json::json!({ "callback_query_id": cb_id }))
+                            .send()
+                            .await;
+                        continue;
+                    }
+
+                    // ─── Handle text messages ───
                     let msg = upd.get("message").cloned().unwrap_or(Value::Null);
                     let from_id = msg
                         .get("from")
@@ -283,6 +337,11 @@ async fn telegram_loop(
                     }
                     let reply = handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state, &journal);
                     if !reply.is_empty() {
+                        let cmd_lower = text.trim().to_lowercase();
+
+                        // Get contextual buttons for this command
+                        let buttons = command_buttons(&cmd_lower);
+
                         // Reply to originating chat (DM or group topic)
                         if let Some(thread_id) = origin_thread_id {
                             send_telegram_html_to_topic(
@@ -293,6 +352,14 @@ async fn telegram_loop(
                                 &reply,
                             )
                             .await;
+                        } else if !buttons.is_empty() {
+                            send_telegram_html_with_buttons(
+                                &client,
+                                &token,
+                                &origin_chat_id,
+                                &reply,
+                                buttons,
+                            ).await;
                         } else {
                             send_telegram_html(&client, &token, &origin_chat_id, &reply).await;
                         }
@@ -351,6 +418,42 @@ async fn send_telegram_html_to_topic(
     });
     if let Err(e) = client.post(&url).json(&body).send().await {
         warn!(error = %e, "telegram topic send failed");
+    }
+}
+
+/// Send HTML message with inline keyboard buttons.
+async fn send_telegram_html_with_buttons(
+    client: &Client,
+    token: &str,
+    chat_id: &str,
+    text: &str,
+    buttons: Vec<Vec<InlineButton>>,
+) {
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let keyboard: Vec<Vec<serde_json::Value>> = buttons
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|btn| {
+                    serde_json::json!({
+                        "text": btn.text,
+                        "callback_data": btn.callback_data,
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": true,
+        "parse_mode": "HTML",
+        "reply_markup": {
+            "inline_keyboard": keyboard,
+        },
+    });
+    if let Err(e) = client.post(&url).json(&body).send().await {
+        warn!(error = %e, "telegram buttons send failed");
     }
 }
 
@@ -425,6 +528,7 @@ fn handle_command(
         "/brain" | "brain" => cmd_brain(ctrl_state),
         "/risk" | "risk" => cmd_risk(risk),
         "/history" | "history" => cmd_history(journal),
+        "/leverage" | "leverage" => cmd_leverage(risk),
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -444,6 +548,7 @@ fn cmd_help() -> String {
      ├ <code>/performance</code> — Daily/weekly performance stats\n\
      ├ <code>/survival</code> — Survival mode details\n\
      ├ <code>/risk</code> — Current risk metrics & limits\n\
+     ├ <code>/leverage</code> — View/change leverage settings\n\
      ├ <code>/history</code> — Recent trade history (NeonDB)\n\
      └ <code>/health</code> — System health check\n\
      \n\
@@ -452,8 +557,163 @@ fn cmd_help() -> String {
      ├ <code>/unfreeze</code> — Resume trading\n\
      └ <code>/flat</code> — ⚠ Close ALL positions immediately\n\
      \n\
+     👆 <b>Tap the buttons below for quick access!</b>\n\
+     \n\
      🤖 ARIA v1.0"
         .to_string()
+}
+
+/// Build inline keyboard buttons for the /help message.
+fn help_buttons() -> Vec<Vec<InlineButton>> {
+    vec![
+        // Row 1: Monitoring
+        vec![
+            InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+            InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+            InlineButton { text: "🔔 Signals".into(), callback_data: "btn_signals".into() },
+        ],
+        // Row 2: Analytics
+        vec![
+            InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
+            InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+            InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
+        ],
+        // Row 3: Risk & Survival
+        vec![
+            InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+            InlineButton { text: "⚙ Leverage".into(), callback_data: "btn_leverage".into() },
+            InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+        ],
+        // Row 4: Control (danger zone)
+        vec![
+            InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
+            InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
+            InlineButton { text: "▶ Unfreeze".into(), callback_data: "btn_unfreeze".into() },
+        ],
+        // Row 5: Emergency
+        vec![
+            InlineButton { text: "🚨 FLAT ALL POSITIONS".into(), callback_data: "btn_flat".into() },
+        ],
+    ]
+}
+
+/// Get contextual buttons for a given command.
+fn command_buttons(cmd: &str) -> Vec<Vec<InlineButton>> {
+    // Always include a navigation row
+    let nav_row = vec![
+        InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+        InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+        InlineButton { text: "🏠 Help".into(), callback_data: "btn_help".into() },
+    ];
+
+    match cmd {
+        "/help" | "help" | "/start" | "start" => help_buttons(),
+        "/status" | "status" => vec![
+            vec![
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
+            ],
+            nav_row,
+        ],
+        "/positions" | "positions" => vec![
+            vec![
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
+                InlineButton { text: "🚨 FLAT ALL".into(), callback_data: "btn_flat".into() },
+            ],
+            nav_row,
+        ],
+        "/signals" | "signals" => vec![
+            vec![
+                InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+            ],
+            nav_row,
+        ],
+        "/brain" | "brain" => vec![
+            vec![
+                InlineButton { text: "🔔 Signals".into(), callback_data: "btn_signals".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+            ],
+            nav_row,
+        ],
+        "/performance" | "performance" => vec![
+            vec![
+                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+            ],
+            nav_row,
+        ],
+        "/risk" | "risk" => vec![
+            vec![
+                InlineButton { text: "⚙ Leverage".into(), callback_data: "btn_leverage".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+            ],
+            nav_row,
+        ],
+        "/leverage" | "leverage" => vec![
+            vec![
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+            ],
+            nav_row,
+        ],
+        "/survival" | "survival" => vec![
+            vec![
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+                InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+            ],
+            nav_row,
+        ],
+        "/history" | "history" => vec![
+            vec![
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+            ],
+            nav_row,
+        ],
+        "/health" | "health" => vec![
+            vec![
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+                InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
+            ],
+            nav_row,
+        ],
+        "/freeze" | "freeze" => vec![
+            vec![
+                InlineButton { text: "▶ Unfreeze".into(), callback_data: "btn_unfreeze".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+            ],
+            nav_row,
+        ],
+        "/unfreeze" | "unfreeze" => vec![
+            vec![
+                InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+            ],
+            nav_row,
+        ],
+        "/flat" | "flat" => vec![
+            vec![
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
+            ],
+            nav_row,
+        ],
+        _ => vec![],
+    }
 }
 
 fn cmd_status(
@@ -1081,6 +1341,35 @@ fn cmd_history(journal: &Option<Arc<TradeJournal>>) -> String {
         pnl_sign = pnl_sign,
         pnl = total_pnl,
         wr = win_rate,
+    )
+}
+
+fn cmd_leverage(risk: &Arc<RiskManager>) -> String {
+    let limits = risk.limits();
+    let current = limits.max_leverage;
+
+    format!(
+        "⚙ <b>Leverage Settings</b>\n\
+         ──────────\n\
+         📊 Current Max Leverage: <code>{current}x</code>\n\
+         \n\
+         ⚡ <b>Quick Presets</b>\n\
+         ├ 🟢 <code>20x</code> — Conservative\n\
+         ├ 🟡 <code>50x</code> — Moderate\n\
+         ├ 🟠 <code>75x</code> — Aggressive\n\
+         └ 🔴 <code>100x</code> — Maximum HFT\n\
+         \n\
+         📐 <b>SL/TP at {current}x</b>\n\
+         ├ SL 0.3% = <code>{sl_loss:.1}%</code> position loss\n\
+         ├ TP 0.6% = <code>{tp_gain:.1}%</code> position gain\n\
+         └ R:R = <code>1:2.0</code>\n\
+         \n\
+         💡 To change: edit <code>max_leverage</code> in config TOML\n\
+         \n\
+         🤖 ARIA v1.0",
+        current = current,
+        sl_loss = 0.3 * current as f64,
+        tp_gain = 0.6 * current as f64,
     )
 }
 
