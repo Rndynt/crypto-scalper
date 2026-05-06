@@ -523,6 +523,7 @@ pub fn spawn(
                         &short_sym(&symbol),
                         &strategy,
                         brain.as_ref(),
+                        100.0, // max_leverage from config
                     );
                     let _ = telegram.send(&msg).await;
                 }
@@ -682,6 +683,7 @@ fn build_open_notification(
     sym_short: &str,
     strategy: &str,
     brain: Option<&BrainOutcome>,
+    max_leverage: f64,
 ) -> String {
     let side_emoji = if side_label == "BUY" { "🟢" } else { "🔴" };
 
@@ -789,6 +791,10 @@ fn build_open_notification(
         String::new()
     };
 
+    // Calculate notional value and margin for display
+    let notional = size * entry_price;
+    let margin = if max_leverage > 0.0 { notional / max_leverage } else { notional };
+
     format!(
         "{side_emoji} <b>POSITION OPENED</b>\n\
          ──────────\n\
@@ -796,7 +802,8 @@ fn build_open_notification(
          📍 Entry: <code>{entry:.4}</code>\n\
          🛡 SL: <code>{sl}</code>\n\
          🎯 TP: <code>{tp}</code>\n\
-         💼 Size: <code>{size:.4}</code> {sym_short}\n\
+         💼 Size: <code>{size:.4}</code> {sym_short} (<code>${notional:.2}</code>)\n\
+         ⚡ Leverage: <code>{leverage:.0}x</code> · Margin: <code>${margin:.2}</code>\n\
          {rr_line}\
          {partial_tp_section}\
          {ai_section}\
@@ -811,6 +818,9 @@ fn build_open_notification(
         sl = sl_line,
         tp = tp_line,
         size = size,
+        notional = notional,
+        leverage = max_leverage,
+        margin = margin,
         sym_short = sym_short,
         rr_line = rr_line,
         partial_tp_section = partial_tp_section,

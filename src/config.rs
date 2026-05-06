@@ -33,6 +33,12 @@ pub struct Config {
 pub struct Mode {
     pub run_mode: String,
     pub dry_run: bool,
+    #[serde(default = "default_fail_closed")]
+    pub fail_closed_without_llm: bool,
+}
+
+fn default_fail_closed() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

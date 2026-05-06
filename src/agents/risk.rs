@@ -261,49 +261,15 @@ pub fn spawn(
                         continue;
                     }
 
-                    // Scalping SL/TP cap — tight ranges for 3-15min holds
-                    // SL: max 0.3%, TP: max 0.6% (R:R ~1:2 for high leverage)
-                    // At 100x: 0.3% SL = 30% position loss, 0.6% TP = 60% gain
-                    let max_sl_pct = 0.003; // 0.3%
-                    let max_tp_pct = 0.006; // 0.6%
+                    // BRAIN controls SL/TP dynamically — no hardcoded caps
+                    // Risk agent only checks max drawdown limits
+                    let effective_entry = signal.entry;
+                    let effective_sl = signal.stop_loss;
+                    let effective_tp = signal.take_profit;
+
+                    // Log SL/TP for monitoring
                     let sl_dist = (signal.entry - signal.stop_loss).abs() / signal.entry;
                     let tp_dist = (signal.entry - signal.take_profit).abs() / signal.entry;
-
-                    let (effective_entry, effective_sl, effective_tp) = {
-                        let capped_sl = if sl_dist > max_sl_pct && signal.entry > 0.0 {
-                            if signal.side == Side::Long {
-                                signal.entry * (1.0 - max_sl_pct)
-                            } else {
-                                signal.entry * (1.0 + max_sl_pct)
-                            }
-                        } else {
-                            signal.stop_loss
-                        };
-
-                        let capped_tp = if tp_dist > max_tp_pct && signal.entry > 0.0 {
-                            if signal.side == Side::Long {
-                                signal.entry * (1.0 + max_tp_pct)
-                            } else {
-                                signal.entry * (1.0 - max_tp_pct)
-                            }
-                        } else {
-                            signal.take_profit
-                        };
-
-                        if sl_dist > max_sl_pct || tp_dist > max_tp_pct {
-                            warn!(
-                                symbol = %signal.symbol,
-                                original_sl = %signal.stop_loss,
-                                capped_sl = %capped_sl,
-                                original_tp = %signal.take_profit,
-                                capped_tp = %capped_tp,
-                                "SL/TP capped for scalping: SL {:.2}%->0.5% TP {:.2}%->1%",
-                                sl_dist * 100.0, tp_dist * 100.0
-                            );
-                        }
-
-                        (signal.entry, capped_sl, capped_tp)
-                    };
 
                     // RiskManager.calculate_size already multiplies by
                     // the SurvivalAgent-controlled size_multiplier.

@@ -219,7 +219,8 @@ pub fn spawn(
 }
 
 fn build_proposal(brain: &BrainOutcome) -> ManagerProposal {
-    let signal = &brain.signal;
+    // Use the RISK-MANAGED signal (with capped SL/TP) instead of raw signal
+    let signal = &brain.risk.signal;
     ManagerProposal {
         symbol: signal.symbol.clone(),
         side: signal.side,

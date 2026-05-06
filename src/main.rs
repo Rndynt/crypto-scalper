@@ -34,6 +34,7 @@ use crypto_scalper::{
     },
     quant::{QuantConfig, QuantEngine},
     research::{reports_to_json, reports_to_markdown, ResearchReport},
+    shared_state::SharedState,
     strategy::state::{StrategyName, SymbolState},
 };
 use parking_lot::RwLock as PlRwLock;
@@ -431,6 +432,13 @@ async fn run_agents(cfg: Config) -> Result<()> {
         }
     }
 
+    // --- SharedState for cross-agent coordination ---
+    let shared_state = SharedState::new(
+        cfg.risk.equity_usd,
+        cfg.risk.max_open_positions as u64,
+    );
+    info!("SharedState initialized — all agents will coordinate through shared context");
+
     // --- Spawn agents ---
     let _data = crypto_scalper::agents::data::spawn(
         bus.clone(),
@@ -482,6 +490,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
             paper_scout_enabled: cfg.mode.run_mode == "paper" && cfg.strategy.paper_scout_enabled,
             entry_timeframe_secs: entry_timeframe.seconds,
         },
+        Arc::clone(&shared_state),
     );
 
     let _risk = crypto_scalper::agents::risk::spawn(
@@ -521,7 +530,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
             http_referer: Some(cfg.manager.http_referer.clone()).filter(|s| !s.is_empty()),
             http_app_title: Some(cfg.manager.http_app_title.clone()).filter(|s| !s.is_empty()),
             fast_approve_min_conf: cfg.manager.fast_approve_min_conf,
-            fail_closed_without_llm: cfg.mode.run_mode == "live" && !cfg.mode.dry_run,
+            fail_closed_without_llm: cfg.mode.fail_closed_without_llm,
             fail_open_on_error: cfg.manager.fail_open_on_error,
         },
         policy.clone(),
@@ -602,6 +611,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         },
         300,
         Some(Arc::clone(&quant_engine)),
+        Arc::clone(&shared_state),
     );
 
     let _survival = crypto_scalper::agents::survival::spawn(SurvivalAgentDeps {

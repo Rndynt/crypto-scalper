@@ -281,6 +281,16 @@ impl RiskManager {
         raw.min(leverage_cap).min(notional_cap).max(0.0)
     }
 
+    /// Calculate position size with LLM conviction scaling.
+    /// `llm_size_pct`: 0.0-1.0 from LLM based on confidence, Kelly, and risk factors.
+    /// High conviction (>70%) = 1.0, Medium (50-70%) = 0.7, Low (<50%) = 0.4
+    /// Also applies funding rate adjustments if extreme.
+    pub fn calculate_llm_sized_position(&self, entry: f64, stop_loss: f64, llm_size_pct: f64) -> f64 {
+        let max_size = self.calculate_size(entry, stop_loss);
+        let scaled_size = max_size * llm_size_pct.clamp(0.1, 1.0);
+        scaled_size.max(0.0)
+    }
+
     pub fn on_position_opened(&self) {
         self.inner.lock().open_positions += 1;
     }

@@ -2,6 +2,7 @@
 //! state, runs the regime detector + active strategies, and emits a
 //! `PreSignalEmitted` event for the best candidate.
 
+use crate::shared_state::SharedState;
 use crate::agents::messages::{AgentEvent, SignalEvaluationMsg};
 use crate::agents::MessageBus;
 use crate::config::{AdvancedAlphaCfg, Schedule};
@@ -43,6 +44,7 @@ pub fn spawn(
     bus: MessageBus,
     states: Arc<Mutex<HashMap<String, SymbolState>>>,
     cfg: SignalAgentConfig,
+    shared_state: Arc<SharedState>,
 ) -> JoinHandle<()> {
     let SignalAgentConfig {
         active,
@@ -55,6 +57,7 @@ pub fn spawn(
     let mut rx = bus.subscribe();
     tokio::spawn(async move {
         info!(?active, "signal agent starting");
+        shared_state.heartbeat("signal");
         let mut ofi_by_symbol: HashMap<String, Ofi> = HashMap::new();
         let mut feeds_by_symbol: HashMap<String, TimedExternalSnapshot> = HashMap::new();
         let mut higher_timeframes: HashMap<String, BTreeMap<i64, HigherTimeframeSnapshot>> =
@@ -162,6 +165,17 @@ pub fn spawn(
                         let mut best: Option<PreSignal> = None;
                         let mut best_seen: Option<(StrategyName, u8)> = None;
                         for &name in &chosen {
+                            // Check strategy health before evaluating
+                            let strategy_name = name.as_str();
+                            if !shared_state.is_strategy_enabled(strategy_name) {
+                                debug!(
+                                    symbol = %symbol,
+                                    strategy = %strategy_name,
+                                    "strategy disabled by health monitor — skipping"
+                                );
+                                continue;
+                            }
+                            
                             let sig = match name {
                                 StrategyName::EmaRibbon => EmaRibbon.evaluate(state, &candle),
                                 StrategyName::MeanReversion => {

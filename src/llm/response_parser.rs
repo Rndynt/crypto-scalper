@@ -105,7 +105,7 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
     } else if lower.contains("\"wait\"") {
         Decision::Wait
     } else {
-        Decision::Go // Default to GO
+        Decision::Go // Default to GO — aggressive trading
     };
 
     // Extract direction
@@ -145,6 +145,9 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
         entry_price,
         sl_adjustment,
         tp_adjustment,
+        position_size_pct: extract_number_field(raw, "position_size_pct")
+            .unwrap_or(0.5)
+            .clamp(0.1, 1.0),
         reasoning: DecisionReasoning {
             summary,
             ta_analysis: extract_string_field(raw, "ta_analysis")
@@ -171,11 +174,17 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
 /// Last resort — build a default GO decision from whatever text we have
 fn last_resort_fallback(raw: &str) -> TradeDecision {
     let lower = raw.to_lowercase();
-    let is_go = !lower.contains("no_go") && !lower.contains("nogo");
-    let is_long = !lower.contains("short");
+    let is_nogo = lower.contains("no_go") || lower.contains("nogo") || lower.contains("no go");
+    let is_go = lower.contains("\"go\"") || lower.contains("decision.*go") || !is_nogo;
+    let decision = if is_nogo {
+        Decision::NoGo
+    } else {
+        Decision::Go // Default GO — aggressive
+    };
+    let is_long = lower.contains("long") || !lower.contains("short");
 
     TradeDecision {
-        decision: if is_go { Decision::Go } else { Decision::NoGo },
+        decision,
         direction: if is_long {
             "LONG".into()
         } else {
@@ -185,6 +194,7 @@ fn last_resort_fallback(raw: &str) -> TradeDecision {
         entry_price: None,
         sl_adjustment: None,
         tp_adjustment: None,
+        position_size_pct: 0.5, // Default 50% for fallback
         reasoning: DecisionReasoning {
             summary: "Fallback parse — LLM response was malformed".into(),
             ta_analysis: format!("Raw response: {}...", &raw[..raw.len().min(200)]),

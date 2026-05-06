@@ -18,4 +18,5 @@ pub mod monitoring;
 pub mod portfolio;
 pub mod quant;
 pub mod research;
+pub mod shared_state;
 pub mod strategy;

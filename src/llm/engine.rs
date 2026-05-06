@@ -26,8 +26,16 @@ pub struct TradeDecision {
     pub entry_price: Option<f64>,
     pub sl_adjustment: Option<f64>,
     pub tp_adjustment: Option<f64>,
+    /// LLM-recommended position size as fraction of max size (0.0 - 1.0)
+    /// Based on conviction, Kelly criterion, and risk factors
+    #[serde(default = "default_position_size")]
+    pub position_size_pct: f64,
     pub reasoning: DecisionReasoning,
     pub market_context_score: ContextScore,
+}
+
+fn default_position_size() -> f64 {
+    0.5 // Default 50% size if LLM doesn't specify
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +260,7 @@ impl LlmEngine {
             entry_price: None,
             sl_adjustment: None,
             tp_adjustment: None,
+            position_size_pct: 0.5, // Default 50% for TA-only fallback
             reasoning: DecisionReasoning {
                 summary: "LLM unavailable — TA-only fallback mode".into(),
                 ta_analysis: format!("TA confidence: {}/100", ctx.ta_confidence),

@@ -25,7 +25,7 @@ feed_max_age_secs = 120
 [llm]
 provider = "openai"
 model    = "mimo-v2-omni"
-api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
+api_base = "https://api.xiaomimimo.com/v1/chat/completions"
 timeout_secs = 25
 min_confidence = 50
 fallback_ta_threshold = 60
@@ -34,7 +34,7 @@ max_tokens = 512
 [manager]
 enabled = true
 provider = "openai"
-api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
+api_base = "https://api.xiaomimimo.com/v1/chat/completions"
 model    = "mimo-v2-omni"
 timeout_secs = 20
 max_tokens   = 512

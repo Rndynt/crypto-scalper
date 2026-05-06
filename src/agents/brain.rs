@@ -8,7 +8,7 @@ use crate::agents::messages::{
 use crate::agents::MessageBus;
 use crate::feeds::ExternalSnapshot;
 use crate::learning::LearningPolicy;
-use crate::llm::engine::LlmEngine;
+use crate::llm::engine::{Decision, LlmEngine};
 use crate::llm::ContextBuilder;
 use crate::strategy::state::SymbolState;
 use parking_lot::RwLock as PlRwLock;
@@ -104,15 +104,37 @@ pub fn spawn(
                         }
                     };
 
+                    // Apply LLM position sizing recommendation
+                    // High conviction = larger size, Low conviction = smaller size
+                    let llm_size_pct = llm_out.decision.position_size_pct.clamp(0.1, 1.0);
+                    let adjusted_size = risk.size * llm_size_pct;
+                    
+                    info!(
+                        symbol = %symbol,
+                        risk_size = risk.size,
+                        llm_size_pct = llm_size_pct,
+                        adjusted_size = adjusted_size,
+                        "brain: position sizing applied"
+                    );
+
+                    // Update risk size with LLM-adjusted size
+                    let mut adjusted_risk = risk.clone();
+                    adjusted_risk.size = adjusted_size;
+
+                    // Use LLM-adjusted SL/TP — brain sets exact levels
+                    let final_sl = llm_out.decision.sl_adjustment.unwrap_or(signal.stop_loss);
+                    let final_tp = llm_out.decision.tp_adjustment.unwrap_or(signal.take_profit);
+                    let final_entry = llm_out.decision.entry_price.unwrap_or(signal.entry);
+
                     let _proposal = ManagerProposal {
                         symbol: symbol.clone(),
                         side: signal.side,
                         strategy: signal.strategy.as_str().to_string(),
                         regime: regime.as_str().to_string(),
-                        entry: llm_out.decision.entry_price.unwrap_or(signal.entry),
-                        stop_loss: signal.stop_loss,
-                        take_profit: signal.take_profit,
-                        size: risk.size,
+                        entry: final_entry,
+                        stop_loss: final_sl,
+                        take_profit: final_tp,
+                        size: adjusted_size,
                         ta_confidence: signal.ta_confidence,
                         llm_confidence: llm_out.decision.confidence,
                     };
@@ -126,10 +148,30 @@ pub fn spawn(
                         "brain: decision"
                     );
 
+                    // REJECT low-confidence GOs — brain must be CERTAIN
+                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 70 {
+                        info!(
+                            symbol = %symbol,
+                            confidence = llm_out.decision.confidence,
+                            "brain: REJECTED — Go but confidence too low (< 70)"
+                        );
+                        continue;
+                    }
+
+                    // REJECT if not Go
+                    if llm_out.decision.decision != Decision::Go {
+                        info!(
+                            symbol = %symbol,
+                            decision = ?llm_out.decision.decision,
+                            "brain: REJECTED — not Go"
+                        );
+                        continue;
+                    }
+
                     bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
                         signal: Box::new(signal),
                         regime,
-                        risk: risk.clone(),
+                        risk: adjusted_risk,
                         decision: llm_out.decision,
                         latency_ms: llm_out.latency_ms,
                         offline_fallback: llm_out.offline_fallback,
