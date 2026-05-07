@@ -58,6 +58,18 @@ pub fn spawn(
     tokio::spawn(async move {
         info!(?active, "signal agent starting");
         shared_state.heartbeat("signal");
+
+        // VPIN bucket size helper — target ~$50k USD per bucket
+        fn vpin_bucket_size_for(symbol: &str) -> f64 {
+            match symbol {
+                s if s.starts_with("BTC") => 0.8,   // ~$50k / $62k per BTC
+                s if s.starts_with("ETH") => 16.0,  // ~$50k / $3.1k per ETH
+                s if s.starts_with("SOL") => 250.0, // ~$50k / $200 per SOL
+                s if s.starts_with("BNB") => 120.0, // ~$50k / $420 per BNB
+                _ => 10.0,                           // fallback
+            }
+        }
+
         let mut ofi_by_symbol: HashMap<String, Ofi> = HashMap::new();
         let mut vpin_by_symbol: HashMap<String, Vpin> = HashMap::new();
         let mut feeds_by_symbol: HashMap<String, TimedExternalSnapshot> = HashMap::new();
@@ -85,14 +97,15 @@ pub fn spawn(
                     // Update VPIN tracker
                     let vpin_tracker = vpin_by_symbol
                         .entry(symbol.clone())
-                        .or_insert_with(|| Vpin::new(10.0, 50));
+                        .or_insert_with(|| Vpin::new(vpin_bucket_size_for(&symbol), 50));
                     let vpin_value = vpin_tracker.update(buy_vol, sell_vol);
 
-                    // Store VPIN in state
-                    let mut states = states.lock().await;
-                    if let Some(state) = states.get_mut(&symbol) {
-                        if let Some(vpin) = vpin_value {
-                            state.last_vpin = Some(vpin);
+                    // Store VPIN in state — non-blocking to avoid contention with CandleClosed
+                    if let Some(vpin) = vpin_value {
+                        if let Ok(mut states_guard) = states.try_lock() {
+                            if let Some(state) = states_guard.get_mut(&symbol) {
+                                state.last_vpin = Some(vpin);
+                            }
                         }
                     }
                 }
@@ -115,6 +128,12 @@ pub fn spawn(
                         if let Some(value) = ofi {
                             state.last_ofi = Some(value);
                         }
+                    }
+                }
+                AgentEvent::DepthUpdate { symbol, bids, asks } => {
+                    let mut states = states.lock().await;
+                    if let Some(state) = states.get_mut(&symbol) {
+                        state.order_book.update_depth(bids, asks);
                     }
                 }
                 AgentEvent::CandleClosed {

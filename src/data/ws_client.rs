@@ -31,6 +31,11 @@ pub enum WsEvent {
         best_ask: f64,
         ask_qty: f64,
     },
+    DepthUpdate {
+        symbol: String,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+    },
     Heartbeat,
     Disconnected(String),
 }
@@ -55,7 +60,11 @@ impl WsClient {
             .iter()
             .flat_map(|s| {
                 let lower = s.to_lowercase();
-                vec![format!("{lower}@trade"), format!("{lower}@bookTicker")]
+                vec![
+                    format!("{lower}@trade"),
+                    format!("{lower}@bookTicker"),
+                    format!("{lower}@depth20@100ms"),
+                ]
             })
             .collect();
         let joined = streams.join("/");
@@ -171,6 +180,16 @@ struct BinanceBookTicker {
     ask_qty: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BinanceDepth {
+    #[serde(rename = "s")]
+    symbol: String,
+    #[serde(rename = "b")]
+    bids: Vec<[String; 2]>,
+    #[serde(rename = "a")]
+    asks: Vec<[String; 2]>,
+}
+
 async fn handle_text(txt: &str, tx: &mpsc::Sender<WsEvent>) -> anyhow::Result<()> {
     let value: serde_json::Value = serde_json::from_str(txt).context("ws: text is not json")?;
     let stream = value
@@ -208,6 +227,28 @@ async fn handle_text(txt: &str, tx: &mpsc::Sender<WsEvent>) -> anyhow::Result<()
                 ask_qty: parsed.data.ask_qty.parse()?,
             })
             .await;
+    } else if stream.contains("@depth") {
+        let parsed: CombinedMsg<BinanceDepth> =
+            serde_json::from_value(value).context("parse depth")?;
+        let bids: Vec<(f64, f64)> = parsed.data.bids.iter()
+            .filter_map(|b| {
+                let price = b[0].parse::<f64>().ok()?;
+                let qty = b[1].parse::<f64>().ok()?;
+                Some((price, qty))
+            })
+            .collect();
+        let asks: Vec<(f64, f64)> = parsed.data.asks.iter()
+            .filter_map(|a| {
+                let price = a[0].parse::<f64>().ok()?;
+                let qty = a[1].parse::<f64>().ok()?;
+                Some((price, qty))
+            })
+            .collect();
+        let _ = tx.send(WsEvent::DepthUpdate {
+            symbol: parsed.data.symbol,
+            bids,
+            asks,
+        }).await;
     }
     Ok(())
 }

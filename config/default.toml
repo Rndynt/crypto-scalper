@@ -27,6 +27,7 @@ active = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
 # Lower TA threshold — the strategies already score conservatively (62-68 base).
 # Setting this to 60 lets the strategy confidence scores pass through.
 min_ta_confidence = 60
+paper_scout_enabled = true
 
 [advanced_alpha]
 # Disabled by default. When enabled, external data + Kalman trend context can

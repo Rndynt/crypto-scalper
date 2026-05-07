@@ -207,7 +207,7 @@ impl LlmEngine {
 
         info!(llm_raw = %text, "LLM response");
         let d = parse_trade_decision(text)?;
-        Ok(sanitize_prices(d, ctx.current_price))
+        Ok(sanitize_prices(d, current_price))
     }
 
     /// OpenAI-compatible chat completions API — used by OpenRouter, OpenAI,

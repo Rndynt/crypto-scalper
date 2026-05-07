@@ -105,6 +105,13 @@ async fn run(bus: MessageBus, cfg: DataAgentConfig) {
                     ask_qty,
                 });
             }
+            WsEvent::DepthUpdate { symbol, bids, asks } => {
+                bus.publish(AgentEvent::DepthUpdate {
+                    symbol,
+                    bids,
+                    asks,
+                });
+            }
             WsEvent::Heartbeat => {}
             WsEvent::Disconnected(reason) => {
                 warn!(%reason, "data agent: ws disconnected — reconnect pending");

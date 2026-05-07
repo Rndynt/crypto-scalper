@@ -192,6 +192,8 @@ fn last_resort_fallback(raw: &str) -> TradeDecision {
             microstructure: "N/A".into(),
             risk_factors: "LLM response could not be parsed — unknown decision, defaulting to NO_GO.".into(),
             invalidation: "N/A".into(),
+            sentiment_analysis: String::new(),
+            fundamental_analysis: String::new(),
         },
         market_context_score: ContextScore {
             ta_score: 0,
@@ -199,6 +201,7 @@ fn last_resort_fallback(raw: &str) -> TradeDecision {
             sentiment_score: 0,
             risk_score: 0,
             composite_score: 0,
+            fundamental_score: 0,
         },
     }
 }

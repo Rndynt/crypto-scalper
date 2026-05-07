@@ -55,6 +55,12 @@ pub enum AgentEvent {
         best_ask: f64,
         ask_qty: f64,
     },
+    /// Full L2 depth update (20 levels).
+    DepthUpdate {
+        symbol: String,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+    },
     /// `DataAgent` finalized a candle for a symbol.
     CandleClosed {
         symbol: String,
