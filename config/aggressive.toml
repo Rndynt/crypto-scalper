@@ -18,7 +18,10 @@ min_ta_confidence = 60
 paper_scout_enabled = true
 
 [advanced_alpha]
-enabled = true
+# Disabled during cold-start — with < 20 trades, alpha gate causes double-penalty
+# with LLM confidence scoring and creates a death spiral (loss → penalty → no trade → no recovery)
+# Re-enable after bot has 50+ trades with stable win rate
+enabled = false
 min_abs_score = 0.15
 reduce_confidence_delta = 3
 feed_max_age_secs = 300
@@ -51,7 +54,7 @@ max_daily_loss_pct = 8.0
 max_drawdown_pct   = 15.0
 max_leverage       = 100
 max_spread_pct     = 0.08
-min_reward_risk    = 1.2
+min_reward_risk    = 1.0        # 1:1 R:R minimum untuk scalping (1.2 terlalu ketat, blokir banyak signal)
 min_net_edge_bps   = 15.0
 max_position_notional_pct = 500.0
 assumed_daily_volume_usd = 1000000000000.0
@@ -92,7 +95,7 @@ poll_secs                 = 2
 [quant]
 enabled                = true
 kelly_cap              = 0.20
-kelly_min_trades       = 10
+kelly_min_trades       = 20      # Must have 20+ trades before Kelly activates (prevents negative Kelly from bad cold-start WR)
 target_vol_annual      = 0.50
 max_vol_multiplier     = 2.0
 vol_window             = 30

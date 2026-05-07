@@ -51,15 +51,18 @@ STEP 3 — FUNDING CHECK (if data available)
   SHORT signal + funding_rate < -0.05% → shorts paying premium, unfavorable (-10 confidence)
 
 STEP 4 — STRATEGY-HISTORICAL CHECK
-  If strategy_loss_streak >= 3 → reduce confidence -15
-  If strategy_win_rate < 0.40 and strategy_total_trades >= 5 → reduce confidence -10
-  If ⚠️ WARNING appears in historical data → reduce confidence -10 minimum
+  Only apply penalties if strategy has >= 10 trades (small sample = unreliable):
+  If strategy_loss_streak >= 5 → reduce confidence -10 (was -15, reduced to avoid death spiral)
+  If strategy_loss_streak >= 3 AND strategy_total_trades >= 10 → reduce confidence -5
+  If strategy_win_rate < 0.35 AND strategy_total_trades >= 10 → reduce confidence -8
+  If ⚠️ WARNING appears AND strategy_total_trades >= 10 → reduce confidence -5
+  NOTE: Never penalize based on fewer than 5 trades — statistically meaningless.
 
 STEP 5 — CONFIDENCE DECISION
-  confidence >= 75 → GO (position_size_pct = 1.0)
-  confidence 65-74 → GO (position_size_pct = 0.6)
-  confidence 55-64 → WAIT (do not trade, monitor)
-  confidence < 55  → NO_GO
+  confidence >= 70 → GO (position_size_pct = 1.0)
+  confidence 60-69 → GO (position_size_pct = 0.6)
+  confidence 50-59 → WAIT (do not trade, monitor)
+  confidence < 50  → NO_GO
 
 STEP 6 — PRICE CALCULATION (only if decision = GO)
   entry_price = current_price (or proposed_entry if within 0.1% of current_price)
