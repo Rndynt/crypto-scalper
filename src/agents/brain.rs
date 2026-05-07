@@ -30,6 +30,7 @@ pub fn spawn(
     policy: LearningPolicy,
     feeds_cache: Arc<PlRwLock<HashMap<String, ExternalSnapshot>>>,
     shared_state: Option<Arc<crate::shared_state::SharedState>>,
+    fail_closed_without_llm: bool,
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
     // Track last LLM call time per symbol for deduplication
@@ -175,12 +176,22 @@ pub fn spawn(
                         "brain: decision"
                     );
 
-                    // REJECT low-confidence GOs — brain must be CERTAIN
-                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 70 {
+                    // BLOCK TA-only fallback if fail_closed_without_llm is set.
+                    // TA fallback is not quant trading — it's just indicators.
+                    if llm_out.offline_fallback && fail_closed_without_llm {
+                        warn!(
+                            symbol = %symbol,
+                            "brain: BLOCKED — LLM failed and fail_closed_without_llm=true, no TA fallback allowed"
+                        );
+                        continue;
+                    }
+
+                    // REJECT low-confidence GOs
+                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 60 {
                         info!(
                             symbol = %symbol,
                             confidence = llm_out.decision.confidence,
-                            "brain: REJECTED — Go but confidence too low (< 70)"
+                            "brain: REJECTED — Go but confidence too low (< 60)"
                         );
                         continue;
                     }
