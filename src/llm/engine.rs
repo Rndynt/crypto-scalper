@@ -216,8 +216,8 @@ impl LlmEngine {
         let body = serde_json::json!({
             "model": self.cfg.model,
             "max_tokens": self.cfg.max_tokens,
-            "temperature": 0.0,   // Deterministic — no creativity in trading
-            "top_p": 0.1,         // Very focused sampling — reduces hallucination
+            "temperature": 0.1,   // 0.0 causes empty responses on some APIs including Mimo
+            // top_p intentionally omitted — not supported by all providers (Mimo, Together, etc.)
             "messages": [
                 { "role": "system", "content": ARIA_SYSTEM_PROMPT },
                 { "role": "user",   "content": prompt }
@@ -236,7 +236,25 @@ impl LlmEngine {
             req = req.header("X-Title", t);
         }
 
-        let resp: serde_json::Value = req.send().await?.json().await?;
+        // Read raw bytes first so we can log what the API actually returned
+        let http_resp = req.send().await?;
+        let status = http_resp.status();
+        let raw_bytes = http_resp.bytes().await?;
+        let raw_str = String::from_utf8_lossy(&raw_bytes);
+
+        if raw_bytes.is_empty() || raw_str.trim().is_empty() {
+            warn!(status = %status, "LLM returned empty body — check API key, model name, and parameters");
+            return Err(ScalperError::Llm(format!("empty body (HTTP {status}) — API may not support these parameters")));
+        }
+
+        let resp: serde_json::Value = serde_json::from_str(&raw_str)
+            .map_err(|e| ScalperError::Llm(format!("json parse error: {e} | raw={raw_str}")))?;
+
+        // Check for API error response (e.g. {"error": {...}})
+        if let Some(err) = resp.get("error") {
+            warn!(api_error = %err, "LLM API returned error object");
+            return Err(ScalperError::Llm(format!("API error: {err}")));
+        }
 
         // Some reasoning models (MiMo, DeepSeek-R1) put the response in
         // "reasoning_content" instead of "content". Check both.

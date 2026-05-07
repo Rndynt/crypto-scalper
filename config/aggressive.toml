@@ -34,7 +34,7 @@ api_base = "https://api.xiaomimimo.com/v1/chat/completions"
 timeout_secs = 30
 min_confidence = 40
 fallback_ta_threshold = 50
-max_tokens = 512
+max_tokens = 800    # JSON response needs ~400 tokens, 512 too small = truncated/empty response
 
 [manager]
 enabled = true
@@ -42,7 +42,7 @@ provider = "openai"
 api_base = "https://api.xiaomimimo.com/v1/chat/completions"
 model    = "mimo-v2-omni"
 timeout_secs = 20
-max_tokens   = 512
+max_tokens   = 400   # Manager only needs approve/reject, 400 is enough
 fast_approve_min_conf = 55
 fail_open_on_error = true
 
