@@ -1179,7 +1179,7 @@ fn cmd_brain(ctrl_state: &Arc<Mutex<ControlState>>) -> String {
             crate::llm::engine::Decision::Wait => "⏳ WAIT",
         };
         let ta_analysis = truncate_ctrl(&brain.decision.reasoning.ta_analysis, 100);
-        let sentiment = truncate_ctrl(&brain.decision.reasoning.sentiment_analysis, 80);
+        let sentiment = truncate_ctrl(&brain.decision.reasoning.microstructure, 80);
         let risks = truncate_ctrl(&brain.decision.reasoning.risk_factors, 80);
 
         lines.push(format!(

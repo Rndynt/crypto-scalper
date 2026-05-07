@@ -409,11 +409,10 @@ fn build_manager_user_prompt(
 
     s.push_str("\n[BRAIN AGENT REASONING]\n");
     s.push_str(&format!(
-        "  decision={:?} ta_score={:.1} sentiment_score={:.1} fundamental_score={:.1} composite={:.1}\n",
+        "  decision={:?} ta_score={:.1} microstructure_score={:.1} composite={:.1}\n",
         brain.decision.decision,
         brain.decision.market_context_score.ta_score,
-        brain.decision.market_context_score.sentiment_score,
-        brain.decision.market_context_score.fundamental_score,
+        brain.decision.market_context_score.microstructure_score,
         brain.decision.market_context_score.composite_score
     ));
     s.push_str(&format!(

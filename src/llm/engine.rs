@@ -42,19 +42,33 @@ fn default_position_size() -> f64 {
 pub struct DecisionReasoning {
     pub summary: String,
     pub ta_analysis: String,
-    pub sentiment_analysis: String,
-    pub fundamental_analysis: String,
+    /// Microstructure: OFI direction, VPIN level — replaces hallucination-prone
+    /// "sentiment_analysis" and "fundamental_analysis" fields.
+    #[serde(default, alias = "microstructure")]
+    pub microstructure: String,
     pub risk_factors: String,
     pub invalidation: String,
+    // Legacy fields — kept for backwards compat with old LLM responses,
+    // ignored in new prompt.
+    #[serde(default, skip_serializing)]
+    pub sentiment_analysis: String,
+    #[serde(default, skip_serializing)]
+    pub fundamental_analysis: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct ContextScore {
     pub ta_score: u8,
+    /// Microstructure score: OFI + VPIN quality.
+    #[serde(default, alias = "microstructure_score")]
+    pub microstructure_score: u8,
+    #[serde(default)]
     pub sentiment_score: u8,
-    pub fundamental_score: u8,
     pub risk_score: u8,
     pub composite_score: u8,
+    // Legacy alias
+    #[serde(default, skip_serializing)]
+    pub fundamental_score: u8,
 }
 
 /// LLM provider — wire format differs between Anthropic-native and the
@@ -125,10 +139,11 @@ impl LlmEngine {
         }
 
         let prompt = ctx.build_prompt();
+        let price = ctx.current_price;
 
         match timeout(
             Duration::from_secs(self.cfg.timeout_secs),
-            self.call_api(&prompt),
+            self.call_api(&prompt, price),
         )
         .await
         {
@@ -156,15 +171,15 @@ impl LlmEngine {
         }
     }
 
-    async fn call_api(&self, prompt: &str) -> Result<TradeDecision> {
+    async fn call_api(&self, prompt: &str, current_price: f64) -> Result<TradeDecision> {
         match self.cfg.provider {
-            LlmProvider::Anthropic => self.call_anthropic(prompt).await,
-            LlmProvider::OpenAiCompatible => self.call_openai_compat(prompt).await,
+            LlmProvider::Anthropic => self.call_anthropic(prompt, current_price).await,
+            LlmProvider::OpenAiCompatible => self.call_openai_compat(prompt, current_price).await,
         }
     }
 
     /// Anthropic Messages API — `POST /v1/messages` with `x-api-key`.
-    async fn call_anthropic(&self, prompt: &str) -> Result<TradeDecision> {
+    async fn call_anthropic(&self, prompt: &str, current_price: f64) -> Result<TradeDecision> {
         let body = serde_json::json!({
             "model": self.cfg.model,
             "max_tokens": self.cfg.max_tokens,
@@ -191,16 +206,18 @@ impl LlmEngine {
             .ok_or_else(|| ScalperError::Llm(format!("empty response: {resp}")))?;
 
         info!(llm_raw = %text, "LLM response");
-        parse_trade_decision(text)
+        let d = parse_trade_decision(text)?;
+        Ok(sanitize_prices(d, ctx.current_price))
     }
 
     /// OpenAI-compatible chat completions API — used by OpenRouter, OpenAI,
     /// Together, Groq, etc. `POST /chat/completions` with bearer auth.
-    async fn call_openai_compat(&self, prompt: &str) -> Result<TradeDecision> {
+    async fn call_openai_compat(&self, prompt: &str, current_price: f64) -> Result<TradeDecision> {
         let body = serde_json::json!({
             "model": self.cfg.model,
             "max_tokens": self.cfg.max_tokens,
-            "temperature": 0.2,
+            "temperature": 0.0,   // Deterministic — no creativity in trading
+            "top_p": 0.1,         // Very focused sampling — reduces hallucination
             "messages": [
                 { "role": "system", "content": ARIA_SYSTEM_PROMPT },
                 { "role": "user",   "content": prompt }
@@ -244,7 +261,8 @@ impl LlmEngine {
         }
 
         info!(llm_raw = %text, "LLM response");
-        parse_trade_decision(text)
+        let d = parse_trade_decision(text)?;
+        Ok(sanitize_prices(d, current_price))
     }
 
     fn fallback_decision(ctx: &MarketContext, threshold: u8) -> TradeDecision {
@@ -260,22 +278,85 @@ impl LlmEngine {
             entry_price: None,
             sl_adjustment: None,
             tp_adjustment: None,
-            position_size_pct: 0.5, // Default 50% for TA-only fallback
+            position_size_pct: 0.5,
             reasoning: DecisionReasoning {
                 summary: "LLM unavailable — TA-only fallback mode".into(),
                 ta_analysis: format!("TA confidence: {}/100", ctx.ta_confidence),
-                sentiment_analysis: "N/A (LLM offline)".into(),
-                fundamental_analysis: "N/A (LLM offline)".into(),
+                microstructure: "LLM offline — microstructure not evaluated".into(),
                 risk_factors: format!("LLM offline — raised TA threshold to {threshold}+"),
                 invalidation: "Any TA signal reversal".into(),
+                sentiment_analysis: String::new(),
+                fundamental_analysis: String::new(),
             },
             market_context_score: ContextScore {
                 ta_score: ctx.ta_confidence,
+                microstructure_score: 0,
                 sentiment_score: 0,
-                fundamental_score: 0,
                 risk_score: 50,
                 composite_score: ctx.ta_confidence,
+                fundamental_score: 0,
             },
         }
     }
+}
+
+/// Validate LLM-provided prices against current market price.
+/// Catches hallucinated prices (e.g. LLM returns BTC SL of $100 when price is $67k).
+/// If prices are unreasonable, nullify them so the system uses its own computed values.
+fn sanitize_prices(mut d: TradeDecision, current_price: f64) -> TradeDecision {
+    if current_price <= 0.0 {
+        return d;
+    }
+
+    // Entry must be within 1% of current price — reject stale/hallucinated entries
+    if let Some(entry) = d.entry_price {
+        let deviation = (entry - current_price).abs() / current_price;
+        if deviation > 0.01 {
+            warn!(
+                entry,
+                current_price,
+                deviation_pct = deviation * 100.0,
+                "sanitize: entry price too far from market — nullifying"
+            );
+            d.entry_price = None;
+            d.sl_adjustment = None;
+            d.tp_adjustment = None;
+            return d;
+        }
+    }
+
+    // SL must be 0.1% – 3% away from entry (or current_price if entry is null)
+    let reference = d.entry_price.unwrap_or(current_price);
+    if let Some(sl) = d.sl_adjustment {
+        let dist = (sl - reference).abs() / reference;
+        if dist < 0.001 || dist > 0.03 {
+            warn!(
+                sl,
+                reference,
+                dist_pct = dist * 100.0,
+                "sanitize: SL distance unreasonable — nullifying SL/TP"
+            );
+            d.sl_adjustment = None;
+            d.tp_adjustment = None;
+            return d;
+        }
+    }
+
+    // TP must be at least 1.5× SL distance (minimum R:R)
+    if let (Some(sl), Some(tp)) = (d.sl_adjustment, d.tp_adjustment) {
+        let sl_dist = (sl - reference).abs();
+        let tp_dist = (tp - reference).abs();
+        if sl_dist > 0.0 && tp_dist < sl_dist * 1.4 {
+            warn!(
+                sl,
+                tp,
+                sl_dist,
+                tp_dist,
+                "sanitize: R:R below 1.4 — nullifying TP"
+            );
+            d.tp_adjustment = None;
+        }
+    }
+
+    d
 }

@@ -2,7 +2,7 @@
 //! from free models (markdown fences, leading prose, BOM, word numbers,
 //! missing fields, trailing commas).
 
-use crate::errors::Result;
+use crate::errors::{Result, ScalperError};
 use crate::llm::engine::{ContextScore, Decision, DecisionReasoning, TradeDecision};
 
 /// Main entry point — tries strict parse first, then lenient, then regex fallback.
@@ -93,28 +93,30 @@ fn remove_trailing_commas(s: &str) -> String {
     result
 }
 
-/// Regex-based fallback — extract key fields from messy JSON
+/// Regex-based fallback — extract key fields from messy JSON.
+/// CONSERVATIVE defaults: NO_GO when uncertain. Never default to GO.
 fn regex_fallback(raw: &str) -> Option<TradeDecision> {
     let lower = raw.to_lowercase();
 
-    // Extract decision
-    let decision = if lower.contains("\"go\"") {
+    // Extract decision — must be EXPLICIT. Ambiguous = NO_GO.
+    let decision = if lower.contains("\"go\"") && !lower.contains("\"no_go\"") {
         Decision::Go
-    } else if lower.contains("\"no_go\"") || lower.contains("\"nogo\"") {
+    } else if lower.contains("\"no_go\"") || lower.contains("\"nogo\"") || lower.contains("no go") {
         Decision::NoGo
     } else if lower.contains("\"wait\"") {
         Decision::Wait
     } else {
-        Decision::Go // Default to GO — aggressive trading
+        // SAFE DEFAULT: do not trade when response is ambiguous
+        Decision::NoGo
     };
 
-    // Extract direction
-    let direction = if lower.contains("\"long\"") || lower.contains("long") {
+    // Extract direction — only if explicitly stated
+    let direction = if lower.contains("\"long\"") {
         "LONG"
-    } else if lower.contains("\"short\"") || lower.contains("short") {
+    } else if lower.contains("\"short\"") {
         "SHORT"
     } else {
-        "LONG" // Default to LONG in bull market
+        "NONE"
     };
 
     // Extract confidence — look for "confidence": NUMBER
@@ -129,8 +131,8 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
 
     // Extract scores
     let ta_score = extract_number_field(raw, "ta_score").unwrap_or(60.0) as u8;
+    let microstructure_score = extract_number_field(raw, "microstructure_score").unwrap_or(50.0) as u8;
     let sentiment_score = extract_number_field(raw, "sentiment_score").unwrap_or(50.0) as u8;
-    let fundamental_score = extract_number_field(raw, "fundamental_score").unwrap_or(50.0) as u8;
     let risk_score = extract_number_field(raw, "risk_score").unwrap_or(60.0) as u8;
     let composite_score = extract_number_field(raw, "composite_score").unwrap_or(55.0) as u8;
 
@@ -152,63 +154,51 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
             summary,
             ta_analysis: extract_string_field(raw, "ta_analysis")
                 .unwrap_or_else(|| "Technical analysis applied".into()),
-            sentiment_analysis: extract_string_field(raw, "sentiment_analysis")
-                .unwrap_or_else(|| "Sentiment neutral".into()),
-            fundamental_analysis: extract_string_field(raw, "fundamental_analysis")
-                .unwrap_or_else(|| "No major catalysts".into()),
+            microstructure: extract_string_field(raw, "microstructure")
+                .or_else(|| extract_string_field(raw, "sentiment_analysis"))
+                .unwrap_or_else(|| "Microstructure data not evaluated".into()),
             risk_factors: extract_string_field(raw, "risk_factors")
                 .unwrap_or_else(|| "Standard market risk".into()),
             invalidation: extract_string_field(raw, "invalidation")
                 .unwrap_or_else(|| "Trend reversal".into()),
+            sentiment_analysis: String::new(),
+            fundamental_analysis: String::new(),
         },
         market_context_score: ContextScore {
             ta_score,
+            microstructure_score,
             sentiment_score,
-            fundamental_score,
             risk_score,
             composite_score,
+            fundamental_score: 0,
         },
     })
 }
 
-/// Last resort — build a default GO decision from whatever text we have
+/// Last resort — ALWAYS NO_GO. Malformed response = do not trade.
+/// A parse failure means we cannot trust the LLM output at all.
 fn last_resort_fallback(raw: &str) -> TradeDecision {
-    let lower = raw.to_lowercase();
-    let is_nogo = lower.contains("no_go") || lower.contains("nogo") || lower.contains("no go");
-    let is_go = lower.contains("\"go\"") || lower.contains("decision.*go") || !is_nogo;
-    let decision = if is_nogo {
-        Decision::NoGo
-    } else {
-        Decision::Go // Default GO — aggressive
-    };
-    let is_long = lower.contains("long") || !lower.contains("short");
-
     TradeDecision {
-        decision,
-        direction: if is_long {
-            "LONG".into()
-        } else {
-            "SHORT".into()
-        },
-        confidence: 55,
+        decision: Decision::NoGo, // SAFE: never trade on unparseable response
+        direction: "NONE".into(),
+        confidence: 0,
         entry_price: None,
         sl_adjustment: None,
         tp_adjustment: None,
-        position_size_pct: 0.5, // Default 50% for fallback
+        position_size_pct: 0.0,
         reasoning: DecisionReasoning {
-            summary: "Fallback parse — LLM response was malformed".into(),
-            ta_analysis: format!("Raw response: {}...", &raw[..raw.len().min(200)]),
-            sentiment_analysis: "Unable to parse sentiment".into(),
-            fundamental_analysis: "Unable to parse fundamentals".into(),
-            risk_factors: "Parse failure increases uncertainty".into(),
-            invalidation: "Manual review recommended".into(),
+            summary: "PARSE FAILURE — response malformed, trade blocked for safety.".into(),
+            ta_analysis: format!("Raw (first 300 chars): {}...", &raw[..raw.len().min(300)]),
+            microstructure: "N/A".into(),
+            risk_factors: "LLM response could not be parsed — unknown decision, defaulting to NO_GO.".into(),
+            invalidation: "N/A".into(),
         },
         market_context_score: ContextScore {
-            ta_score: 55,
-            sentiment_score: 50,
-            fundamental_score: 50,
-            risk_score: 50,
-            composite_score: 55,
+            ta_score: 0,
+            microstructure_score: 0,
+            sentiment_score: 0,
+            risk_score: 0,
+            composite_score: 0,
         },
     }
 }
