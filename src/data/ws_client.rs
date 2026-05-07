@@ -12,7 +12,9 @@ use serde::Deserialize;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
+use native_tls::TlsConnector;
+use tokio_tungstenite::Connector;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -78,7 +80,13 @@ impl WsClient {
             };
 
             info!(url = %url, "ws connect");
-            match connect_async(url.as_str()).await {
+            // Accept invalid certs — Termux has broken CA chain for Binance
+            let connector = TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .expect("Failed to create TLS connector");
+            let connector = Some(Connector::NativeTls(connector));
+            match connect_async_tls_with_config(url.as_str(), None, false, connector).await {
                 Ok((mut stream, _)) => {
                     backoff_ms = 500;
                     loop {
