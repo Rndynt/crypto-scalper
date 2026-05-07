@@ -23,9 +23,11 @@ reduce_confidence_delta = 5
 feed_max_age_secs = 120
 
 [llm]
-provider = "openai"
-model    = "mimo-v2-omni"
-api_base = "https://api.xiaomimimo.com/v1/chat/completions"
+# RECOMMENDED for live: Use proven LLM (Claude/GPT-4o-mini)
+# Set OPENROUTER_API_KEY in .env before using!
+provider = "openrouter"
+model    = "anthropic/claude-3.5-haiku"
+api_base = "https://openrouter.ai/api/v1/chat/completions"
 timeout_secs = 25
 min_confidence = 50
 fallback_ta_threshold = 60
@@ -33,9 +35,9 @@ max_tokens = 512
 
 [manager]
 enabled = true
-provider = "openai"
-api_base = "https://api.xiaomimimo.com/v1/chat/completions"
-model    = "mimo-v2-omni"
+provider = "openrouter"
+api_base = "https://openrouter.ai/api/v1/chat/completions"
+model    = "anthropic/claude-3.5-haiku"
 timeout_secs = 20
 max_tokens   = 512
 fast_approve_min_conf = 60

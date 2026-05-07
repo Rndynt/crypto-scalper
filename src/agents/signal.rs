@@ -8,7 +8,7 @@ use crate::agents::MessageBus;
 use crate::config::{AdvancedAlphaCfg, Schedule};
 use crate::data::Side;
 use crate::feeds::ExternalSnapshot;
-use crate::microstructure::Ofi;
+use crate::microstructure::{Ofi, Vpin};
 use crate::quant::QuantEngine;
 use crate::strategy::{
     alpha_gate::{
@@ -59,6 +59,7 @@ pub fn spawn(
         info!(?active, "signal agent starting");
         shared_state.heartbeat("signal");
         let mut ofi_by_symbol: HashMap<String, Ofi> = HashMap::new();
+        let mut vpin_by_symbol: HashMap<String, Vpin> = HashMap::new();
         let mut feeds_by_symbol: HashMap<String, TimedExternalSnapshot> = HashMap::new();
         let mut higher_timeframes: HashMap<String, BTreeMap<i64, HigherTimeframeSnapshot>> =
             HashMap::new();
@@ -72,6 +73,28 @@ pub fn spawn(
                             ts: msg.ts,
                         },
                     );
+                }
+                AgentEvent::Tick { symbol, trade } => {
+                    // Classify trade direction and update VPIN
+                    let (buy_vol, sell_vol) = if trade.is_buyer_maker {
+                        (0.0, trade.qty) // seller aggressor = sell volume
+                    } else {
+                        (trade.qty, 0.0) // buyer aggressor = buy volume
+                    };
+
+                    // Update VPIN tracker
+                    let vpin_tracker = vpin_by_symbol
+                        .entry(symbol.clone())
+                        .or_insert_with(|| Vpin::new(10.0, 50));
+                    let vpin_value = vpin_tracker.update(buy_vol, sell_vol);
+
+                    // Store VPIN in state
+                    let mut states = states.lock().await;
+                    if let Some(state) = states.get_mut(&symbol) {
+                        if let Some(vpin) = vpin_value {
+                            state.last_vpin = Some(vpin);
+                        }
+                    }
                 }
                 AgentEvent::BookTicker {
                     symbol,

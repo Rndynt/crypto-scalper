@@ -56,6 +56,10 @@ pub struct MarketContext {
     pub overall_total_trades: u64,
     #[serde(default)]
     pub recent_trade_pnl: f64,
+    #[serde(default)]
+    pub ofi: Option<f64>,
+    #[serde(default)]
+    pub vpin: Option<f64>,
 }
 
 pub struct ContextBuilder;
@@ -111,6 +115,8 @@ impl ContextBuilder {
             overall_win_rate: 0.0,
             overall_total_trades: 0,
             recent_trade_pnl: 0.0,
+            ofi: state.last_ofi,
+            vpin: state.last_vpin,
         }
     }
 }
@@ -167,6 +173,21 @@ impl MarketContext {
         }
         if let Some(sp) = self.spread_pct {
             let _ = writeln!(s, "  Spread %      : {sp:.4}");
+        }
+
+        // Microstructure signals — OFI and VPIN
+        let _ = writeln!(s, "\n[MICROSTRUCTURE]");
+        if let Some(ofi) = self.ofi {
+            let pressure = if ofi > 0.0 { "BUY" } else if ofi < 0.0 { "SELL" } else { "NEUTRAL" };
+            let _ = writeln!(s, "  OFI           : {ofi:.2} ({pressure} pressure)");
+        } else {
+            let _ = writeln!(s, "  OFI           : N/A (waiting for data)");
+        }
+        if let Some(vpin) = self.vpin {
+            let risk = if vpin > 0.5 { "⚠️ HIGH" } else if vpin > 0.3 { "MODERATE" } else { "LOW" };
+            let _ = writeln!(s, "  VPIN          : {vpin:.3} ({risk} adverse selection risk)");
+        } else {
+            let _ = writeln!(s, "  VPIN          : N/A (warming up, need 50 buckets)");
         }
 
         if let Some(fg) = &self.external.fear_greed {
