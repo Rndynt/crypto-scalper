@@ -15,13 +15,14 @@ use crate::strategy::{
         advanced_alpha_gate, alt_data_inputs_from_snapshot, funding_rate_from_snapshot,
         kalman_trend_score, AdvancedAlphaInputs, AlphaGateDecision,
     },
-    ema_ribbon::EmaRibbon,
-    mean_reversion::MeanReversion,
-    momentum::Momentum,
+    // Quant strategies — order flow, microstructure, Kalman
+    kalman_trend::KalmanTrendStrategy,
+    microstructure_reversion::MicrostructureReversion,
+    order_flow::OrderFlow,
+    trade_flow::TradeFlow,
     select_strategies,
     squeeze::Squeeze,
     state::{PreSignal, StrategyName, SymbolState},
-    vwap_scalp::VwapScalp,
     RegimeDetector, Strategy,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Timelike, Utc};
@@ -214,13 +215,12 @@ pub fn spawn(
                             }
                             
                             let sig = match name {
-                                StrategyName::EmaRibbon => EmaRibbon.evaluate(state, &candle),
-                                StrategyName::MeanReversion => {
-                                    MeanReversion.evaluate(state, &candle)
-                                }
-                                StrategyName::Momentum => Momentum.evaluate(state, &candle),
-                                StrategyName::VwapScalp => VwapScalp.evaluate(state, &candle),
-                                StrategyName::Squeeze => Squeeze.evaluate(state, &candle),
+                                // Quant strategies mapped to existing StrategyName slots
+                                StrategyName::EmaRibbon     => OrderFlow.evaluate(state, &candle),
+                                StrategyName::Momentum      => TradeFlow.evaluate(state, &candle),
+                                StrategyName::VwapScalp     => KalmanTrendStrategy.evaluate(state, &candle),
+                                StrategyName::MeanReversion => MicrostructureReversion.evaluate(state, &candle),
+                                StrategyName::Squeeze       => Squeeze.evaluate(state, &candle),
                             };
                             if let Some(mut s) = sig {
                                 if best_seen
