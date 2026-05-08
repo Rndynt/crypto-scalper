@@ -139,6 +139,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
     }
 
     if cfg.telegram_commands_enabled && !telegram_token.is_empty() && !telegram_chat_id.is_empty() {
+        info!("telegram loop spawning token_len={} chat_id={}", telegram_token.len(), telegram_chat_id);
         let bus_t = bus.clone();
         let risk_t = risk.clone();
         let book_t = book.clone();

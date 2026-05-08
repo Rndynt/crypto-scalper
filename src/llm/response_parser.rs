@@ -43,7 +43,26 @@ fn clean(raw: &str) -> String {
         .trim_end_matches("```")
         .trim();
 
-    // If there's surrounding prose, try to extract the outermost braces.
+    // For reasoning models: find the LAST JSON object containing "decision"
+    // to avoid picking up example JSON from prompt echoes
+    let mut last_start: Option<usize> = None;
+    let mut last_end: Option<usize> = None;
+    let mut pos = 0;
+    while let Some(start) = trimmed[pos..].find('{').map(|i| pos + i) {
+        if let Some(end) = trimmed[start..].rfind('}').map(|i| start + i) {
+            let slice = &trimmed[start..=end];
+            if slice.contains("\"decision\"") || slice.contains("\"confidence\"") {
+                last_start = Some(start);
+                last_end = Some(end);
+            }
+        }
+        pos = start + 1;
+    }
+    if let (Some(s), Some(e)) = (last_start, last_end) {
+        return trimmed[s..=e].to_string();
+    }
+
+    // Fallback: outermost braces
     if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
         if end > start {
             return trimmed[start..=end].to_string();

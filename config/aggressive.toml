@@ -8,14 +8,14 @@ dry_run = true
 fail_closed_without_llm = true
 
 [pairs]
-symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-timeframes = ["1m", "5m", "15m"]
+symbols    = ["BTCUSDT", "ETHUSDT"]
+timeframes = ["3m", "5m", "15m"]
 
 [strategy]
 mode   = "adaptive"
 active = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
-min_ta_confidence = 60
-paper_scout_enabled = true
+min_ta_confidence = 55
+paper_scout_enabled = false
 
 [advanced_alpha]
 # Disabled during cold-start — with < 20 trades, alpha gate causes double-penalty
@@ -32,34 +32,34 @@ feed_max_age_secs = 300
 provider = "openai"
 model = "mimo-v2.5-pro"
 api_base = "https://api.xiaomimimo.com/v1/chat/completions"
-timeout_secs  = 30
+timeout_secs = 90
 min_confidence = 40
 fallback_ta_threshold = 50
-max_tokens = 2000
+max_tokens = 4000
 
 [manager]
 enabled       = true
 provider = "openai"
 api_base = "https://api.xiaomimimo.com/v1/chat/completions"
 model = "mimo-v2.5-pro"
-timeout_secs  = 20
-max_tokens = 800
+timeout_secs = 60
+max_tokens = 400
 fast_approve_min_conf = 55
 fail_open_on_error    = true
 
 [risk]
 # High leverage HFT risk profile — tight stops, small risk per trade
-risk_per_trade_pct = 2.0
-max_open_positions = 6
+risk_per_trade_pct = 15.0
+max_open_positions = 10
 max_daily_loss_pct = 8.0
 max_drawdown_pct   = 15.0
 max_leverage       = 100
-max_spread_pct     = 0.08
-min_reward_risk = 0.3        # 1:1 R:R minimum untuk scalping (1.2 terlalu ketat, blokir banyak signal)
-min_net_edge_bps = 5.0
-max_position_notional_pct = 500.0
+max_spread_pct     = 0.05
+min_reward_risk = 0.15        # 1:1 R:R minimum untuk scalping (1.2 terlalu ketat, blokir banyak signal)
+min_net_edge_bps = 3.0
+max_position_notional_pct = 1500.0
 assumed_daily_volume_usd = 1000000000000.0
-equity_usd         = 100.0  # Modal kecil untuk simulasi profitable
+equity_usd = 100.0  # Modal kecil untuk simulasi profitable
 
 [schedule]
 # 24/7 trading — no dead zone

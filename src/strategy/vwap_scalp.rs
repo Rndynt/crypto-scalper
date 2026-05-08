@@ -34,14 +34,13 @@ impl Strategy for VwapScalp {
             return None;
         };
 
-        // Tighter SL (0.4× ATR) for scalping — faster stop-out = smaller losses
+        // Fixed % SL/TP for 100x leverage HFT: 1.5% SL, 3.0% TP (R:R = 1:2)
         let (sl, tp) = match side {
             Side::Long => (
-                c.close - 0.4 * atr,
-                // TP: VWAP + small buffer OR 1.2× ATR, whichever is closer
-                vwap.min(c.close + atr * 1.2),
+                c.close * 0.985,
+                c.close * 1.030,
             ),
-            Side::Short => (c.close + 0.4 * atr, vwap.max(c.close - atr * 1.2)),
+            Side::Short => (c.close * 1.015, c.close * 0.970),
         };
 
         let mut score: f64 = 62.0; // Above the 60 threshold

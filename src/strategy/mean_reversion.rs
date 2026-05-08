@@ -41,27 +41,25 @@ impl Strategy for MeanReversion {
         // Use RSI < 35 (was 28) to catch more setups.  For a 5-minute
         // scalper, RSI 35 is already significantly oversold.
         let (side, reason, entry, sl, tp) = if c.low <= bb.lower && rsi < 35.0 {
-            // SL = 1.0× half-band below (was 1.2×) — tighter for scalping
-            let sl = bb.lower - bb.width * 0.5;
-            let sl = sl.min(c.close - atr * 0.8);
+            // Fixed % SL for 100x leverage: 1.5%
+            let sl = c.close * 0.985;
             (
                 Side::Long,
                 format!("BB lower touch, RSI {rsi:.1}<35, vol×{vol_ratio:.2}"),
                 c.close,
                 sl,
-                // TP: mid-band OR 1.5× ATR, whichever is closer (faster exit)
-                bb.mid.min(c.close + atr * 1.5),
+                // Fixed % TP: 3.0% (R:R = 1:2)
+                c.close * 1.030,
             )
         // --- Short: price touched or pierced upper BB + RSI overbought ---
         } else if c.high >= bb.upper && rsi > 65.0 {
-            let sl = bb.upper + bb.width * 0.5;
-            let sl = sl.max(c.close + atr * 0.8);
+            let sl = c.close * 1.015;
             (
                 Side::Short,
                 format!("BB upper touch, RSI {rsi:.1}>65, vol×{vol_ratio:.2}"),
                 c.close,
                 sl,
-                bb.mid.max(c.close - atr * 1.5),
+                c.close * 0.970,
             )
         } else {
             return None;

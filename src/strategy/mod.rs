@@ -34,7 +34,7 @@ pub trait Strategy {
 pub fn select_strategies(active: &[StrategyName], regime: Regime) -> Vec<StrategyName> {
     let preferred: &[StrategyName] = match regime {
         Regime::TrendingBullish | Regime::TrendingBearish => {
-            &[StrategyName::EmaRibbon, StrategyName::Momentum]
+            &[StrategyName::EmaRibbon, StrategyName::Momentum, StrategyName::VwapScalp, StrategyName::MeanReversion]
         }
         Regime::Ranging => &[
             StrategyName::MeanReversion,

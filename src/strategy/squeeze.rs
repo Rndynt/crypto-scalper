@@ -32,17 +32,16 @@ impl Strategy for Squeeze {
             (
                 Side::Long,
                 format!("Squeeze expand up, ROC {roc:.2}%"),
-                // Tighter SL: 0.5× ATR from mid-band
-                bb.mid.min(c.close - 0.5 * atr),
-                // Closer TP: 1.2× ATR (was 1.5×) — capture expansion quickly
-                c.close + 1.2 * atr,
+                // Fixed % SL/TP for 100x leverage: 1.5% SL, 3.0% TP
+                c.close * 0.985,
+                c.close * 1.030,
             )
         } else if roc < -0.1 && c.close < bb.mid {
             (
                 Side::Short,
                 format!("Squeeze expand down, ROC {roc:.2}%"),
-                bb.mid.max(c.close + 0.5 * atr),
-                c.close - 1.2 * atr,
+                c.close * 1.015,
+                c.close * 0.970,
             )
         } else {
             return None;

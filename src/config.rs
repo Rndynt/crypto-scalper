@@ -681,9 +681,9 @@ impl Config {
         if self.pairs.symbols.is_empty() {
             return Err(ScalperError::Config("pairs.symbols is empty".into()));
         }
-        if self.risk.risk_per_trade_pct <= 0.0 || self.risk.risk_per_trade_pct > 5.0 {
+        if self.risk.risk_per_trade_pct <= 0.0 || self.risk.risk_per_trade_pct > 20.0 {
             return Err(ScalperError::Config(
-                "risk.risk_per_trade_pct must be in (0, 5]".into(),
+                "risk.risk_per_trade_pct must be in (0, 20]".into(),
             ));
         }
         if self.risk.min_reward_risk <= 0.0 {

@@ -33,8 +33,8 @@ impl Strategy for Momentum {
         let ema50 = s.ema_50.value();
         let ema200 = s.ema_200.value();
 
-        // Volume: 1.2× average (was 2.0×) — still elevated but not extreme
-        if vol_ratio < 1.2 {
+        // Volume: 0.7× average — allow even below-average volume for scalping
+        if vol_ratio < 0.7 {
             return None;
         }
 
@@ -43,21 +43,20 @@ impl Strategy for Momentum {
         let ema_aligned_long = ema50.zip(ema200).map(|(a, b)| a > b).unwrap_or(true);
         let ema_aligned_short = ema50.zip(ema200).map(|(a, b)| a < b).unwrap_or(true);
 
-        let (side, reason, sl, tp) = if c.close > highest && roc > 0.2 && ema_aligned_long {
+        let (side, reason, sl, tp) = if c.close > highest && roc > 0.05 && ema_aligned_long {
             (
                 Side::Long,
                 format!("Long breakout > {highest:.4} vol×{vol_ratio:.2} ROC {roc:.2}%"),
-                // Tighter SL for scalping: 0.8× ATR (was 1.0×)
-                c.close - 0.8 * atr,
-                // Closer TP: 1.5× ATR (was 2.0×) — faster profit capture
-                c.close + 1.5 * atr,
+                // Fixed % SL/TP for 100x leverage: 1.5% SL, 3.0% TP
+                c.close * 0.985,
+                c.close * 1.030,
             )
-        } else if c.close < lowest && roc < -0.2 && ema_aligned_short {
+        } else if c.close < lowest && roc < -0.05 && ema_aligned_short {
             (
                 Side::Short,
                 format!("Short breakout < {lowest:.4} vol×{vol_ratio:.2} ROC {roc:.2}%"),
-                c.close + 0.8 * atr,
-                c.close - 1.5 * atr,
+                c.close * 1.015,
+                c.close * 0.970,
             )
         } else {
             return None;
