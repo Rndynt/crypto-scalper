@@ -27,24 +27,25 @@ reduce_confidence_delta = 3
 feed_max_age_secs = 300
 
 [llm]
-# Xiaomi MiMo — reasoning model needs more tokens
-provider = "openai"
-model    = "mimo-v2-omni"
-api_base = "https://api.xiaomimimo.com/v1/chat/completions"
-timeout_secs = 30
+# OpenRouter — Claude 3.5 Haiku (fast, reliable, proven for trading decisions)
+# Set OPENROUTER_API_KEY in .env before running
+provider      = "openrouter"
+model         = "anthropic/claude-3.5-haiku"
+api_base      = "https://openrouter.ai/api/v1/chat/completions"
+timeout_secs  = 30
 min_confidence = 40
 fallback_ta_threshold = 50
-max_tokens = 800    # JSON response needs ~400 tokens, 512 too small = truncated/empty response
+max_tokens    = 800
 
 [manager]
-enabled = true
-provider = "openai"
-api_base = "https://api.xiaomimimo.com/v1/chat/completions"
-model    = "mimo-v2-omni"
-timeout_secs = 20
-max_tokens   = 400   # Manager only needs approve/reject, 400 is enough
+enabled       = true
+provider      = "openrouter"
+api_base      = "https://openrouter.ai/api/v1/chat/completions"
+model         = "anthropic/claude-3.5-haiku"
+timeout_secs  = 20
+max_tokens    = 400
 fast_approve_min_conf = 55
-fail_open_on_error = true
+fail_open_on_error    = true
 
 [risk]
 # High leverage HFT risk profile — tight stops, small risk per trade
