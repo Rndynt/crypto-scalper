@@ -156,7 +156,7 @@ impl LlmEngine {
                 // Log the FULL error so operator knows exactly why LLM failed
                 warn!(
                     error = %e,
-                    provider = %self.cfg.provider,
+                    provider = ?self.cfg.provider,
                     model = %self.cfg.model,
                     api_base = %self.cfg.api_base,
                     timeout_secs = self.cfg.timeout_secs,

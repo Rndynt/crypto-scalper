@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, info};
+use tracing::info;
 
 pub struct SignalAgentConfig {
     pub active: Vec<StrategyName>,
