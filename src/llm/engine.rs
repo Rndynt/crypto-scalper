@@ -153,7 +153,15 @@ impl LlmEngine {
                 offline_fallback: false,
             }),
             Ok(Err(e)) => {
-                warn!(error = %e, "LLM call failed — fallback");
+                // Log the FULL error so operator knows exactly why LLM failed
+                warn!(
+                    error = %e,
+                    provider = %self.cfg.provider,
+                    model = %self.cfg.model,
+                    api_base = %self.cfg.api_base,
+                    timeout_secs = self.cfg.timeout_secs,
+                    "❌ LLM call failed — check API key, model name, and network"
+                );
                 Ok(LlmCallResult {
                     decision: Self::fallback_decision(ctx, self.cfg.fallback_ta_threshold),
                     latency_ms: t0.elapsed().as_millis() as u64,
@@ -161,7 +169,11 @@ impl LlmEngine {
                 })
             }
             Err(_) => {
-                warn!("LLM timeout — fallback");
+                warn!(
+                    timeout_secs = self.cfg.timeout_secs,
+                    model = %self.cfg.model,
+                    "❌ LLM timeout — API too slow or unreachable"
+                );
                 Ok(LlmCallResult {
                     decision: Self::fallback_decision(ctx, self.cfg.fallback_ta_threshold),
                     latency_ms: t0.elapsed().as_millis() as u64,

@@ -347,36 +347,50 @@ fn paper_scout_signal(
     if state.candles.len() < 3 {
         return None;
     }
-    let atr = state
-        .last_atr
-        .unwrap_or_else(|| (candle.high - candle.low).abs().max(candle.close * 0.001));
-    if candle.close <= 0.0 || atr <= 0.0 {
+    if candle.close <= 0.0 {
         return None;
     }
-    let vwap = state.last_vwap.unwrap_or(candle.close);
+
+    let price = candle.close;
+    let vwap = state.last_vwap.unwrap_or(price);
     let bias = higher_timeframe_bias(higher_timeframes);
-    let side = if bias > 0.0 || (bias == 0.0 && candle.close >= vwap) {
+    let side = if bias > 0.0 || (bias == 0.0 && price >= vwap) {
         Side::Long
     } else {
         Side::Short
     };
-    let stop_distance = (0.6 * atr).max(candle.close * 0.001);
-    let take_distance = stop_distance * 1.35;
-    let (stop_loss, take_profit) = match side {
-        Side::Long => (candle.close - stop_distance, candle.close + take_distance),
-        Side::Short => (candle.close + stop_distance, candle.close - take_distance),
+
+    // Use ATR from state if it's sane (< 1% of price), otherwise fallback to 0.3%
+    // ATR > 1% means it was computed from wrong timeframe candles — reject it
+    let raw_atr = state.last_atr.unwrap_or(0.0);
+    let atr_pct = if raw_atr > 0.0 { raw_atr / price } else { 0.0 };
+    let stop_pct = if atr_pct > 0.001 && atr_pct < 0.008 {
+        // ATR is sane — use 0.6x ATR but cap at 0.5%
+        (0.6 * raw_atr / price).min(0.005)
+    } else {
+        // ATR is absent or insane — use fixed 0.3% for scalping
+        0.003
     };
+
+    let stop_distance = price * stop_pct;
+    let take_distance = stop_distance * 2.0; // 2:1 R:R minimum
+
+    let (stop_loss, take_profit) = match side {
+        Side::Long  => (price - stop_distance, price + take_distance),
+        Side::Short => (price + stop_distance, price - take_distance),
+    };
+
     Some(PreSignal {
         symbol: state.symbol.clone(),
         strategy: StrategyName::VwapScalp,
         side,
-        entry: candle.close,
+        entry: price,
         stop_loss,
         take_profit,
         ta_confidence: 60,
         reason: format!(
-            "paper_scout htf_bias={:.2} close={:.4} vwap={:.4} atr={:.4}",
-            bias, candle.close, vwap, atr
+            "paper_scout htf_bias={:.2} close={:.4} vwap={:.4} stop_pct={:.3}% atr_raw={:.4}",
+            bias, price, vwap, stop_pct * 100.0, raw_atr
         ),
     })
 }
