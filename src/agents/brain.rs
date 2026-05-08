@@ -177,21 +177,39 @@ pub fn spawn(
                     );
 
                     // BLOCK TA-only fallback if fail_closed_without_llm is set.
-                    // TA fallback is not quant trading — it's just indicators.
                     if llm_out.offline_fallback && fail_closed_without_llm {
-                        warn!(
-                            symbol = %symbol,
-                            "brain: BLOCKED — LLM failed and fail_closed_without_llm=true, no TA fallback allowed"
-                        );
+                        warn!(symbol = %symbol, "brain: BLOCKED — LLM unavailable, fail_closed=true");
                         continue;
                     }
 
-                    // REJECT low-confidence GOs
-                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 55 {
+                    // HARD RULE: regime alignment — never trade against the trend
+                    // LONG in BEARISH or SHORT in BULLISH = instant reject
+                    {
+                        let states_r = states.lock().await;
+                        if let Some(st) = states_r.get(&symbol) {
+                            let regime = crate::strategy::RegimeDetector::detect(st);
+                            let is_long = matches!(signal.side, crate::data::Side::Long);
+                            let regime_str = regime.as_str().to_lowercase();
+                            let bearish = regime_str.contains("bear");
+                            let bullish = regime_str.contains("bull");
+                            if (is_long && bearish) || (!is_long && bullish) {
+                                info!(
+                                    symbol = %symbol,
+                                    regime = %regime.as_str(),
+                                    side = ?signal.side,
+                                    "brain: BLOCKED — trade against regime trend"
+                                );
+                                continue;
+                            }
+                        }
+                    }
+
+                    // REJECT low-confidence GOs — minimum 62 for real quant trading
+                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 62 {
                         info!(
                             symbol = %symbol,
                             confidence = llm_out.decision.confidence,
-                            "brain: REJECTED — Go but confidence too low (< 55)"
+                            "brain: REJECTED — confidence < 62"
                         );
                         continue;
                     }
