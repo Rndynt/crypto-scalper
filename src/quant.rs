@@ -318,9 +318,13 @@ impl QuantEngine {
         };
         drop(outcomes);
 
-        // Apply Kelly sizing: replace fixed risk% with Kelly fraction
+        // Apply Kelly sizing: replace fixed risk% with Kelly fraction.
+        // `base_risk_pct` is configured in percentage points (0.5 = 0.5%),
+        // while `kelly_fraction` returns a fraction of equity (0.20 = 20%).
+        // Convert before comparing; otherwise Kelly would be 100x too small.
         if kelly > 0.0 {
-            let kelly_mult = (kelly / base_risk_pct.max(0.01)).min(2.0);
+            let base_risk_fraction = (base_risk_pct / 100.0).max(0.0001);
+            let kelly_mult = (kelly / base_risk_fraction).min(2.0);
             size_mult *= kelly_mult;
         }
 
@@ -334,7 +338,7 @@ impl QuantEngine {
         // 3. VaR check — skip during cold-start (no trade history)
         //    to avoid the bootstrap paradox: can't trade → can't build history.
         let var_rejected = if outcomes_total >= self.cfg.kelly_min_trades {
-            self.var_check(symbol, entry, stop_loss, equity)
+            self.var_check(symbol, entry, stop_loss, equity, base_risk_pct)
         } else {
             false
         };
@@ -457,7 +461,14 @@ impl QuantEngine {
         )
     }
 
-    fn var_check(&self, symbol: &str, entry: f64, stop_loss: f64, equity: f64) -> bool {
+    fn var_check(
+        &self,
+        symbol: &str,
+        entry: f64,
+        stop_loss: f64,
+        equity: f64,
+        base_risk_pct: f64,
+    ) -> bool {
         if equity <= 0.0 {
             return false;
         }
@@ -465,7 +476,16 @@ impl QuantEngine {
         if let Some(hist) = returns.get(symbol) {
             if hist.len() >= 20 {
                 if let Some(cvar) = historical_cvar(hist, self.cfg.var_confidence) {
-                    let trade_risk_pct = (entry - stop_loss).abs() / entry;
+                    let stop_distance_pct = (entry - stop_loss).abs() / entry;
+                    let configured_risk_pct = (base_risk_pct / 100.0).max(0.0);
+                    // RiskManager sizes quantity so the stop-loss hit is the
+                    // configured risk percentage of equity.  Fall back to raw
+                    // stop distance only if the config is invalid/zero.
+                    let trade_risk_pct = if configured_risk_pct > 0.0 {
+                        configured_risk_pct
+                    } else {
+                        stop_distance_pct
+                    };
                     let estimated_loss = equity * trade_risk_pct;
                     let var_cap = equity * self.cfg.max_var_pct;
                     // Reject if the estimated trade loss + current CVaR exceeds cap
@@ -537,5 +557,56 @@ impl QuantEngine {
             }
         }
         penalty
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sizing_input() -> QuantSizingInput<'static> {
+        QuantSizingInput {
+            symbol: "BTCUSDT",
+            strategy: "unit_test",
+            side: Side::Long,
+            entry: 100.0,
+            stop_loss: 99.0,
+            equity: 1_000.0,
+            base_risk_pct: 2.0,
+        }
+    }
+
+    #[test]
+    fn kelly_compares_fraction_to_percent_risk_config() {
+        let cfg = QuantConfig {
+            kelly_min_trades: 1,
+            kelly_cap: 0.20,
+            ..QuantConfig::default()
+        };
+        let qe = QuantEngine::new(cfg);
+        qe.record_trade(2.0);
+        qe.record_trade(2.0);
+        qe.record_trade(-1.0);
+
+        let result = qe.compute_sizing(sizing_input());
+
+        approx::assert_abs_diff_eq!(result.kelly_fraction, 0.20, epsilon = 1e-9);
+        // 20% Kelly vs 2% configured risk would be 10x, capped at 2x.
+        approx::assert_abs_diff_eq!(result.size_multiplier, 2.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn kelly_stays_inactive_until_min_trade_count() {
+        let cfg = QuantConfig {
+            kelly_min_trades: 5,
+            ..QuantConfig::default()
+        };
+        let qe = QuantEngine::new(cfg);
+        qe.record_trade(1.0);
+
+        let result = qe.compute_sizing(sizing_input());
+
+        approx::assert_abs_diff_eq!(result.kelly_fraction, 0.0, epsilon = 1e-9);
+        approx::assert_abs_diff_eq!(result.size_multiplier, 1.0, epsilon = 1e-9);
     }
 }

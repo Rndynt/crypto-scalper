@@ -507,6 +507,9 @@ async fn run_agents(cfg: Config) -> Result<()> {
                 avg_slippage_bps: cfg.backtest.slippage_bps,
                 market_impact_bps: cfg.backtest.market_impact_bps,
             },
+            // Keep the quant Kelly comparator in the same percent units
+            // as RiskManager::calculate_size (e.g. 0.5 means 0.5%).
+            base_risk_pct: cfg.risk.risk_per_trade_pct,
             ..RiskAgentConfig::default()
         },
         Some(Arc::clone(&quant_engine)),
