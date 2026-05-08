@@ -2,7 +2,7 @@
 //! from free models (markdown fences, leading prose, BOM, word numbers,
 //! missing fields, trailing commas).
 
-use crate::errors::{Result, ScalperError};
+use crate::errors::Result;
 use crate::llm::engine::{ContextScore, Decision, DecisionReasoning, TradeDecision};
 
 /// Main entry point — tries strict parse first, then lenient, then regex fallback.
@@ -99,11 +99,14 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
     let lower = raw.to_lowercase();
 
     // Extract decision — must be EXPLICIT. Ambiguous = NO_GO.
-    let decision = if lower.contains("\"go\"") && !lower.contains("\"no_go\"") {
+    let decision = if (lower.contains("\"go\"") || lower.contains("decision is go"))
+        && !lower.contains("\"no_go\"")
+        && !lower.contains("no go")
+    {
         Decision::Go
     } else if lower.contains("\"no_go\"") || lower.contains("\"nogo\"") || lower.contains("no go") {
         Decision::NoGo
-    } else if lower.contains("\"wait\"") {
+    } else if lower.contains("\"wait\"") || lower.contains("decision is wait") {
         Decision::Wait
     } else {
         // SAFE DEFAULT: do not trade when response is ambiguous
@@ -111,9 +114,9 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
     };
 
     // Extract direction — only if explicitly stated
-    let direction = if lower.contains("\"long\"") {
+    let direction = if lower.contains("\"long\"") || lower.contains("direction long") {
         "LONG"
-    } else if lower.contains("\"short\"") {
+    } else if lower.contains("\"short\"") || lower.contains("direction short") {
         "SHORT"
     } else {
         "NONE"
@@ -131,7 +134,8 @@ fn regex_fallback(raw: &str) -> Option<TradeDecision> {
 
     // Extract scores
     let ta_score = extract_number_field(raw, "ta_score").unwrap_or(60.0) as u8;
-    let microstructure_score = extract_number_field(raw, "microstructure_score").unwrap_or(50.0) as u8;
+    let microstructure_score =
+        extract_number_field(raw, "microstructure_score").unwrap_or(50.0) as u8;
     let sentiment_score = extract_number_field(raw, "sentiment_score").unwrap_or(50.0) as u8;
     let risk_score = extract_number_field(raw, "risk_score").unwrap_or(60.0) as u8;
     let composite_score = extract_number_field(raw, "composite_score").unwrap_or(55.0) as u8;
@@ -190,7 +194,8 @@ fn last_resort_fallback(raw: &str) -> TradeDecision {
             summary: "PARSE FAILURE — response malformed, trade blocked for safety.".into(),
             ta_analysis: format!("Raw (first 300 chars): {}...", &raw[..raw.len().min(300)]),
             microstructure: "N/A".into(),
-            risk_factors: "LLM response could not be parsed — unknown decision, defaulting to NO_GO.".into(),
+            risk_factors:
+                "LLM response could not be parsed — unknown decision, defaulting to NO_GO.".into(),
             invalidation: "N/A".into(),
             sentiment_analysis: String::new(),
             fundamental_analysis: String::new(),
@@ -208,30 +213,71 @@ fn last_resort_fallback(raw: &str) -> TradeDecision {
 
 /// Extract a numeric value from JSON-like text using pattern matching
 fn extract_number_field(text: &str, field: &str) -> Option<f64> {
-    // Try pattern: "field": 123.45 or "field": 123
+    // Try JSON-like patterns first: "field": 123.45 or field: 123.
     let patterns = [
         format!("\"{}\":", field),
         format!("\"{}\" :", field),
         format!("{}:", field),
     ];
     for pat in &patterns {
-        if let Some(pos) = text.find(pat.as_str()) {
-            let after = &text[pos + pat.len()..].trim_start();
-            // Skip null
-            if after.starts_with("null") {
-                continue;
-            }
-            // Extract number (possibly negative, possibly float)
-            let num_str: String = after
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
-                .collect();
-            if !num_str.is_empty() && num_str != "-" {
-                if let Ok(n) = num_str.parse::<f64>() {
-                    return Some(n);
-                }
-            }
+        if let Some(n) = parse_number_after_pattern(text, pat, false) {
+            return Some(n);
         }
+    }
+
+    // Free-form fallback used when an LLM returns prose such as
+    // "confidence 65" instead of JSON. Keep it bounded so unrelated
+    // numbers later in the paragraph are not accidentally captured.
+    let lower_text = text.to_lowercase();
+    let lower_field = field.to_lowercase();
+    if let Some(pos) = lower_text.find(&lower_field) {
+        let after = &text[pos + field.len()..];
+        return parse_number_after_prefix(after, true);
+    }
+
+    None
+}
+
+fn parse_number_after_pattern(text: &str, pattern: &str, allow_separators: bool) -> Option<f64> {
+    let lower_text = text.to_lowercase();
+    let lower_pattern = pattern.to_lowercase();
+    let pos = lower_text.find(&lower_pattern)?;
+    let after = &text[pos + pattern.len()..];
+    parse_number_after_prefix(after, allow_separators)
+}
+
+fn parse_number_after_prefix(text: &str, allow_separators: bool) -> Option<f64> {
+    let mut after = text.trim_start();
+    if after.starts_with("null") {
+        return None;
+    }
+    if allow_separators {
+        after = after
+            .trim_start_matches(|c: char| c == ':' || c == '=' || c.is_whitespace())
+            .trim_start();
+    }
+
+    let mut skipped = 0usize;
+    let mut chars = after.chars();
+    while allow_separators {
+        let Some(c) = chars.clone().next() else { break };
+        if c.is_ascii_digit() || c == '-' || c == '.' {
+            break;
+        }
+        skipped += c.len_utf8();
+        if skipped > 24 {
+            return None;
+        }
+        chars.next();
+    }
+    let after = &after[skipped..];
+
+    let num_str: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+        .collect();
+    if !num_str.is_empty() && num_str != "-" {
+        return num_str.parse::<f64>().ok();
     }
     None
 }
