@@ -187,11 +187,11 @@ pub fn spawn(
                     }
 
                     // REJECT low-confidence GOs
-                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 60 {
+                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 55 {
                         info!(
                             symbol = %symbol,
                             confidence = llm_out.decision.confidence,
-                            "brain: REJECTED — Go but confidence too low (< 60)"
+                            "brain: REJECTED — Go but confidence too low (< 55)"
                         );
                         continue;
                     }
