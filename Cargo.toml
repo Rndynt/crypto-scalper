@@ -1,7 +1,7 @@
 [package]
 name = "crypto-scalper"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 rust-version = "1.85"
 description = "ARIA — LLM-Powered Autonomous Crypto Scalper Bot"
 license = "MIT"
@@ -18,16 +18,13 @@ path = "src/lib.rs"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.40", features = ["full"] }
-# Using native-tls (system OpenSSL) for both crates avoids the
-# `CaUsedAsEndEntity` / `UnknownIssuer` chain-validation issues that
-# rustls-webpki sometimes hits on Termux/Android and other embedded
-# targets where the certificate chain ordering isn't pristine.
-tokio-tungstenite = { version = "0.21", default-features = false, features = ["native-tls", "connect"] }
+tokio = { version = "1.44", features = ["full"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["native-tls", "connect"] }
 
 # HTTP & networking
-reqwest = { version = "0.12.5", default-features = false, features = ["json", "native-tls", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "gzip"] }
 futures-util = "0.3"
+bytes = "1"
 url = "2.5"
 
 # Serialization
@@ -39,10 +36,11 @@ toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Database
-rusqlite = { version = "0.31", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 postgres-native-tls = "0.5"
 native-tls = "0.2"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -55,19 +53,19 @@ openssl = "0.10"
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 
 # Utilities
-uuid = { version = "1.10", features = ["v4"] }
+uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
-dashmap = "5"
-rand = "0.8"
+dashmap = "6"
+rand = "0.9"
 regex = "1"
 
 # HTTP server for metrics/dashboard
-axum = { version = "0.7.5" }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # RSS / Atom feed parsing
 feed-rs = "2.0"
@@ -77,12 +75,12 @@ approx = "0.5"
 tempfile = "3"
 
 [profile.release]
-opt-level = 3
-lto = "off"
-codegen-units = 16
-panic = "abort"
-strip = "symbols"
+opt-level     = 3
+lto           = "thin"   # thin LTO: faster build than "fat", still good optimization
+codegen-units = 4        # fewer units = better optimization
+panic         = "abort"
+strip         = "symbols"
 
 [profile.dev]
-opt-level = 0
-debug = true
+opt-level = 1            # faster test compilation than 0
+debug     = true
