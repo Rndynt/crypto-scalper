@@ -18,9 +18,14 @@ impl Strategy for OrderFlow {
     }
 
     fn evaluate(&self, s: &SymbolState, c: &Candle) -> Option<PreSignal> {
-        let ofi = s.last_ofi?;
-        let vpin = s.last_vpin.unwrap_or(0.5);
+        let ofi = s.last_ofi.unwrap_or(0.0);
+        let vpin = s.last_vpin.unwrap_or(0.35);
         let atr = s.last_atr.filter(|&a| a > 0.0 && a < c.close * 0.01)?;
+
+        // Need at least some OFI signal to trade
+        if ofi == 0.0 && s.last_ofi.is_none() {
+            return None; // BookTicker not yet received — wait
+        }
 
         // Gate 1: VPIN must be low — high VPIN = adverse selection = informed trader
         // is on the OTHER side of your trade. Very dangerous.

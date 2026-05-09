@@ -22,7 +22,7 @@ impl Strategy for TradeFlow {
             return None;
         }
 
-        let vpin = s.last_vpin?;
+        let vpin = s.last_vpin.unwrap_or(0.35); // default=0.35 safe until VPIN warms up
         let ofi = s.last_ofi.unwrap_or(0.0);
         let atr = s.last_atr.filter(|&a| a > 0.0 && a < c.close * 0.01)?;
 
