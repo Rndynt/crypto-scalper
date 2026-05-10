@@ -215,6 +215,7 @@ impl RiskManager {
         entry: f64,
         stop_loss: f64,
         take_profit: f64,
+        side: &crate::data::Side,
         spread_pct: Option<f64>,
         tcm: &TransactionCostModel,
     ) -> std::result::Result<(), String> {
@@ -223,6 +224,28 @@ impl RiskManager {
         if entry <= 0.0 || risk_per_unit <= 0.0 {
             return Err("invalid entry/stop distance".into());
         }
+
+        // Direction sanity — TP must be on correct side of entry
+        // Without this check, a LONG with tp < entry passes R:R via .abs()
+        match side {
+            crate::data::Side::Long => {
+                if stop_loss >= entry {
+                    return Err(format!("LONG sl {stop_loss:.4} >= entry {entry:.4}"));
+                }
+                if take_profit <= entry {
+                    return Err(format!("LONG tp {take_profit:.4} <= entry {entry:.4} — TP on wrong side"));
+                }
+            }
+            crate::data::Side::Short => {
+                if stop_loss <= entry {
+                    return Err(format!("SHORT sl {stop_loss:.4} <= entry {entry:.4}"));
+                }
+                if take_profit >= entry {
+                    return Err(format!("SHORT tp {take_profit:.4} >= entry {entry:.4} — TP on wrong side"));
+                }
+            }
+        }
+
         let reward_per_unit = (take_profit - entry).abs();
         let rr = reward_per_unit / risk_per_unit;
         if rr < i.limits.min_reward_risk {
@@ -388,13 +411,13 @@ mod tests {
             market_impact_bps: 1.0,
         };
         assert!(r
-            .validate_signal(100.0, 99.0, 100.5, Some(0.01), &tcm)
+            .validate_signal(100.0, 99.0, 100.5, &crate::data::Side::Long, Some(0.01), &tcm)
             .is_err());
         assert!(r
-            .validate_signal(100.0, 99.0, 101.5, Some(0.04), &tcm)
+            .validate_signal(100.0, 99.0, 101.5, &crate::data::Side::Long, Some(0.04), &tcm)
             .is_err());
         assert!(r
-            .validate_signal(100.0, 99.0, 101.5, Some(0.01), &tcm)
+            .validate_signal(100.0, 99.0, 101.5, &crate::data::Side::Long, Some(0.01), &tcm)
             .is_ok());
     }
 
@@ -420,7 +443,7 @@ mod tests {
             market_impact_bps: 1.0,
         };
         assert!(r
-            .validate_signal(100.0, 99.9, 100.1, Some(0.01), &tcm)
+            .validate_signal(100.0, 99.9, 100.1, &crate::data::Side::Long, Some(0.01), &tcm)
             .is_err());
     }
 }

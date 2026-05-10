@@ -222,6 +222,7 @@ pub fn spawn(
                         signal.entry,
                         signal.stop_loss,
                         signal.take_profit,
+                        &signal.side,
                         spread_pct,
                         &cfg.tcm,
                     ) {

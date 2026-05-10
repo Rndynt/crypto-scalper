@@ -6,7 +6,6 @@
 
 use crate::data::types::Trade;
 use anyhow::{anyhow, Context};
-use bytes::Bytes;
 use chrono::{TimeZone, Utc};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -128,7 +127,7 @@ impl WsClient {
                             }
                             _ = sleep(Duration::from_secs(30)) => {
                                 // heartbeat ping
-                                let _ = stream.send(Message::Ping(Bytes::new())).await;
+                                let _ = stream.send(Message::Ping(vec![])).await;
                                 let _ = tx.send(WsEvent::Heartbeat).await;
                             }
                         }
