@@ -8,8 +8,8 @@
 //! matters).
 
 use crate::agents::messages::AgentEvent;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::broadcast::{self, Receiver, Sender};
 use tracing::warn;
 
