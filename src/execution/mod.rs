@@ -3,7 +3,9 @@
 pub mod binance;
 pub mod exchange;
 pub mod limit_order;
+pub mod mexc;
 pub mod orders;
+pub use mexc::MexcFutures;
 pub mod paper;
 pub mod position;
 pub mod quality;

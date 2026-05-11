@@ -1,7 +1,7 @@
 //! Paper exchange — instant fills at the requested price, no network.
 
 use crate::errors::Result;
-use crate::execution::exchange::{Exchange, OrderAck, PositionSnapshot};
+use crate::execution::exchange::{Exchange, OpenOrderSnapshot, OrderAck, PositionSnapshot};
 use crate::execution::orders::OrderRequest;
 use chrono::Utc;
 use parking_lot::Mutex;
@@ -120,5 +120,31 @@ impl Exchange for PaperExchange {
         // Paper exchange has no broker-side positions — the in-memory
         // PositionBook is the source of truth.
         Box::pin(async move { Ok(Vec::new()) })
+    }
+
+    fn fetch_open_orders<'a>(
+        &'a self,
+        symbol: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<OpenOrderSnapshot>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let out = self
+                .orders
+                .lock()
+                .values()
+                .filter(|o| o.req.symbol == symbol)
+                .map(|o| OpenOrderSnapshot {
+                    symbol: o.req.symbol.clone(),
+                    client_id: o.req.client_id.clone(),
+                    exchange_order_id: format!("paper-{}", o.req.client_id),
+                    side: o.req.side,
+                    order_type: o.req.order_type,
+                    stop_price: o.req.stop_price,
+                    reduce_only: o.req.reduce_only,
+                })
+                .collect();
+            Ok(out)
+        })
     }
 }

@@ -5,7 +5,7 @@
 
 use crate::data::Side;
 use crate::errors::{Result, ScalperError};
-use crate::execution::exchange::{Exchange, OrderAck, PositionSnapshot};
+use crate::execution::exchange::{Exchange, OpenOrderSnapshot, OrderAck, PositionSnapshot};
 use crate::execution::orders::{OrderRequest, OrderType};
 use hmac::{Hmac, Mac};
 use reqwest::Client;
@@ -406,6 +406,86 @@ impl Exchange for BinanceFutures {
                         mark_price: mark,
                         unrealized_pnl: upnl,
                         leverage,
+                    });
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    fn fetch_open_orders<'a>(
+        &'a self,
+        symbol: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<OpenOrderSnapshot>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let ts = self.timestamp_ms();
+            let params = vec![
+                ("symbol".to_string(), symbol.to_string()),
+                ("timestamp".to_string(), ts.to_string()),
+                ("recvWindow".to_string(), self.recv_window_ms.to_string()),
+            ];
+            let qs = encode_query(&params);
+            let sig = self.sign(&qs)?;
+            let url = format!(
+                "{}/fapi/v1/openOrders?{qs}&signature={sig}",
+                self.base_url.trim_end_matches('/')
+            );
+            let resp = self
+                .client
+                .get(&url)
+                .header("X-MBX-APIKEY", &self.api_key)
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ScalperError::Exchange(format!(
+                    "fetch_open_orders http {status}: {body}"
+                )));
+            }
+            let body: serde_json::Value = resp.json().await?;
+            let mut out = Vec::new();
+            if let Some(arr) = body.as_array() {
+                for o in arr {
+                    let side = match o.get("side").and_then(|v| v.as_str()).unwrap_or("") {
+                        "BUY" => Side::Long,
+                        "SELL" => Side::Short,
+                        _ => continue,
+                    };
+                    let order_type = match o.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+                        "MARKET" => OrderType::Market,
+                        "LIMIT" => OrderType::Limit,
+                        "STOP_MARKET" => OrderType::StopLoss,
+                        "TAKE_PROFIT_MARKET" => OrderType::TakeProfit,
+                        _ => continue,
+                    };
+                    let client_id = o
+                        .get("clientOrderId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let exchange_order_id =
+                        o.get("orderId").map(|v| v.to_string()).unwrap_or_default();
+                    let stop_price = o
+                        .get("stopPrice")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .filter(|p| *p > 0.0);
+                    let reduce_only = o
+                        .get("reduceOnly")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                        || matches!(order_type, OrderType::StopLoss | OrderType::TakeProfit);
+                    out.push(OpenOrderSnapshot {
+                        symbol: symbol.to_string(),
+                        client_id,
+                        exchange_order_id,
+                        side,
+                        order_type,
+                        stop_price,
+                        reduce_only,
                     });
                 }
             }

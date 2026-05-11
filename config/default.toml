@@ -16,6 +16,9 @@ ws_base_url   = "wss://fstream.binance.com/stream"
 api_key    = ""         # set via env BINANCE_API_KEY
 api_secret = ""         # set via env BINANCE_API_SECRET
 recv_window_ms = 5000
+open_type = "cross"       # cross | isolated
+leverage = 1
+position_mode = "dual-side"
 
 [pairs]
 symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
