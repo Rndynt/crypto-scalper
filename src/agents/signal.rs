@@ -2,28 +2,29 @@
 //! state, runs the regime detector + active strategies, and emits a
 //! `PreSignalEmitted` event for the best candidate.
 
-use crate::shared_state::SharedState;
-use crate::agents::messages::{AgentEvent, SignalEvaluationMsg};
 use crate::agents::MessageBus;
+use crate::agents::messages::{AgentEvent, AgentId, SignalEvaluationMsg};
 use crate::config::{AdvancedAlphaCfg, Schedule};
 use crate::data::Side;
 use crate::feeds::ExternalSnapshot;
 use crate::microstructure::{Ofi, Vpin};
 use crate::quant::QuantEngine;
+use crate::shared_state::SharedState;
 use crate::strategy::{
+    RegimeDetector,
+    Strategy,
     alpha_gate::{
-        advanced_alpha_gate, alt_data_inputs_from_snapshot, funding_rate_from_snapshot,
-        kalman_trend_score, AdvancedAlphaInputs, AlphaGateDecision,
+        AdvancedAlphaInputs, AlphaGateDecision, advanced_alpha_gate, alt_data_inputs_from_snapshot,
+        funding_rate_from_snapshot, kalman_trend_score,
     },
     // Quant strategies — order flow, microstructure, Kalman
     kalman_trend::KalmanTrendStrategy,
     microstructure_reversion::MicrostructureReversion,
     order_flow::OrderFlow,
-    trade_flow::TradeFlow,
     select_strategies,
     squeeze::Squeeze,
     state::{PreSignal, StrategyName, SymbolState},
-    RegimeDetector, Strategy,
+    trade_flow::TradeFlow,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Timelike, Utc};
 use std::collections::{BTreeMap, HashMap};
@@ -58,6 +59,7 @@ pub fn spawn(
     let mut rx = bus.subscribe();
     tokio::spawn(async move {
         info!(?active, "signal agent starting");
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Signal);
         shared_state.heartbeat("signal");
 
         // VPIN bucket size helper — target ~$50k USD per bucket
@@ -67,7 +69,7 @@ pub fn spawn(
                 s if s.starts_with("ETH") => 16.0,  // ~$50k / $3.1k per ETH
                 s if s.starts_with("SOL") => 250.0, // ~$50k / $200 per SOL
                 s if s.starts_with("BNB") => 120.0, // ~$50k / $420 per BNB
-                _ => 10.0,                           // fallback
+                _ => 10.0,                          // fallback
             }
         }
 
@@ -206,21 +208,25 @@ pub fn spawn(
                             // Check strategy health before evaluating
                             let strategy_name = name.as_str();
                             if !shared_state.is_strategy_enabled(strategy_name) {
-                                    info!(
-                                        symbol = %symbol,
-                                        strategy = %strategy_name,
-                                        "⛔ strategy disabled by health"
-                                    );
+                                info!(
+                                    symbol = %symbol,
+                                    strategy = %strategy_name,
+                                    "⛔ strategy disabled by health"
+                                );
                                 continue;
                             }
-                            
+
                             let sig = match name {
                                 // Quant strategies mapped to existing StrategyName slots
-                                StrategyName::EmaRibbon     => OrderFlow.evaluate(state, &candle),
-                                StrategyName::Momentum      => TradeFlow.evaluate(state, &candle),
-                                StrategyName::VwapScalp     => KalmanTrendStrategy.evaluate(state, &candle),
-                                StrategyName::MeanReversion => MicrostructureReversion.evaluate(state, &candle),
-                                StrategyName::Squeeze       => Squeeze.evaluate(state, &candle),
+                                StrategyName::EmaRibbon => OrderFlow.evaluate(state, &candle),
+                                StrategyName::Momentum => TradeFlow.evaluate(state, &candle),
+                                StrategyName::VwapScalp => {
+                                    KalmanTrendStrategy.evaluate(state, &candle)
+                                }
+                                StrategyName::MeanReversion => {
+                                    MicrostructureReversion.evaluate(state, &candle)
+                                }
+                                StrategyName::Squeeze => Squeeze.evaluate(state, &candle),
                             };
                             if let Some(mut s) = sig {
                                 if best_seen
@@ -230,25 +236,12 @@ pub fn spawn(
                                 {
                                     best_seen = Some((s.strategy, s.ta_confidence));
                                 }
-                                if let Some(ema200) = state.ema_200.value() {
-                                    let htf_aligned = match s.side {
-                                        Side::Long => candle.close > ema200,
-                                        Side::Short => candle.close < ema200,
-                                    };
-                                    if !htf_aligned {
-                                        s.ta_confidence = s.ta_confidence.saturating_sub(8);
-                                        s.reason = format!(
-                                            "{} | HTF-contradict(ema200={:.2})",
-                                            s.reason, ema200
-                                        );
-                                    } else {
-                                        s.ta_confidence = (s.ta_confidence + 3).min(100);
-                                        s.reason = format!(
-                                            "{} | HTF-confirm(ema200={:.2})",
-                                            s.reason, ema200
-                                        );
-                                    }
-                                }
+                                apply_mtf_context(
+                                    &mut s,
+                                    candle.close,
+                                    state.ema_200.value(),
+                                    &htf,
+                                );
                                 info!(
                                     symbol = %symbol,
                                     strategy = %s.strategy.as_str(),
@@ -280,6 +273,25 @@ pub fn spawn(
                             feeds_by_symbol.get(&symbol),
                             &advanced_alpha,
                         );
+                        if let (Some(qe), Some(signal)) = (&quant_engine, filtered.as_ref()) {
+                            if let Some(prev) = prev_close {
+                                if prev > 0.0 && signal.entry > 0.0 {
+                                    let direction = match signal.side {
+                                        Side::Long => 1.0,
+                                        Side::Short => -1.0,
+                                    };
+                                    let forward_return = direction * (candle.close - prev) / prev;
+                                    let signal_value = direction
+                                        * ((signal.entry - prev) / prev)
+                                        * (signal.ta_confidence as f64 / 100.0);
+                                    qe.record_ic_observation(
+                                        signal.strategy.as_str(),
+                                        signal_value,
+                                        forward_return,
+                                    );
+                                }
+                            }
+                        }
                         (
                             filtered,
                             regime,
@@ -376,7 +388,7 @@ fn paper_scout_signal(
     let take_distance = stop_distance * 2.0; // 2:1 R:R minimum
 
     let (stop_loss, take_profit) = match side {
-        Side::Long  => (price - stop_distance, price + take_distance),
+        Side::Long => (price - stop_distance, price + take_distance),
         Side::Short => (price + stop_distance, price - take_distance),
     };
 
@@ -390,7 +402,11 @@ fn paper_scout_signal(
         ta_confidence: 60,
         reason: format!(
             "paper_scout htf_bias={:.2} close={:.4} vwap={:.4} stop_pct={:.3}% atr_raw={:.4}",
-            bias, price, vwap, stop_pct * 100.0, raw_atr
+            bias,
+            price,
+            vwap,
+            stop_pct * 100.0,
+            raw_atr
         ),
     })
 }
@@ -429,6 +445,50 @@ fn higher_timeframe_bias(higher_timeframes: &BTreeMap<i64, HigherTimeframeSnapsh
         })
         .sum::<f64>();
     (weighted / total_weight).clamp(-1.0, 1.0)
+}
+
+fn apply_mtf_context(
+    signal: &mut PreSignal,
+    price: f64,
+    ema200: Option<f64>,
+    higher_timeframes: &BTreeMap<i64, HigherTimeframeSnapshot>,
+) {
+    let mut score = 0_i16;
+    if let Some(ema200) = ema200 {
+        let aligned = match signal.side {
+            Side::Long => price > ema200,
+            Side::Short => price < ema200,
+        };
+        score += if aligned { 1 } else { -2 };
+    }
+    let htf_bias = higher_timeframe_bias(higher_timeframes);
+    if htf_bias.abs() > f64::EPSILON {
+        let aligned = match signal.side {
+            Side::Long => htf_bias > 0.0,
+            Side::Short => htf_bias < 0.0,
+        };
+        score += if aligned { 2 } else { -3 };
+    }
+    if score < 0 {
+        signal.ta_confidence = signal.ta_confidence.saturating_sub((-score * 4) as u8);
+        signal.reason = format!(
+            "{} | MTF-contradict(score={}, htf={})",
+            signal.reason,
+            score,
+            htf_summary(higher_timeframes)
+        );
+    } else if score > 0 {
+        signal.ta_confidence = signal
+            .ta_confidence
+            .saturating_add((score * 2) as u8)
+            .min(100);
+        signal.reason = format!(
+            "{} | MTF-confirm(score={}, htf={})",
+            signal.reason,
+            score,
+            htf_summary(higher_timeframes)
+        );
+    }
 }
 
 fn htf_summary(higher_timeframes: &BTreeMap<i64, HigherTimeframeSnapshot>) -> String {

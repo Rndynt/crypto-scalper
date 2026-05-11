@@ -8,14 +8,13 @@
 //! NOW: Also updates SharedState with strategy health and lessons
 //! for cross-agent coordination.
 
-use crate::agents::messages::{AgentEvent, AgentId};
 use crate::agents::MessageBus;
-use crate::execution::PositionExitReason;
+use crate::agents::messages::{AgentEvent, AgentId};
 use crate::learning::{
-    lessons::{LessonConfig, LessonExtractor},
     LearningPolicy, PerformanceMemory,
+    lessons::{LessonConfig, LessonExtractor},
 };
-use crate::monitoring::{logger::LearningStateSnapshot, TradeJournal};
+use crate::monitoring::{TradeJournal, logger::LearningStateSnapshot};
 use crate::quant::QuantEngine;
 use crate::shared_state::SharedState;
 use chrono::Utc;
@@ -46,6 +45,12 @@ pub fn spawn(
                 lessons = saved.lessons_count,
                 "loaded persisted learning state"
             );
+            if !saved.lessons.is_empty() {
+                policy.update(PerformanceMemory::default(), saved.lessons.clone());
+                for lesson in &saved.lessons {
+                    shared_state.add_lesson(format!("{:?}", lesson));
+                }
+            }
         }
 
         let extractor = LessonExtractor::new(cfg);
@@ -97,15 +102,29 @@ pub fn spawn(
                         ss_rt.record_strategy_trade(strategy, pnl_usd);
 
                         // Add lesson if strategy is performing poorly
-                        let (should_disable, should_reduce, win_rate, loss_streak, total_pnl, enabled) = {
+                        let (
+                            should_disable,
+                            should_reduce,
+                            win_rate,
+                            loss_streak,
+                            total_pnl,
+                            enabled,
+                        ) = {
                             let health = ss_rt.strategy_health.read();
                             if let Some(h) = health.get(strategy.as_str()) {
-                                (h.should_disable(), h.should_reduce_size(), h.win_rate, h.loss_streak, h.total_pnl, h.enabled)
+                                (
+                                    h.should_disable(),
+                                    h.should_reduce_size(),
+                                    h.win_rate,
+                                    h.loss_streak,
+                                    h.total_pnl,
+                                    h.enabled,
+                                )
                             } else {
                                 (false, false, 0.0, 0, 0.0, true)
                             }
                         };
-                        
+
                         if should_disable && enabled {
                             ss_rt.add_lesson(format!(
                                 "⚠️ Strategy {} disabled: {:.0}% win rate, {} loss streak, ${:.2} PnL",
@@ -114,7 +133,9 @@ pub fn spawn(
                         } else if should_reduce {
                             ss_rt.add_lesson(format!(
                                 "📉 Strategy {} size reduced: {:.0}% win rate, {} loss streak",
-                                strategy, win_rate * 100.0, loss_streak
+                                strategy,
+                                win_rate * 100.0,
+                                loss_streak
                             ));
                         }
                     }
@@ -179,6 +200,7 @@ pub fn spawn(
                         overall_wins: wins,
                         overall_losses: losses,
                         overall_net_pnl: net_pnl,
+                        lessons: policy.active_lessons(),
                     };
                     if let Err(e) = snapshot.save() {
                         warn!(error = %e, "failed to persist learning state");
