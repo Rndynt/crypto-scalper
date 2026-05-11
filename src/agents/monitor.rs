@@ -3,8 +3,8 @@
 //! domain; the Monitor is the only place where observability concerns
 //! live.
 
-use crate::agents::messages::{AgentEvent, BrainOutcome, ControlCommand, ManagerAction};
 use crate::agents::MessageBus;
+use crate::agents::messages::{AgentEvent, AgentId, BrainOutcome, ControlCommand, ManagerAction};
 use crate::llm::engine::Decision;
 use crate::monitoring::{MetricsState, TelegramNotifier, TradeJournal, TradeRecord};
 use crate::strategy::state::StrategyName;
@@ -254,6 +254,7 @@ pub fn spawn(
 
     tokio::spawn(async move {
         info!("monitor agent starting");
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Monitor);
         while let Ok(ev) = rx.recv().await {
             match ev {
                 AgentEvent::Shutdown => break,
@@ -520,7 +521,7 @@ pub fn spawn(
                         &sl_line,
                         &tp_line,
                         size,
-                        &short_sym(&symbol),
+                        short_sym(&symbol),
                         &strategy,
                         brain.as_ref(),
                         100.0, // max_leverage from config
@@ -536,7 +537,7 @@ pub fn spawn(
                     exit_price,
                     pnl_usd,
                     reason,
-                    strategy,
+                    strategy: _,
                 } => {
                     let pnl_pct = if entry_price > 0.0 {
                         (exit_price - entry_price) / entry_price * 100.0
@@ -794,7 +795,11 @@ fn build_open_notification(
 
     // Calculate notional value and margin for display
     let notional = size * entry_price;
-    let margin = if max_leverage > 0.0 { notional / max_leverage } else { notional };
+    let margin = if max_leverage > 0.0 {
+        notional / max_leverage
+    } else {
+        notional
+    };
 
     format!(
         "{side_emoji} <b>POSITION OPENED</b>\n\

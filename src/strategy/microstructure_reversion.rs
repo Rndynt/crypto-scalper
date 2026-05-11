@@ -6,8 +6,8 @@
 //! tends to revert. When OFI also starts reversing, entry is confirmed.
 //! This is statistical reversion, not "RSI oversold" guessing.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct MicrostructureReversion;
@@ -33,7 +33,7 @@ impl Strategy for MicrostructureReversion {
         // Quant reversion zone: price must have deviated enough to matter
         // but not so much that it's a breakout (not mean reversion anymore)
         let long_zone = deviation < -0.002 && deviation > -0.015; // -0.2% to -1.5%
-        let short_zone = deviation > 0.002 && deviation < 0.015;  // +0.2% to +1.5%
+        let short_zone = deviation > 0.002 && deviation < 0.015; // +0.2% to +1.5%
 
         if !long_zone && !short_zone {
             return None;
@@ -56,7 +56,8 @@ impl Strategy for MicrostructureReversion {
         // (high volume = potential breakout, not reversion)
         if s.volume_sma > 0.0 {
             let vol_ratio = c.volume / s.volume_sma;
-            if vol_ratio > 2.5 { // abnormally high volume = breakout not reversion
+            if vol_ratio > 2.5 {
+                // abnormally high volume = breakout not reversion
                 return None;
             }
         }
@@ -74,7 +75,7 @@ impl Strategy for MicrostructureReversion {
         let tp_dist = tp_dist.max(atr * 1.5); // minimum 1.5x ATR TP
 
         let (sl, tp) = match side {
-            Side::Long  => (c.close - sl_dist, c.close + tp_dist),
+            Side::Long => (c.close - sl_dist, c.close + tp_dist),
             Side::Short => (c.close + sl_dist, c.close - tp_dist),
         };
 
@@ -82,14 +83,21 @@ impl Strategy for MicrostructureReversion {
         let mut confidence: f64 = 62.0;
 
         // Larger deviation = stronger reversion signal (statistically)
-        if deviation.abs() > 0.007 { confidence += 8.0; }
-        else if deviation.abs() > 0.004 { confidence += 4.0; }
+        if deviation.abs() > 0.007 {
+            confidence += 8.0;
+        } else if deviation.abs() > 0.004 {
+            confidence += 4.0;
+        }
 
         // OFI strength of reversal
-        if ofi.abs() > 0.3 { confidence += 6.0; }
+        if ofi.abs() > 0.3 {
+            confidence += 6.0;
+        }
 
         // Lower VPIN = safer
-        if vpin < 0.25 { confidence += 5.0; }
+        if vpin < 0.25 {
+            confidence += 5.0;
+        }
 
         Some(PreSignal {
             symbol: s.symbol.clone(),
@@ -101,7 +109,10 @@ impl Strategy for MicrostructureReversion {
             ta_confidence: confidence.clamp(0.0, 100.0) as u8,
             reason: format!(
                 "VWAP_dev={:.3}% OFI={:.3} vpin={:.3} reversion_target={:.4}",
-                deviation * 100.0, ofi, vpin, vwap
+                deviation * 100.0,
+                ofi,
+                vpin,
+                vwap
             ),
         })
     }

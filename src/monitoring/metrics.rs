@@ -2,7 +2,7 @@
 
 use crate::agents::messages::SurvivalState;
 use crate::learning::{LearningPolicy, Lesson};
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;

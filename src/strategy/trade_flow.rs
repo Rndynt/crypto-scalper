@@ -6,8 +6,8 @@
 //!
 //! This is pure quant: statistical model of market microstructure.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct TradeFlow;
@@ -36,8 +36,7 @@ impl Strategy for TradeFlow {
         }
 
         // Price velocity: compare last 3 closes for micro-momentum
-        let closes: Vec<f64> = s.candles.iter().rev().take(4)
-            .map(|c| c.close).collect();
+        let closes: Vec<f64> = s.candles.iter().rev().take(4).map(|c| c.close).collect();
         if closes.len() < 4 {
             return None;
         }
@@ -46,7 +45,8 @@ impl Strategy for TradeFlow {
         let velocity = (closes[0] - closes[3]) / closes[3]; // % change over 3 candles
 
         // Minimum velocity threshold to avoid trading chop
-        if velocity.abs() < 0.0005 { // 0.05% minimum move
+        if velocity.abs() < 0.0005 {
+            // 0.05% minimum move
             return None;
         }
 
@@ -64,7 +64,7 @@ impl Strategy for TradeFlow {
         let sl_dist = atr * 0.9;
         let tp_dist = atr * 2.2;
         let (sl, tp) = match side {
-            Side::Long  => (c.close - sl_dist, c.close + tp_dist),
+            Side::Long => (c.close - sl_dist, c.close + tp_dist),
             Side::Short => (c.close + sl_dist, c.close - tp_dist),
         };
 
@@ -72,15 +72,23 @@ impl Strategy for TradeFlow {
         let mut confidence: f64 = 62.0;
 
         // Velocity strength
-        if velocity.abs() > 0.002 { confidence += 8.0; }
-        else if velocity.abs() > 0.001 { confidence += 4.0; }
+        if velocity.abs() > 0.002 {
+            confidence += 8.0;
+        } else if velocity.abs() > 0.001 {
+            confidence += 4.0;
+        }
 
         // VPIN safety bonus — the lower the safer
-        if vpin < 0.20 { confidence += 8.0; }
-        else if vpin < 0.30 { confidence += 4.0; }
+        if vpin < 0.20 {
+            confidence += 8.0;
+        } else if vpin < 0.30 {
+            confidence += 4.0;
+        }
 
         // OFI confirmation strength
-        if ofi.abs() > 0.4 { confidence += 5.0; }
+        if ofi.abs() > 0.4 {
+            confidence += 5.0;
+        }
 
         Some(PreSignal {
             symbol: s.symbol.clone(),
@@ -92,7 +100,10 @@ impl Strategy for TradeFlow {
             ta_confidence: confidence.clamp(0.0, 100.0) as u8,
             reason: format!(
                 "VPIN={:.3} velocity={:.4}% OFI={:.3} atr={:.4}",
-                vpin, velocity * 100.0, ofi, atr
+                vpin,
+                velocity * 100.0,
+                ofi,
+                atr
             ),
         })
     }

@@ -1,8 +1,8 @@
 //! External-feeds agent — periodically polls fear&greed / funding /
 //! news / sentiment / on-chain feeds and republishes the snapshot.
 
-use crate::agents::messages::{AgentEvent, AgentId, FeedsSnapshotMsg};
 use crate::agents::MessageBus;
+use crate::agents::messages::{AgentEvent, AgentId, FeedsSnapshotMsg};
 use crate::feeds::{
     DeribitOptionsClient, ExternalSnapshot, FearGreedClient, FundingClient, NewsClient,
     OnchainClient, SentimentClient,

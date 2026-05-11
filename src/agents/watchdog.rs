@@ -6,8 +6,8 @@
 //! protects against silent failure by triggering a `Freeze` (and a
 //! Telegram alert via `MonitorAgent`) when liveness drops.
 
-use crate::agents::messages::{AgentEvent, AgentId, ControlCommand};
 use crate::agents::MessageBus;
+use crate::agents::messages::{AgentEvent, AgentId, ControlCommand};
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -31,8 +31,16 @@ impl Default for WatchdogConfig {
             watched: vec![
                 AgentId::Data,
                 AgentId::Feeds,
+                AgentId::Signal,
+                AgentId::Risk,
+                AgentId::Brain,
+                AgentId::Manager,
+                AgentId::Execution,
+                AgentId::Monitor,
                 AgentId::Survival,
                 AgentId::Learning,
+                AgentId::Orchestrator,
+                AgentId::Control,
             ],
             // 180s is generous enough to absorb a slow WS reconnect on
             // mobile networks (Termux), a delayed feeds poll, and a
@@ -51,8 +59,10 @@ pub fn spawn(bus: MessageBus, cfg: WatchdogConfig) -> JoinHandle<()> {
 
     let last_seen_evt = last_seen.clone();
     let mut rx = bus.subscribe();
+    let bus_evt = bus.clone();
     tokio::spawn(async move {
         info!("watchdog agent starting");
+        crate::agents::heartbeat::spawn(bus_evt, AgentId::Watchdog);
         while let Ok(ev) = rx.recv().await {
             match ev {
                 AgentEvent::Heartbeat { from, ts } => {

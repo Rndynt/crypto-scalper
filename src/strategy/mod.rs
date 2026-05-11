@@ -45,9 +45,9 @@ pub fn select_strategies(active: &[StrategyName], regime: Regime) -> Vec<Strateg
     // Regime only shifts preference order
     let preferred: &[StrategyName] = match regime {
         Regime::TrendingBullish | Regime::TrendingBearish => &[
-            StrategyName::EmaRibbon,   // → OrderFlow strategy
-            StrategyName::Momentum,    // → TradeFlow strategy
-            StrategyName::VwapScalp,   // → KalmanTrend strategy
+            StrategyName::EmaRibbon, // → OrderFlow strategy
+            StrategyName::Momentum,  // → TradeFlow strategy
+            StrategyName::VwapScalp, // → KalmanTrend strategy
         ],
         Regime::Ranging | Regime::Squeeze => &[
             StrategyName::MeanReversion, // → MicrostructureReversion
@@ -55,8 +55,8 @@ pub fn select_strategies(active: &[StrategyName], regime: Regime) -> Vec<Strateg
             StrategyName::EmaRibbon,     // → OrderFlow
         ],
         Regime::Volatile => &[
-            StrategyName::Momentum,      // → TradeFlow (VPIN gate handles safety)
-            StrategyName::EmaRibbon,     // → OrderFlow
+            StrategyName::Momentum,  // → TradeFlow (VPIN gate handles safety)
+            StrategyName::EmaRibbon, // → OrderFlow
         ],
         Regime::Unknown => &[
             StrategyName::EmaRibbon,

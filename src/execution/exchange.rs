@@ -2,7 +2,7 @@
 
 use crate::data::Side;
 use crate::errors::Result;
-use crate::execution::orders::OrderRequest;
+use crate::execution::orders::{OrderRequest, OrderType};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +28,17 @@ pub struct PositionSnapshot {
     pub mark_price: f64,
     pub unrealized_pnl: f64,
     pub leverage: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenOrderSnapshot {
+    pub symbol: String,
+    pub client_id: String,
+    pub exchange_order_id: String,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub stop_price: Option<f64>,
+    pub reduce_only: bool,
 }
 
 /// Minimal interface the bot uses to place / cancel orders. We express async
@@ -73,6 +84,13 @@ pub trait Exchange: Send + Sync {
         symbols: &'a [String],
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Vec<PositionSnapshot>>> + Send + 'a>,
+    >;
+
+    fn fetch_open_orders<'a>(
+        &'a self,
+        symbol: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<OpenOrderSnapshot>>> + Send + 'a>,
     >;
 
     fn name(&self) -> &'static str;

@@ -179,6 +179,14 @@ pub async fn bootstrap_states(
     rest_base_url: &str,
     timeframe: &Timeframe,
 ) {
+    bootstrap_states_for_timeframes(states, rest_base_url, &[*timeframe]).await;
+}
+
+pub async fn bootstrap_states_for_timeframes(
+    states: &Arc<Mutex<HashMap<String, SymbolState>>>,
+    rest_base_url: &str,
+    timeframes: &[Timeframe],
+) {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -187,26 +195,28 @@ pub async fn bootstrap_states(
     let symbols: Vec<String> = states.lock().await.keys().cloned().collect();
 
     for symbol in &symbols {
-        info!(symbol = %symbol, "bootstrap start");
+        for timeframe in timeframes {
+            info!(symbol = %symbol, timeframe_secs = timeframe.seconds, "bootstrap start");
 
-        match fetch_bootstrap_klines(&client, rest_base_url, symbol, timeframe, BOOTSTRAP_LIMIT)
-            .await
-        {
-            Ok(candles) if candles.is_empty() => {
-                warn!(symbol = %symbol, "bootstrap returned 0 candles — indicators will warm up live");
-            }
-            Ok(candles) => {
-                let n = candles.len();
-                let mut states = states.lock().await;
-                if let Some(state) = states.get_mut(symbol) {
-                    for c in candles {
-                        state.on_closed(c);
-                    }
-                    info!(symbol = %symbol, seeded = n, "bootstrap ok");
+            match fetch_bootstrap_klines(&client, rest_base_url, symbol, timeframe, BOOTSTRAP_LIMIT)
+                .await
+            {
+                Ok(candles) if candles.is_empty() => {
+                    warn!(symbol = %symbol, timeframe_secs = timeframe.seconds, "bootstrap returned 0 candles — indicators will warm up live");
                 }
-            }
-            Err(e) => {
-                warn!(symbol = %symbol, error = %e, "bootstrap failed");
+                Ok(candles) => {
+                    let n = candles.len();
+                    let mut states = states.lock().await;
+                    if let Some(state) = states.get_mut(symbol) {
+                        for c in candles {
+                            state.on_closed(c);
+                        }
+                        info!(symbol = %symbol, timeframe_secs = timeframe.seconds, seeded = n, "bootstrap ok");
+                    }
+                }
+                Err(e) => {
+                    warn!(symbol = %symbol, timeframe_secs = timeframe.seconds, error = %e, "bootstrap failed");
+                }
             }
         }
     }

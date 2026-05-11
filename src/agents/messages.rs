@@ -1,8 +1,8 @@
 //! Message types exchanged on the agent bus.
 
 use crate::data::{Candle, Side, Trade};
-use crate::execution::exchange::OrderAck;
 use crate::execution::PositionExitReason;
+use crate::execution::exchange::OrderAck;
 use crate::feeds::ExternalSnapshot;
 use crate::llm::engine::TradeDecision;
 use crate::strategy::state::PreSignal;
@@ -23,6 +23,8 @@ pub enum AgentId {
     Monitor,
     Survival,
     Control,
+    Orchestrator,
+    Watchdog,
 }
 
 impl AgentId {
@@ -39,6 +41,8 @@ impl AgentId {
             Self::Monitor => "monitor",
             Self::Survival => "survival",
             Self::Control => "control",
+            Self::Orchestrator => "orchestrator",
+            Self::Watchdog => "watchdog",
         }
     }
 }
@@ -46,7 +50,10 @@ impl AgentId {
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     /// Raw market trade from `DataAgent`.
-    Tick { symbol: String, trade: Trade },
+    Tick {
+        symbol: String,
+        trade: Trade,
+    },
     /// Best-bid/ask updated.
     BookTicker {
         symbol: String,
@@ -96,6 +103,16 @@ pub enum AgentEvent {
         size: f64,
         ack: OrderAck,
     },
+    PositionRecovered {
+        symbol: String,
+        side: Side,
+        size: f64,
+        entry_price: f64,
+        stop_loss: f64,
+        take_profit: f64,
+        strategy: String,
+    },
+    OrchestratorUpdated(OrchestratorSnapshot),
     /// Position closed (by SL, TP or trailing stop).
     PositionClosed {
         client_id: String,
@@ -109,13 +126,19 @@ pub enum AgentEvent {
         strategy: String,
     },
     /// Heartbeat for liveness monitoring.
-    Heartbeat { from: AgentId, ts: DateTime<Utc> },
+    Heartbeat {
+        from: AgentId,
+        ts: DateTime<Utc>,
+    },
     /// `SurvivalAgent` published a new survival state. All downstream
     /// agents (manager prompt, risk sizing, execution gate) consume this
     /// to decide how aggressive to be.
     SurvivalUpdated(SurvivalState),
     /// Equity reconciled from the exchange (or paper synthetic).
-    EquityReconciled { equity_usd: f64, ts: DateTime<Utc> },
+    EquityReconciled {
+        equity_usd: f64,
+        ts: DateTime<Utc>,
+    },
     /// External operator command (Telegram, CLI). Routed by the
     /// `ControlAgent` and consumed by the relevant downstream agent.
     ControlCommand(ControlCommand),
@@ -135,6 +158,14 @@ pub enum ControlCommand {
     ResetDaily,
     /// External request to publish a fresh /status snapshot to Telegram.
     StatusRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorSnapshot {
+    pub size_multiplier: f64,
+    pub frozen: bool,
+    pub reason: Option<String>,
+    pub ts: DateTime<Utc>,
 }
 
 /// SurvivalAgent's verdict, broadcast continuously. Other agents

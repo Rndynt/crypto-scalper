@@ -19,6 +19,7 @@ pub mod control;
 pub mod data;
 pub mod execution;
 pub mod feeds;
+pub mod heartbeat;
 pub mod learning;
 pub mod manager;
 pub mod messages;

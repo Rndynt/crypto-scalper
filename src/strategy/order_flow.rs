@@ -6,8 +6,8 @@
 //! Edge: Market makers and informed traders leave footprints in order flow
 //! before price moves. OFI predicts short-term price direction.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct OrderFlow;
@@ -45,7 +45,7 @@ impl Strategy for OrderFlow {
         }
 
         // Signal: OFI and book imbalance must agree on direction
-        let long_signal = ofi > 0.3 && book_imbalance > 1.15;   // buyers dominating
+        let long_signal = ofi > 0.3 && book_imbalance > 1.15; // buyers dominating
         let short_signal = ofi < -0.3 && book_imbalance < 0.87; // sellers dominating
 
         if !long_signal && !short_signal {
@@ -58,7 +58,7 @@ impl Strategy for OrderFlow {
         let sl_dist = atr * 0.8;
         let tp_dist = atr * 2.0; // 2.5:1 R:R
         let (sl, tp) = match side {
-            Side::Long  => (c.close - sl_dist, c.close + tp_dist),
+            Side::Long => (c.close - sl_dist, c.close + tp_dist),
             Side::Short => (c.close + sl_dist, c.close - tp_dist),
         };
 
@@ -66,15 +66,26 @@ impl Strategy for OrderFlow {
         let mut confidence: f64 = 63.0;
 
         // OFI magnitude bonus
-        if ofi.abs() > 0.6 { confidence += 8.0; }
-        else if ofi.abs() > 0.45 { confidence += 4.0; }
+        if ofi.abs() > 0.6 {
+            confidence += 8.0;
+        } else if ofi.abs() > 0.45 {
+            confidence += 4.0;
+        }
 
         // Book imbalance strength bonus
-        let book_extreme = if long_signal { book_imbalance > 1.4 } else { book_imbalance < 0.7 };
-        if book_extreme { confidence += 7.0; }
+        let book_extreme = if long_signal {
+            book_imbalance > 1.4
+        } else {
+            book_imbalance < 0.7
+        };
+        if book_extreme {
+            confidence += 7.0;
+        }
 
         // VPIN lower = safer = higher confidence
-        if vpin < 0.25 { confidence += 5.0; }
+        if vpin < 0.25 {
+            confidence += 5.0;
+        }
 
         Some(PreSignal {
             symbol: s.symbol.clone(),

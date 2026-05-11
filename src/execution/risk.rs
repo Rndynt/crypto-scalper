@@ -105,6 +105,10 @@ impl RiskManager {
         self.inner.lock().open_positions
     }
 
+    pub fn set_open_positions(&self, n: u32) {
+        self.inner.lock().open_positions = n;
+    }
+
     pub fn realized_pnl_today(&self) -> f64 {
         self.inner.lock().realized_pnl_today
     }
@@ -233,7 +237,9 @@ impl RiskManager {
                     return Err(format!("LONG sl {stop_loss:.4} >= entry {entry:.4}"));
                 }
                 if take_profit <= entry {
-                    return Err(format!("LONG tp {take_profit:.4} <= entry {entry:.4} — TP on wrong side"));
+                    return Err(format!(
+                        "LONG tp {take_profit:.4} <= entry {entry:.4} — TP on wrong side"
+                    ));
                 }
             }
             crate::data::Side::Short => {
@@ -241,7 +247,9 @@ impl RiskManager {
                     return Err(format!("SHORT sl {stop_loss:.4} <= entry {entry:.4}"));
                 }
                 if take_profit >= entry {
-                    return Err(format!("SHORT tp {take_profit:.4} >= entry {entry:.4} — TP on wrong side"));
+                    return Err(format!(
+                        "SHORT tp {take_profit:.4} >= entry {entry:.4} — TP on wrong side"
+                    ));
                 }
             }
         }
@@ -308,7 +316,12 @@ impl RiskManager {
     /// `llm_size_pct`: 0.0-1.0 from LLM based on confidence, Kelly, and risk factors.
     /// High conviction (>70%) = 1.0, Medium (50-70%) = 0.7, Low (<50%) = 0.4
     /// Also applies funding rate adjustments if extreme.
-    pub fn calculate_llm_sized_position(&self, entry: f64, stop_loss: f64, llm_size_pct: f64) -> f64 {
+    pub fn calculate_llm_sized_position(
+        &self,
+        entry: f64,
+        stop_loss: f64,
+        llm_size_pct: f64,
+    ) -> f64 {
         let max_size = self.calculate_size(entry, stop_loss);
         let scaled_size = max_size * llm_size_pct.clamp(0.1, 1.0);
         scaled_size.max(0.0)
@@ -410,15 +423,39 @@ mod tests {
             avg_slippage_bps: 2.0,
             market_impact_bps: 1.0,
         };
-        assert!(r
-            .validate_signal(100.0, 99.0, 100.5, &crate::data::Side::Long, Some(0.01), &tcm)
-            .is_err());
-        assert!(r
-            .validate_signal(100.0, 99.0, 101.5, &crate::data::Side::Long, Some(0.04), &tcm)
-            .is_err());
-        assert!(r
-            .validate_signal(100.0, 99.0, 101.5, &crate::data::Side::Long, Some(0.01), &tcm)
-            .is_ok());
+        assert!(
+            r.validate_signal(
+                100.0,
+                99.0,
+                100.5,
+                &crate::data::Side::Long,
+                Some(0.01),
+                &tcm
+            )
+            .is_err()
+        );
+        assert!(
+            r.validate_signal(
+                100.0,
+                99.0,
+                101.5,
+                &crate::data::Side::Long,
+                Some(0.04),
+                &tcm
+            )
+            .is_err()
+        );
+        assert!(
+            r.validate_signal(
+                100.0,
+                99.0,
+                101.5,
+                &crate::data::Side::Long,
+                Some(0.01),
+                &tcm
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -442,8 +479,16 @@ mod tests {
             avg_slippage_bps: 2.0,
             market_impact_bps: 1.0,
         };
-        assert!(r
-            .validate_signal(100.0, 99.9, 100.1, &crate::data::Side::Long, Some(0.01), &tcm)
-            .is_err());
+        assert!(
+            r.validate_signal(
+                100.0,
+                99.9,
+                100.1,
+                &crate::data::Side::Long,
+                Some(0.01),
+                &tcm
+            )
+            .is_err()
+        );
     }
 }

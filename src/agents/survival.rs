@@ -23,10 +23,10 @@
 //! 6. **Daily PnL ratchet**: once today's gain ≥ ratchet %, freeze
 //!    until tomorrow (locks profit).
 
+use crate::agents::MessageBus;
 use crate::agents::messages::{
     AgentEvent, AgentId, ControlCommand, FeedsSnapshotMsg, SurvivalMode, SurvivalState,
 };
-use crate::agents::MessageBus;
 use crate::backtest::monte_carlo::drawdown_confidence_intervals;
 use crate::config::SurvivalCfg;
 use crate::execution::{Exchange, RiskManager};

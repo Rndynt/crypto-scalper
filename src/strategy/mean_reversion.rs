@@ -6,8 +6,8 @@
 //! Tuned for HFT scalping: conditions are deliberately more permissive so the
 //! strategy fires multiple times per session rather than once a week.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct MeanReversion;
@@ -20,7 +20,7 @@ impl Strategy for MeanReversion {
     fn evaluate(&self, s: &SymbolState, c: &Candle) -> Option<PreSignal> {
         let bb = s.last_bb?;
         let rsi = s.last_rsi?;
-        let atr = s.last_atr?;
+        let _atr = s.last_atr?;
         let adx = s.last_adx.unwrap_or(0.0);
 
         // Allow mild trends (up to ADX 35) — only skip strong breakouts.
@@ -81,7 +81,7 @@ impl Strategy for MeanReversion {
 
 fn score_confidence(rsi: f64, vol_ratio: f64, adx: f64) -> u8 {
     let mut score: f64 = 62.0; // Base slightly above the 60 threshold
-                               // RSI extremes → higher confidence
+    // RSI extremes → higher confidence
     if !(20.0..=80.0).contains(&rsi) {
         score += 15.0;
     } else if !(30.0..=70.0).contains(&rsi) {

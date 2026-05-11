@@ -1,5 +1,5 @@
-use crate::feeds::funding_arb::{classify_funding, FundingArbSignal};
-use crate::feeds::{alt_data::alternative_data_score, alt_data::AltDataInputs, ExternalSnapshot};
+use crate::feeds::funding_arb::{FundingArbSignal, classify_funding};
+use crate::feeds::{ExternalSnapshot, alt_data::AltDataInputs, alt_data::alternative_data_score};
 use crate::strategy::kalman::KalmanTrend;
 
 #[derive(Debug, Clone, Copy)]

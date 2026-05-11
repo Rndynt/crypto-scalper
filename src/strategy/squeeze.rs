@@ -2,8 +2,8 @@
 //!
 //! Tuned for HFT: lower ROC threshold for expansion detection, tighter SL.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct Squeeze;
@@ -17,7 +17,7 @@ impl Strategy for Squeeze {
         let bb = s.last_bb?;
         let ku = s.last_keltner_upper?;
         let kl = s.last_keltner_lower?;
-        let atr = s.last_atr?;
+        let _atr = s.last_atr?;
         let roc = s.last_roc.unwrap_or(0.0);
 
         // Check if we're still inside the squeeze (BB inside Keltner)

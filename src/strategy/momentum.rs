@@ -2,8 +2,8 @@
 //!
 //! Tuned for HFT scalping: lower volume threshold, relaxed ROC, tighter SL/TP.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct Momentum;
@@ -29,7 +29,7 @@ impl Strategy for Momentum {
             0.0
         };
         let roc = s.last_roc.unwrap_or(0.0);
-        let atr = s.last_atr?;
+        let _atr = s.last_atr?;
         let ema50 = s.ema_50.value();
         let ema200 = s.ema_200.value();
 

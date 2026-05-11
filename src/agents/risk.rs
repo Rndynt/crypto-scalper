@@ -14,13 +14,13 @@
 //!   wide enough to never bite under normal conditions but tight
 //!   enough to dodge a funding-flush.
 
-use crate::agents::messages::{
-    AgentEvent, FeedsSnapshotMsg, RiskOutcome, RiskVerdictMsg, SurvivalMode, SurvivalState,
-};
 use crate::agents::MessageBus;
+use crate::agents::messages::{
+    AgentEvent, AgentId, FeedsSnapshotMsg, RiskOutcome, RiskVerdictMsg, SurvivalMode, SurvivalState,
+};
 use crate::data::Side;
-use crate::execution::tcm::TransactionCostModel;
 use crate::execution::RiskManager;
+use crate::execution::tcm::TransactionCostModel;
 use crate::learning::LearningPolicy;
 use crate::quant::{QuantEngine, QuantSizingInput};
 use parking_lot::Mutex;
@@ -74,6 +74,7 @@ pub fn spawn(
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
     let survival: Arc<Mutex<Option<SurvivalState>>> = Arc::new(Mutex::new(None));
+    let orchestrator_multiplier: Arc<Mutex<f64>> = Arc::new(Mutex::new(1.0));
     let funding: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     let spreads: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     // Track symbols with open positions to prevent duplicate entries.
@@ -81,6 +82,7 @@ pub fn spawn(
 
     tokio::spawn(async move {
         info!("risk agent starting");
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Risk);
         while let Ok(ev) = rx.recv().await {
             match ev {
                 AgentEvent::Shutdown => break,
@@ -88,7 +90,15 @@ pub fn spawn(
                     *survival.lock() = Some(s);
                     continue;
                 }
+                AgentEvent::OrchestratorUpdated(s) => {
+                    *orchestrator_multiplier.lock() = s.size_multiplier.clamp(0.0, 2.0);
+                    continue;
+                }
                 AgentEvent::OrderFilled { symbol, .. } => {
+                    open_symbols.lock().insert(symbol);
+                    continue;
+                }
+                AgentEvent::PositionRecovered { symbol, .. } => {
                     open_symbols.lock().insert(symbol);
                     continue;
                 }
@@ -156,8 +166,14 @@ pub fn spawn(
                         }
                     }
 
-                    let verdict =
+                    let mut verdict =
                         policy.evaluate(signal.strategy.as_str(), regime.as_str(), &signal.symbol);
+                    let orchestrator_mult = *orchestrator_multiplier.lock();
+                    verdict.size_multiplier *= orchestrator_mult;
+                    verdict.matched_lessons.push(format!(
+                        "orchestrator size multiplier {:.2}",
+                        orchestrator_mult
+                    ));
                     let effective_ta_threshold = (cfg.base_min_ta_threshold as i32
                         + verdict.ta_threshold_delta as i32)
                         .clamp(0, 100) as u8;
@@ -269,9 +285,6 @@ pub fn spawn(
                     let effective_tp = signal.take_profit;
 
                     // Log SL/TP for monitoring
-                    let sl_dist = (signal.entry - signal.stop_loss).abs() / signal.entry;
-                    let tp_dist = (signal.entry - signal.take_profit).abs() / signal.entry;
-
                     // RiskManager.calculate_size already multiplies by
                     // the SurvivalAgent-controlled size_multiplier.
                     let base_size = risk.calculate_size(effective_entry, effective_sl);

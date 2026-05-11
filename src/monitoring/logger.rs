@@ -8,9 +8,10 @@
 //! crate internally uses tokio-postgres which conflicts with our tokio).
 
 use crate::errors::Result;
+use crate::learning::Lesson;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -242,11 +243,21 @@ impl ClosedTrade {
     }
 }
 
+struct PgCloseUpdate<'a> {
+    client_id: &'a str,
+    exit_time: DateTime<Utc>,
+    exit_price: f64,
+    exit_reason: &'a str,
+    pnl_usd: f64,
+    pnl_pct: f64,
+    fees: f64,
+}
+
 // ── PostgreSQL channel worker ──────────────────────────────────────────
 
 /// Requests sent to the dedicated PG worker thread.
 enum PgReq {
-    Insert(TradeRecord),
+    Insert(Box<TradeRecord>),
     Close {
         client_id: String,
         exit_time: DateTime<Utc>,
@@ -291,9 +302,7 @@ fn spawn_pg_worker(url: String) -> Result<mpsc::SyncSender<PgReq>> {
             let tls = match TlsConnector::builder().build() {
                 Ok(t) => t,
                 Err(e) => {
-                    let _ = init_tx.send(Err(
-                        crate::errors::ScalperError::Postgres(e.to_string()),
-                    ));
+                    let _ = init_tx.send(Err(crate::errors::ScalperError::Postgres(e.to_string())));
                     return;
                 }
             };
@@ -301,16 +310,12 @@ fn spawn_pg_worker(url: String) -> Result<mpsc::SyncSender<PgReq>> {
             let mut client = match postgres::Client::connect(&url, connector) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = init_tx.send(Err(
-                        crate::errors::ScalperError::Postgres(e.to_string()),
-                    ));
+                    let _ = init_tx.send(Err(crate::errors::ScalperError::Postgres(e.to_string())));
                     return;
                 }
             };
             if let Err(e) = client.batch_execute(PG_SCHEMA) {
-                let _ = init_tx.send(Err(
-                    crate::errors::ScalperError::Postgres(e.to_string()),
-                ));
+                let _ = init_tx.send(Err(crate::errors::ScalperError::Postgres(e.to_string())));
                 return;
             }
             let _ = init_tx.send(Ok(()));
@@ -332,13 +337,15 @@ fn spawn_pg_worker(url: String) -> Result<mpsc::SyncSender<PgReq>> {
                     } => {
                         let _ = pg_close(
                             &mut client,
-                            &client_id,
-                            exit_time,
-                            exit_price,
-                            &exit_reason,
-                            pnl_usd,
-                            pnl_pct,
-                            fees,
+                            PgCloseUpdate {
+                                client_id: &client_id,
+                                exit_time,
+                                exit_price,
+                                exit_reason: &exit_reason,
+                                pnl_usd,
+                                pnl_pct,
+                                fees,
+                            },
                         );
                     }
                     PgReq::LogLlm {
@@ -466,20 +473,22 @@ fn pg_insert(client: &mut postgres::Client, t: &TradeRecord) -> std::result::Res
 
 fn pg_close(
     client: &mut postgres::Client,
-    client_id: &str,
-    exit_time: DateTime<Utc>,
-    exit_price: f64,
-    exit_reason: &str,
-    pnl_usd: f64,
-    pnl_pct: f64,
-    fees: f64,
+    update: PgCloseUpdate<'_>,
 ) -> std::result::Result<(), String> {
     client
         .execute(
             "UPDATE trades SET exit_time=$2, exit_price=$3, exit_reason=$4,
                 pnl_usd=$5, pnl_pct=$6, fees_paid=$7
              WHERE client_order_id=$1",
-            &[&client_id, &exit_time, &exit_price, &exit_reason, &pnl_usd, &pnl_pct, &fees],
+            &[
+                &update.client_id,
+                &update.exit_time,
+                &update.exit_price,
+                &update.exit_reason,
+                &update.pnl_usd,
+                &update.pnl_pct,
+                &update.fees,
+            ],
         )
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -658,23 +667,53 @@ impl TradeJournal {
                         ?39,?40,?41
                     )",
                     params![
-                        t.client_order_id, t.user_id, t.symbol, t.direction, t.strategy,
-                        t.market_regime, t.entry_time, t.entry_price, t.size, t.stop_loss,
-                        t.take_profit, t.exit_time, t.exit_price, t.exit_reason, t.pnl_usd,
-                        t.pnl_pct, t.fees_paid, t.ta_confidence, t.rsi, t.adx,
-                        t.vwap_delta_pct, t.ema_alignment, t.llm_model, t.llm_decision,
-                        t.llm_confidence, t.llm_ta_score, t.llm_sentiment_score,
-                        t.llm_fundamental_score, t.llm_composite, t.llm_summary,
-                        t.llm_ta_analysis, t.llm_sentiment, t.llm_fundamental, t.llm_risks,
-                        t.llm_invalidation, t.llm_latency_ms.map(|x| x as i64),
-                        t.fear_greed, t.social_sentiment, t.news_score, t.funding_rate,
+                        t.client_order_id,
+                        t.user_id,
+                        t.symbol,
+                        t.direction,
+                        t.strategy,
+                        t.market_regime,
+                        t.entry_time,
+                        t.entry_price,
+                        t.size,
+                        t.stop_loss,
+                        t.take_profit,
+                        t.exit_time,
+                        t.exit_price,
+                        t.exit_reason,
+                        t.pnl_usd,
+                        t.pnl_pct,
+                        t.fees_paid,
+                        t.ta_confidence,
+                        t.rsi,
+                        t.adx,
+                        t.vwap_delta_pct,
+                        t.ema_alignment,
+                        t.llm_model,
+                        t.llm_decision,
+                        t.llm_confidence,
+                        t.llm_ta_score,
+                        t.llm_sentiment_score,
+                        t.llm_fundamental_score,
+                        t.llm_composite,
+                        t.llm_summary,
+                        t.llm_ta_analysis,
+                        t.llm_sentiment,
+                        t.llm_fundamental,
+                        t.llm_risks,
+                        t.llm_invalidation,
+                        t.llm_latency_ms.map(|x| x as i64),
+                        t.fear_greed,
+                        t.social_sentiment,
+                        t.news_score,
+                        t.funding_rate,
                         t.top_news_titles,
                     ],
                 )?;
                 Ok(())
             }
             JournalBackend::Postgres { tx } => {
-                tx.send(PgReq::Insert(t.clone()))
+                tx.send(PgReq::Insert(Box::new(t.clone())))
                     .map_err(|_| crate::errors::ScalperError::Postgres("pg worker died".into()))?;
                 Ok(())
             }
@@ -701,7 +740,15 @@ impl TradeJournal {
                     "UPDATE trades SET exit_time=?2, exit_price=?3, exit_reason=?4,
                         pnl_usd=?5, pnl_pct=?6, fees_paid=?7
                      WHERE client_order_id=?1",
-                    params![client_id, exit_time, exit_price, exit_reason, pnl_usd, pnl_pct, fees],
+                    params![
+                        client_id,
+                        exit_time,
+                        exit_price,
+                        exit_reason,
+                        pnl_usd,
+                        pnl_pct,
+                        fees
+                    ],
                 )?;
                 Ok(())
             }
@@ -749,9 +796,19 @@ impl TradeJournal {
                         raw_json, latency_ms, offline_fallback
                     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
                     params![
-                        Utc::now(), symbol, strategy, regime, direction, ta_confidence,
-                        llm_decision, llm_confidence, composite_score, summary, raw_json,
-                        latency_ms as i64, offline_fallback as i64,
+                        Utc::now(),
+                        symbol,
+                        strategy,
+                        regime,
+                        direction,
+                        ta_confidence,
+                        llm_decision,
+                        llm_confidence,
+                        composite_score,
+                        summary,
+                        raw_json,
+                        latency_ms as i64,
+                        offline_fallback as i64,
                     ],
                 )?;
                 Ok(())
@@ -885,6 +942,8 @@ pub struct LearningStateSnapshot {
     pub overall_wins: u32,
     pub overall_losses: u32,
     pub overall_net_pnl: f64,
+    #[serde(default)]
+    pub lessons: Vec<Lesson>,
 }
 
 const LEARNING_STATE_PATH: &str = "data/learning_state.json";
@@ -892,6 +951,9 @@ const LEARNING_STATE_PATH: &str = "data/learning_state.json";
 impl LearningStateSnapshot {
     /// Save current state to JSON.
     pub fn save(&self) -> Result<()> {
+        if let Some(parent) = Path::new(LEARNING_STATE_PATH).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(LEARNING_STATE_PATH, json)?;
         Ok(())

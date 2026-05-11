@@ -52,6 +52,24 @@ pub struct Exchange {
     #[serde(default)]
     pub api_secret: String,
     pub recv_window_ms: u64,
+    #[serde(default = "default_exchange_open_type")]
+    pub open_type: String,
+    #[serde(default = "default_exchange_leverage")]
+    pub leverage: u8,
+    #[serde(default = "default_exchange_position_mode")]
+    pub position_mode: String,
+}
+
+fn default_exchange_open_type() -> String {
+    "cross".to_string()
+}
+
+fn default_exchange_leverage() -> u8 {
+    1
+}
+
+fn default_exchange_position_mode() -> String {
+    "dual-side".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -542,11 +560,65 @@ impl Config {
     }
 
     fn apply_env(&mut self) {
+        if let Ok(v) = std::env::var("EXCHANGE").or_else(|_| std::env::var("ARIA_EXCHANGE")) {
+            if !v.is_empty() {
+                self.exchange.name = v.to_ascii_lowercase();
+            }
+        }
+        if let Ok(v) = std::env::var("EXCHANGE_REST_BASE_URL")
+            .or_else(|_| std::env::var("ARIA_EXCHANGE_REST_BASE_URL"))
+        {
+            if !v.is_empty() {
+                self.exchange.rest_base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("EXCHANGE_WS_BASE_URL")
+            .or_else(|_| std::env::var("ARIA_EXCHANGE_WS_BASE_URL"))
+        {
+            if !v.is_empty() {
+                self.exchange.ws_base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("EXCHANGE_RECV_WINDOW_MS")
+            .or_else(|_| std::env::var("ARIA_RECV_WINDOW_MS"))
+        {
+            if let Ok(ms) = v.parse::<u64>() {
+                self.exchange.recv_window_ms = ms;
+            }
+        }
+        if let Ok(v) =
+            std::env::var("EXCHANGE_OPEN_TYPE").or_else(|_| std::env::var("ARIA_OPEN_TYPE"))
+        {
+            if !v.is_empty() {
+                self.exchange.open_type = v.to_ascii_lowercase();
+            }
+        }
+        if let Ok(v) =
+            std::env::var("EXCHANGE_LEVERAGE").or_else(|_| std::env::var("ARIA_LEVERAGE"))
+        {
+            if let Ok(leverage) = v.parse::<u8>() {
+                self.exchange.leverage = leverage;
+            }
+        }
         if let Ok(v) = std::env::var("BINANCE_API_KEY") {
             self.exchange.api_key = v;
         }
         if let Ok(v) = std::env::var("BINANCE_API_SECRET") {
             self.exchange.api_secret = v;
+        }
+        if self.exchange.name.eq_ignore_ascii_case("mexc") {
+            if let Ok(v) = std::env::var("MEXC_API_KEY") {
+                self.exchange.api_key = v;
+            }
+            if let Ok(v) = std::env::var("MEXC_API_SECRET") {
+                self.exchange.api_secret = v;
+            }
+            if self.exchange.rest_base_url.contains("binance.com") {
+                self.exchange.rest_base_url = "https://api.mexc.com".to_string();
+            }
+            if self.exchange.ws_base_url.contains("binance.com") {
+                self.exchange.ws_base_url = "wss://contract.mexc.com/edge".to_string();
+            }
         }
         // Brain LLM provider/model/api_base overrides — applied BEFORE the
         // api-key lookup so the right `*_API_KEY` env var is picked.
@@ -713,13 +785,40 @@ impl Config {
                 "backtest annualization settings must be positive".into(),
             ));
         }
+        let exchange = self.exchange.name.to_ascii_lowercase();
+        if !["binance", "binance-futures", "mexc", "mexc-futures"].contains(&exchange.as_str()) {
+            return Err(ScalperError::Config(format!(
+                "unsupported exchange `{}`; use binance or mexc",
+                self.exchange.name
+            )));
+        }
+        if self.exchange.recv_window_ms == 0 || self.exchange.recv_window_ms > 60_000 {
+            return Err(ScalperError::Config(
+                "exchange.recv_window_ms must be in [1, 60000]".into(),
+            ));
+        }
+        if !["cross", "isolated"].contains(&self.exchange.open_type.as_str()) {
+            return Err(ScalperError::Config(
+                "exchange.open_type must be cross or isolated".into(),
+            ));
+        }
+        if self.exchange.leverage == 0 {
+            return Err(ScalperError::Config(
+                "exchange.leverage must be positive".into(),
+            ));
+        }
         if self.mode.run_mode == "live"
             && !self.mode.dry_run
             && (self.exchange.api_key.is_empty() || self.exchange.api_secret.is_empty())
         {
-            return Err(ScalperError::Config(
-                "live mode requires BINANCE_API_KEY / BINANCE_API_SECRET".into(),
-            ));
+            let key_name = if exchange.starts_with("mexc") {
+                "MEXC_API_KEY / MEXC_API_SECRET"
+            } else {
+                "BINANCE_API_KEY / BINANCE_API_SECRET"
+            };
+            return Err(ScalperError::Config(format!(
+                "live mode requires {key_name}"
+            )));
         }
         Ok(())
     }
@@ -843,7 +942,7 @@ equity_usd = 1000.0
         impl Drop for EnvGuard {
             fn drop(&mut self) {
                 for k in self.0 {
-                    std::env::remove_var(k);
+                    unsafe { std::env::remove_var(k) };
                 }
             }
         }
@@ -854,14 +953,16 @@ equity_usd = 1000.0
             "ARIA_MANAGER_MODEL",
             "ARIA_MANAGER_ENABLED",
         ]);
-        std::env::set_var("ARIA_LLM_PROVIDER", "openrouter");
-        std::env::set_var("ARIA_LLM_MODEL", "deepseek/deepseek-chat");
-        std::env::set_var(
-            "ARIA_LLM_API_BASE",
-            "https://api.deepseek.com/v1/chat/completions",
-        );
-        std::env::set_var("ARIA_MANAGER_MODEL", "anthropic/claude-3.5-sonnet");
-        std::env::set_var("ARIA_MANAGER_ENABLED", "true");
+        unsafe {
+            std::env::set_var("ARIA_LLM_PROVIDER", "openrouter");
+            std::env::set_var("ARIA_LLM_MODEL", "deepseek/deepseek-chat");
+            std::env::set_var(
+                "ARIA_LLM_API_BASE",
+                "https://api.deepseek.com/v1/chat/completions",
+            );
+            std::env::set_var("ARIA_MANAGER_MODEL", "anthropic/claude-3.5-sonnet");
+            std::env::set_var("ARIA_MANAGER_ENABLED", "true");
+        }
 
         let p = std::path::PathBuf::from("config/default.toml");
         let cfg = Config::load(&p, None).expect("default config must parse");

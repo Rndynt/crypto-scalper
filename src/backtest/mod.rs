@@ -8,4 +8,4 @@ pub mod monte_carlo;
 pub use data_loader::load_csv;
 pub use engine::{BacktestEngine, BacktestResult};
 pub use metrics::PerformanceMetrics;
-pub use monte_carlo::{drawdown_confidence_intervals, MonteCarloDrawdown};
+pub use monte_carlo::{MonteCarloDrawdown, drawdown_confidence_intervals};

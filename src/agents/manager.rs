@@ -13,18 +13,18 @@
 //! Disable the manager by leaving the API key empty — it then defaults
 //! to `Approve` for every Go decision (zero extra cost).
 
-use crate::agents::messages::{
-    AgentEvent, BrainOutcome, ManagerAction, ManagerProposal, ManagerVerdict, SurvivalMode,
-    SurvivalState,
-};
 use crate::agents::MessageBus;
+use crate::agents::messages::{
+    AgentEvent, AgentId, BrainOutcome, ManagerAction, ManagerProposal, ManagerVerdict,
+    SurvivalMode, SurvivalState,
+};
 use crate::feeds::ExternalSnapshot;
 use crate::learning::LearningPolicy;
 use crate::llm::engine::Decision;
 use parking_lot::{Mutex as PlMutex, RwLock as PlRwLock};
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -108,6 +108,7 @@ pub fn spawn(
             model = %cfg.model,
             "manager agent starting"
         );
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Manager);
         while let Ok(ev) = rx.recv().await {
             match ev {
                 AgentEvent::Shutdown => break,

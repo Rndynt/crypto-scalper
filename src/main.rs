@@ -14,26 +14,26 @@ use crypto_scalper::{
         manager::ManagerAgentConfig, messages::AgentEvent, risk::RiskAgentConfig,
         survival::SurvivalAgentDeps, watchdog::WatchdogConfig,
     },
-    backtest::{load_csv, BacktestEngine},
+    backtest::{BacktestEngine, load_csv},
     config::Config,
     data::Timeframe,
     execution::{
-        binance::BinanceFutures, position::Position, Exchange, PaperExchange, PositionBook,
-        RiskManager,
+        Exchange, PaperExchange, PositionBook, RiskManager, binance::BinanceFutures,
+        mexc::MexcFutures, position::Position,
     },
     execution::{risk::RiskLimits, tcm::TransactionCostModel},
     feeds::{
         DeribitOptionsClient, ExternalSnapshot, FearGreedClient, FundingClient, NewsClient,
         OnchainClient, SentimentClient,
     },
-    learning::{lessons::LessonConfig, LearningPolicy},
+    learning::{LearningPolicy, lessons::LessonConfig},
     llm::engine::{LlmEngine, LlmEngineConfig, LlmProvider},
     monitoring::{
-        logger::TradeJournal, spawn_dashboard_server, DashboardState, MetricsState,
-        TelegramNotifier,
+        DashboardState, MetricsState, TelegramNotifier, logger::TradeJournal,
+        spawn_dashboard_server,
     },
     quant::{QuantConfig, QuantEngine},
-    research::{reports_to_json, reports_to_markdown, ResearchReport},
+    research::{ResearchReport, reports_to_json, reports_to_markdown},
     shared_state::SharedState,
     strategy::state::{StrategyName, SymbolState},
 };
@@ -131,7 +131,7 @@ fn load_dotenv() {
             }
             // Don't overwrite a real export already in the env.
             if std::env::var(key).is_err() {
-                std::env::set_var(key, val);
+                unsafe { std::env::set_var(key, val) };
             }
         }
         // Stop at the first .env we successfully parse.
@@ -217,13 +217,28 @@ async fn run_agents(cfg: Config) -> Result<()> {
 
     // --- Exchange ---
     let exchange: Arc<dyn Exchange> = if cfg.mode.run_mode == "live" && !cfg.mode.dry_run {
-        info!("live mode — dispatching real orders to Binance");
-        Arc::new(BinanceFutures::new(
-            cfg.exchange.rest_base_url.clone(),
-            cfg.exchange.api_key.clone(),
-            cfg.exchange.api_secret.clone(),
-            cfg.exchange.recv_window_ms,
-        ))
+        match cfg.exchange.name.to_ascii_lowercase().as_str() {
+            "mexc" | "mexc-futures" => {
+                info!("live mode — dispatching real orders to MEXC Futures");
+                Arc::new(MexcFutures::new(
+                    cfg.exchange.rest_base_url.clone(),
+                    cfg.exchange.api_key.clone(),
+                    cfg.exchange.api_secret.clone(),
+                    cfg.exchange.recv_window_ms,
+                    &cfg.exchange.open_type,
+                    cfg.exchange.leverage,
+                ))
+            }
+            _ => {
+                info!("live mode — dispatching real orders to Binance Futures");
+                Arc::new(BinanceFutures::new(
+                    cfg.exchange.rest_base_url.clone(),
+                    cfg.exchange.api_key.clone(),
+                    cfg.exchange.api_secret.clone(),
+                    cfg.exchange.recv_window_ms,
+                ))
+            }
+        }
     } else {
         info!("paper mode");
         Arc::new(PaperExchange::new(2.0, cfg.risk.equity_usd))
@@ -259,10 +274,12 @@ async fn run_agents(cfg: Config) -> Result<()> {
             .and_then(|s| s.parse::<i64>().ok())
             .or(cfg.monitoring.telegram_signal_topic_id);
         if !group_id.is_empty() {
-            thread_id.map(|tid| crypto_scalper::monitoring::telegram::TgDestination::Topic {
-                chat_id: group_id,
-                thread_id: tid,
-            })
+            thread_id.map(
+                |tid| crypto_scalper::monitoring::telegram::TgDestination::Topic {
+                    chat_id: group_id,
+                    thread_id: tid,
+                },
+            )
         } else {
             None
         }
@@ -343,10 +360,10 @@ async fn run_agents(cfg: Config) -> Result<()> {
     // EmaRibbon can fire, and ADX needs ~28 candles before RegimeDetector
     // can classify anything other than Unknown.
     {
-        crypto_scalper::data::bootstrap_states(
+        crypto_scalper::data::bootstrap_states_for_timeframes(
             &states,
             &cfg.exchange.rest_base_url,
-            &entry_timeframe,
+            &timeframes,
         )
         .await;
     }
@@ -392,53 +409,19 @@ async fn run_agents(cfg: Config) -> Result<()> {
         });
     }
 
-    // --- Reconcile open positions from exchange on startup ---
-    // If the bot crashed mid-trade, the PositionBook is empty but the exchange
-    // may still hold open positions. Fetch them and re-seed the book so SL/TP
-    // exit checks and risk counters stay consistent.
-    if cfg.mode.run_mode == "live" {
-        match exchange.fetch_open_positions(&cfg.pairs.symbols).await {
-            Ok(snaps) if !snaps.is_empty() => {
-                let mut recon: Vec<Position> = Vec::new();
-                for s in &snaps {
-                    let pos = Position {
-                        client_id: format!("recon-{}-{}", s.symbol, s.side.as_str()),
-                        symbol: s.symbol.clone(),
-                        side: s.side,
-                        size: s.size,
-                        entry_price: s.entry_price,
-                        stop_loss: 0.0,
-                        take_profit: 0.0,
-                        opened_at: chrono::Utc::now(),
-                        trailing_activated: false,
-                        peak_price: s.mark_price,
-                        trough_price: s.mark_price,
-                        atr_at_entry: 0.0,
-                        partial_taken: false,
-                        breakeven_activated: false,
-                        strategy: "recon".to_string(),
-                    };
-                    recon.push(pos);
-                    risk.on_position_opened();
-                }
-                let n = recon.len();
-                book.reconcile(recon);
-                warn!(
-                    count = n,
-                    "startup: reconciled open positions from exchange"
-                );
-            }
-            Ok(_) => info!("startup: no open positions to reconcile"),
-            Err(e) => warn!(error = %e, "startup: position reconciliation failed"),
-        }
-    }
-
     // --- SharedState for cross-agent coordination ---
-    let shared_state = SharedState::new(
-        cfg.risk.equity_usd,
-        cfg.risk.max_open_positions as u64,
-    );
+    let shared_state = SharedState::new(cfg.risk.equity_usd, cfg.risk.max_open_positions as u64);
     info!("SharedState initialized — all agents will coordinate through shared context");
+
+    reconcile_startup_positions(
+        &cfg,
+        Arc::clone(&exchange),
+        Arc::clone(&book),
+        Arc::clone(&risk),
+        Arc::clone(&shared_state),
+        &bus,
+    )
+    .await;
 
     // --- Spawn agents ---
     let _data = crypto_scalper::agents::data::spawn(
@@ -542,65 +525,13 @@ async fn run_agents(cfg: Config) -> Result<()> {
         policy.clone(),
         Arc::clone(&feeds_cache),
     );
-    // --- Reconcile broker truth at startup (A3 + A4) ---
-    if cfg.mode.run_mode == "live" && !cfg.mode.dry_run {
-        for sym in &cfg.pairs.symbols {
-            if let Err(e) = exchange
-                .set_leverage(sym, cfg.risk.max_leverage as u8)
-                .await
-            {
-                warn!(symbol = %sym, error = %e, "set_leverage failed");
-            }
-        }
-        match exchange.fetch_equity_usd().await {
-            Ok(eq) if eq > 0.0 => {
-                info!(equity = eq, "startup: equity reconciled");
-                risk.set_equity(eq);
-            }
-            Ok(_) => {}
-            Err(e) => warn!(error = %e, "startup: fetch_equity_usd failed"),
-        }
-        match exchange.fetch_open_positions(&cfg.pairs.symbols).await {
-            Ok(positions) => {
-                let now = chrono::Utc::now();
-                let recovered: Vec<Position> = positions
-                    .into_iter()
-                    .map(|p| Position {
-                        client_id: format!("recovered-{}-{}", p.symbol, now.timestamp_millis()),
-                        symbol: p.symbol,
-                        side: p.side,
-                        size: p.size.abs(),
-                        entry_price: p.entry_price,
-                        stop_loss: 0.0,
-                        take_profit: 0.0,
-                        opened_at: now,
-                        trailing_activated: false,
-                        peak_price: p.mark_price,
-                        trough_price: p.mark_price,
-                        atr_at_entry: 0.0,
-                        partial_taken: false,
-                        breakeven_activated: false,
-                        strategy: "recovered".to_string(),
-                    })
-                    .collect();
-                if !recovered.is_empty() {
-                    info!(
-                        count = recovered.len(),
-                        "startup: reconciled open positions"
-                    );
-                }
-                book.reconcile(recovered);
-            }
-            Err(e) => warn!(error = %e, "startup: fetch_open_positions failed"),
-        }
-    }
-
     let _execution = crypto_scalper::agents::execution::spawn(ExecutionAgentDeps {
         bus: bus.clone(),
         exchange: exchange.clone(),
         risk: Arc::clone(&risk),
         book: Arc::clone(&book),
         honor_survival: cfg.survival.enabled,
+        protective_orders_required: cfg.mode.run_mode == "live" && !cfg.mode.dry_run,
     });
     let _monitor = crypto_scalper::agents::monitor::spawn(
         bus.clone(),
@@ -700,4 +631,131 @@ async fn run_agents(cfg: Config) -> Result<()> {
     // Give agents a moment to drain.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     Ok(())
+}
+
+async fn reconcile_startup_positions(
+    cfg: &Config,
+    exchange: Arc<dyn Exchange>,
+    book: Arc<PositionBook>,
+    risk: Arc<RiskManager>,
+    shared_state: Arc<SharedState>,
+    bus: &MessageBus,
+) {
+    if cfg.mode.run_mode != "live" || cfg.mode.dry_run {
+        return;
+    }
+
+    for sym in &cfg.pairs.symbols {
+        if let Err(e) = exchange.set_leverage(sym, cfg.exchange.leverage).await {
+            warn!(symbol = %sym, error = %e, "startup: set_leverage failed");
+        }
+    }
+    match exchange.fetch_equity_usd().await {
+        Ok(eq) if eq > 0.0 => {
+            info!(equity = eq, "startup: equity reconciled");
+            risk.set_equity(eq);
+        }
+        Ok(_) => {}
+        Err(e) => warn!(error = %e, "startup: fetch_equity_usd failed"),
+    }
+
+    let positions = match exchange.fetch_open_positions(&cfg.pairs.symbols).await {
+        Ok(positions) => positions,
+        Err(e) => {
+            warn!(error = %e, "startup: position reconciliation failed");
+            return;
+        }
+    };
+    let mut recovered = Vec::new();
+    let now = chrono::Utc::now();
+    for snap in positions {
+        let (stop_loss, take_profit) =
+            recover_protection_prices(exchange.as_ref(), &snap.symbol, snap.side, snap.entry_price)
+                .await;
+        if stop_loss <= 0.0 || take_profit <= 0.0 {
+            let reason = format!(
+                "recovered {} {:?} lacks broker SL/TP; freezing new entries",
+                snap.symbol, snap.side
+            );
+            warn!(%reason);
+            risk.freeze(reason.clone());
+            bus.publish(AgentEvent::ControlCommand(ControlCommand::Freeze {
+                reason,
+            }));
+        }
+        let pos = Position {
+            client_id: format!(
+                "recovered-{}-{}-{}",
+                snap.symbol,
+                snap.side.as_str(),
+                now.timestamp_millis()
+            ),
+            symbol: snap.symbol.clone(),
+            side: snap.side,
+            size: snap.size.abs(),
+            entry_price: snap.entry_price,
+            stop_loss,
+            take_profit,
+            opened_at: now,
+            trailing_activated: false,
+            peak_price: snap.mark_price,
+            trough_price: snap.mark_price,
+            atr_at_entry: 0.0,
+            partial_taken: false,
+            breakeven_activated: false,
+            strategy: "recovered".to_string(),
+        };
+        bus.publish(AgentEvent::PositionRecovered {
+            symbol: pos.symbol.clone(),
+            side: pos.side,
+            size: pos.size,
+            entry_price: pos.entry_price,
+            stop_loss: pos.stop_loss,
+            take_profit: pos.take_profit,
+            strategy: pos.strategy.clone(),
+        });
+        recovered.push(pos);
+    }
+    let count = recovered.len();
+    risk.set_open_positions(count as u32);
+    shared_state.set_open_positions(count as u64);
+    book.reconcile(recovered);
+    if count > 0 {
+        warn!(count, "startup: reconciled open positions from exchange");
+    } else {
+        info!("startup: no open positions to reconcile");
+    }
+}
+
+async fn recover_protection_prices(
+    exchange: &dyn Exchange,
+    symbol: &str,
+    side: crypto_scalper::data::Side,
+    entry: f64,
+) -> (f64, f64) {
+    let Ok(open_orders) = exchange.fetch_open_orders(symbol).await else {
+        return (0.0, 0.0);
+    };
+    let close_side = match side {
+        crypto_scalper::data::Side::Long => crypto_scalper::data::Side::Short,
+        crypto_scalper::data::Side::Short => crypto_scalper::data::Side::Long,
+    };
+    let mut stop_loss = 0.0;
+    let mut take_profit = 0.0;
+    for order in open_orders
+        .into_iter()
+        .filter(|o| o.reduce_only && o.side == close_side)
+    {
+        let Some(stop_price) = order.stop_price else {
+            continue;
+        };
+        match side {
+            crypto_scalper::data::Side::Long if stop_price < entry => stop_loss = stop_price,
+            crypto_scalper::data::Side::Long if stop_price > entry => take_profit = stop_price,
+            crypto_scalper::data::Side::Short if stop_price > entry => stop_loss = stop_price,
+            crypto_scalper::data::Side::Short if stop_price < entry => take_profit = stop_price,
+            _ => {}
+        }
+    }
+    (stop_loss, take_profit)
 }

@@ -2,9 +2,9 @@
 //! OHLCV builders. Publishes `Tick`, `BookTicker` and `CandleClosed`
 //! events on the bus.
 
-use crate::agents::messages::{AgentEvent, AgentId};
 use crate::agents::MessageBus;
-use crate::data::{ws_client::WsClient, OhlcvBuilder, Timeframe, WsEvent};
+use crate::agents::messages::{AgentEvent, AgentId};
+use crate::data::{OhlcvBuilder, Timeframe, WsEvent, ws_client::WsClient};
 use chrono::Utc;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -106,11 +106,7 @@ async fn run(bus: MessageBus, cfg: DataAgentConfig) {
                 });
             }
             WsEvent::DepthUpdate { symbol, bids, asks } => {
-                bus.publish(AgentEvent::DepthUpdate {
-                    symbol,
-                    bids,
-                    asks,
-                });
+                bus.publish(AgentEvent::DepthUpdate { symbol, bids, asks });
             }
             WsEvent::Heartbeat => {}
             WsEvent::Disconnected(reason) => {

@@ -373,7 +373,7 @@ impl SharedState {
         let mut total_wins = 0u64;
         let mut total_pnl = 0.0f64;
         let mut last_trade_pnl = 0.0f64;
-        
+
         for h in health.values() {
             total_trades += h.total_trades;
             total_wins += h.wins;
@@ -382,10 +382,14 @@ impl SharedState {
                 last_trade_pnl = h.avg_pnl; // Use avg as proxy for last
             }
         }
-        
+
         OverallStats {
             total_trades,
-            win_rate: if total_trades > 0 { total_wins as f64 / total_trades as f64 } else { 0.0 },
+            win_rate: if total_trades > 0 {
+                total_wins as f64 / total_trades as f64
+            } else {
+                0.0
+            },
             total_pnl,
             last_trade_pnl,
         }
@@ -419,6 +423,10 @@ impl SharedState {
     pub fn on_position_opened(&self) {
         let mut open = self.open_positions.write();
         *open += 1;
+    }
+
+    pub fn set_open_positions(&self, n: u64) {
+        *self.open_positions.write() = n;
     }
 
     pub fn on_position_closed(&self) {
@@ -460,8 +468,14 @@ impl SharedState {
             "Equity: ${:.2} (Total: ${:.2}) | Unrealized: ${:.2} | Today: ${:.2}\n\
              Survival: {} (score {:.0}) | DD: {:.1}% | Positions: {}\n\
              Regime: {}",
-            equity, total_eq, upnl, rpnl,
-            mode.as_str(), score, dd, open,
+            equity,
+            total_eq,
+            upnl,
+            rpnl,
+            mode.as_str(),
+            score,
+            dd,
+            open,
             regime
         )
     }

@@ -97,18 +97,28 @@ impl OrderBook {
     /// Filters out zero-qty levels (removal signals from Binance diff stream).
     /// Keeps top 20 levels sorted correctly.
     pub fn update_depth(&mut self, bids: Vec<(f64, f64)>, asks: Vec<(f64, f64)>) {
-        self.bids = bids.into_iter()
+        self.bids = bids
+            .into_iter()
             .filter(|(_, qty)| *qty > 0.0)
             .map(|(price, qty)| Level { price, qty })
             .collect();
-        self.bids.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap_or(std::cmp::Ordering::Equal));
+        self.bids.sort_by(|a, b| {
+            b.price
+                .partial_cmp(&a.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         self.bids.truncate(20);
 
-        self.asks = asks.into_iter()
+        self.asks = asks
+            .into_iter()
             .filter(|(_, qty)| *qty > 0.0)
             .map(|(price, qty)| Level { price, qty })
             .collect();
-        self.asks.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap_or(std::cmp::Ordering::Equal));
+        self.asks.sort_by(|a, b| {
+            a.price
+                .partial_cmp(&b.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         self.asks.truncate(20);
     }
 }

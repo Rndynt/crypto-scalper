@@ -278,16 +278,17 @@ fn parse_number_after_prefix(text: &str, allow_separators: bool) -> Option<f64> 
 
     let mut skipped = 0usize;
     let mut chars = after.chars();
-    while allow_separators {
-        let Some(c) = chars.clone().next() else { break };
-        if c.is_ascii_digit() || c == '-' || c == '.' {
-            break;
+    if allow_separators {
+        while let Some(c) = chars.clone().next() {
+            if c.is_ascii_digit() || c == '-' || c == '.' {
+                break;
+            }
+            skipped += c.len_utf8();
+            if skipped > 24 {
+                return None;
+            }
+            chars.next();
         }
-        skipped += c.len_utf8();
-        if skipped > 24 {
-            return None;
-        }
-        chars.next();
     }
     let after = &after[skipped..];
 

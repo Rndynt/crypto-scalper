@@ -2,14 +2,14 @@
 //! `RiskVerdict` events, builds a `MarketContext` (with the historical
 //! summary injected), calls the LLM, and emits `BrainOutcomeReady`.
 
-use crate::agents::messages::{
-    AgentEvent, BrainOutcome, FeedsSnapshotMsg, ManagerProposal, RiskOutcome,
-};
 use crate::agents::MessageBus;
+use crate::agents::messages::{
+    AgentEvent, AgentId, BrainOutcome, FeedsSnapshotMsg, ManagerProposal, RiskOutcome,
+};
 use crate::feeds::ExternalSnapshot;
 use crate::learning::LearningPolicy;
-use crate::llm::engine::{Decision, LlmEngine};
 use crate::llm::ContextBuilder;
+use crate::llm::engine::{Decision, LlmEngine};
 use crate::strategy::state::SymbolState;
 use parking_lot::RwLock as PlRwLock;
 use std::collections::HashMap;
@@ -39,6 +39,7 @@ pub fn spawn(
 
     tokio::spawn(async move {
         info!("brain agent starting");
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Brain);
         while let Ok(ev) = rx.recv().await {
             match ev {
                 AgentEvent::FeedsSnapshot(FeedsSnapshotMsg {
@@ -75,7 +76,7 @@ pub fn spawn(
 
                     // CONFLUENCE CHECK — don't call LLM for weak signals
                     let ta_strong = signal.ta_confidence >= 60;
-                    
+
                     if !ta_strong {
                         info!(
                             symbol = %symbol,
@@ -102,7 +103,7 @@ pub fn spawn(
                     if let Some(ref ss) = shared_state {
                         let strategy_perf = ss.get_strategy_health(signal.strategy.as_str());
                         let overall_perf = ss.get_overall_stats();
-                        
+
                         ctx.strategy_win_rate = strategy_perf.win_rate;
                         ctx.strategy_total_trades = strategy_perf.total_trades;
                         ctx.strategy_recent_pnl = strategy_perf.total_pnl;
@@ -136,7 +137,7 @@ pub fn spawn(
                     // High conviction = larger size, Low conviction = smaller size
                     let llm_size_pct = llm_out.decision.position_size_pct.clamp(0.1, 1.0);
                     let adjusted_size = risk.size * llm_size_pct;
-                    
+
                     info!(
                         symbol = %symbol,
                         risk_size = risk.size,
@@ -205,7 +206,8 @@ pub fn spawn(
                     }
 
                     // REJECT low-confidence GOs — minimum 62 for real quant trading
-                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 62 {
+                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 62
+                    {
                         info!(
                             symbol = %symbol,
                             confidence = llm_out.decision.confidence,

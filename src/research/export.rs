@@ -1,4 +1,4 @@
-use crate::backtest::{drawdown_confidence_intervals, BacktestResult};
+use crate::backtest::{BacktestResult, drawdown_confidence_intervals};
 use crate::research::report::{StrategyHealth, StrategyResearchSummary};
 
 #[derive(Debug, Clone)]
