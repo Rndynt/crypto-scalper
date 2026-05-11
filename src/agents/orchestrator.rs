@@ -20,12 +20,10 @@
 //! 5. **Performance monitoring** — tracks win rate, consecutive losses,
 //!    and adjusts aggressiveness dynamically.
 
-use crate::agents::messages::{
-    AgentEvent, BrainOutcome, ControlCommand, ManagerVerdict, RiskOutcome, RiskVerdictMsg,
-    SurvivalMode, SurvivalState,
-};
 use crate::agents::MessageBus;
-use crate::data::Side;
+use crate::agents::messages::{
+    AgentEvent, AgentId, ControlCommand, OrchestratorSnapshot, SurvivalMode,
+};
 use crate::learning::{LearningPolicy, Lesson};
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
@@ -147,9 +145,23 @@ pub fn spawn(
 
     tokio::spawn(async move {
         info!("orchestrator agent starting — coordinating all agents");
+        {
+            let bus_hb = bus.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
+                loop {
+                    tick.tick().await;
+                    bus_hb.publish(AgentEvent::Heartbeat {
+                        from: AgentId::Orchestrator,
+                        ts: chrono::Utc::now(),
+                    });
+                }
+            });
+        }
 
         while let Ok(ev) = rx.recv().await {
             let mut state = orchestrator_state.write();
+            let mut publish_snapshot = false;
 
             match ev {
                 AgentEvent::Shutdown => {
@@ -159,7 +171,7 @@ pub fn spawn(
 
                 // ── Survival updates ──────────────────────────────
                 AgentEvent::SurvivalUpdated(surv) => {
-                    state.survival_mode = surv.mode.clone();
+                    state.survival_mode = surv.mode;
                     state.survival_score = surv.score;
                     state.drawdown_pct = surv.drawdown_pct;
                     state.consecutive_losses = surv.consecutive_losses;
@@ -210,6 +222,7 @@ pub fn spawn(
                             state.consecutive_losses
                         );
                     }
+                    publish_snapshot = true;
                 }
 
                 // ── Brain outcomes ────────────────────────────────
@@ -233,8 +246,13 @@ pub fn spawn(
                     }
 
                     // Update rolling average confidence
-                    let conf_sum: u32 = state.recent_brains.iter().map(|b| b.confidence as u32).sum();
-                    state.avg_confidence = conf_sum as f64 / state.recent_brains.len().max(1) as f64;
+                    let conf_sum: u32 = state
+                        .recent_brains
+                        .iter()
+                        .map(|b| b.confidence as u32)
+                        .sum();
+                    state.avg_confidence =
+                        conf_sum as f64 / state.recent_brains.len().max(1) as f64;
 
                     // Reduce size if brain confidence is consistently low
                     if state.avg_confidence < 40.0 {
@@ -244,6 +262,7 @@ pub fn spawn(
                             state.avg_confidence
                         );
                     }
+                    publish_snapshot = true;
                 }
 
                 // ── Position closed ───────────────────────────────
@@ -270,10 +289,7 @@ pub fn spawn(
 
                     // Emergency freeze on big loss
                     if pnl_usd < -100.0 && cfg.emergency_freeze_enabled {
-                        let reason = format!(
-                            "orchestrator emergency: large loss ${:.2}",
-                            pnl_usd
-                        );
+                        let reason = format!("orchestrator emergency: large loss ${:.2}", pnl_usd);
                         warn!("{}", reason);
                         state.orchestrator_frozen = true;
                         state.freeze_reason = Some(reason.clone());
@@ -282,6 +298,7 @@ pub fn spawn(
                             reason,
                         }));
                     }
+                    publish_snapshot = true;
                 }
 
                 // ── Market regime updates ─────────────────────────
@@ -292,29 +309,32 @@ pub fn spawn(
                 }
 
                 // ── Manager verdicts ──────────────────────────────
-                AgentEvent::ManagerVerdictEmitted(verdict) => {
-                    if verdict.action.is_blocking() {
-                        warn!(
-                            "orchestrator: manager vetoed trade — {:?}",
-                            verdict.action
+                AgentEvent::ManagerVerdictEmitted(verdict) if verdict.action.is_blocking() => {
+                    warn!("orchestrator: manager vetoed trade — {:?}", verdict.action);
+                }
+
+                // ── Learning policy updates ───────────────────────
+                AgentEvent::PolicyRefreshed { lessons_count, .. }
+                    if cfg.lessons_injection_enabled =>
+                {
+                    if let Some(ref p) = policy {
+                        state.active_lessons = p.active_lessons();
+                        info!(
+                            "orchestrator: updated {} lessons from learning agent",
+                            lessons_count
                         );
                     }
                 }
 
-                // ── Learning policy updates ───────────────────────
-                AgentEvent::PolicyRefreshed { lessons_count, .. } => {
-                    if cfg.lessons_injection_enabled {
-                        if let Some(ref p) = policy {
-                            state.active_lessons = p.active_lessons();
-                            info!(
-                                "orchestrator: updated {} lessons from learning agent",
-                                lessons_count
-                            );
-                        }
-                    }
-                }
-
                 _ => {}
+            }
+            if publish_snapshot {
+                bus.publish(AgentEvent::OrchestratorUpdated(OrchestratorSnapshot {
+                    size_multiplier: state.size_multiplier.clamp(0.0, 2.0),
+                    frozen: state.orchestrator_frozen,
+                    reason: state.freeze_reason.clone(),
+                    ts: chrono::Utc::now(),
+                }));
             }
         }
     })

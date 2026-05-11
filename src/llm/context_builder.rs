@@ -1,8 +1,8 @@
 //! Build the Market Context Packet from TA + external feeds.
 
 use crate::feeds::ExternalSnapshot;
-use crate::strategy::state::{PreSignal, SymbolState};
 use crate::strategy::Regime;
+use crate::strategy::state::{PreSignal, SymbolState};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 
@@ -178,14 +178,29 @@ impl MarketContext {
         // Microstructure signals — OFI and VPIN
         let _ = writeln!(s, "\n[MICROSTRUCTURE]");
         if let Some(ofi) = self.ofi {
-            let pressure = if ofi > 0.0 { "BUY" } else if ofi < 0.0 { "SELL" } else { "NEUTRAL" };
+            let pressure = if ofi > 0.0 {
+                "BUY"
+            } else if ofi < 0.0 {
+                "SELL"
+            } else {
+                "NEUTRAL"
+            };
             let _ = writeln!(s, "  OFI           : {ofi:.2} ({pressure} pressure)");
         } else {
             let _ = writeln!(s, "  OFI           : N/A (waiting for data)");
         }
         if let Some(vpin) = self.vpin {
-            let risk = if vpin > 0.5 { "⚠️ HIGH" } else if vpin > 0.3 { "MODERATE" } else { "LOW" };
-            let _ = writeln!(s, "  VPIN          : {vpin:.3} ({risk} adverse selection risk)");
+            let risk = if vpin > 0.5 {
+                "⚠️ HIGH"
+            } else if vpin > 0.3 {
+                "MODERATE"
+            } else {
+                "LOW"
+            };
+            let _ = writeln!(
+                s,
+                "  VPIN          : {vpin:.3} ({risk} adverse selection risk)"
+            );
         } else {
             let _ = writeln!(s, "  VPIN          : N/A (warming up, need 50 buckets)");
         }
@@ -254,26 +269,39 @@ impl MarketContext {
         // Strategy performance data — critical for smart decisions
         let _ = writeln!(s, "\n[STRATEGY PERFORMANCE]");
         let _ = writeln!(s, "  Strategy        : {}", self.strategy);
-        let _ = writeln!(s, "  Win rate        : {:.1}% ({}/{} trades)", 
-            self.strategy_win_rate * 100.0, 
+        let _ = writeln!(
+            s,
+            "  Win rate        : {:.1}% ({}/{} trades)",
+            self.strategy_win_rate * 100.0,
             (self.strategy_win_rate * self.strategy_total_trades as f64) as u64,
-            self.strategy_total_trades);
+            self.strategy_total_trades
+        );
         let _ = writeln!(s, "  Recent PnL      : ${:.2}", self.strategy_recent_pnl);
         let _ = writeln!(s, "  Loss streak     : {}", self.strategy_loss_streak);
-        let _ = writeln!(s, "  Overall WR      : {:.1}% ({}/{} trades)",
+        let _ = writeln!(
+            s,
+            "  Overall WR      : {:.1}% ({}/{} trades)",
             self.overall_win_rate * 100.0,
             (self.overall_win_rate * self.overall_total_trades as f64) as u64,
-            self.overall_total_trades);
+            self.overall_total_trades
+        );
         if self.recent_trade_pnl != 0.0 {
             let _ = writeln!(s, "  Last trade PnL  : ${:.2}", self.recent_trade_pnl);
         }
 
         // Warning if strategy is performing poorly
         if self.strategy_total_trades >= 3 && self.strategy_win_rate < 0.40 {
-            let _ = writeln!(s, "  ⚠️ WARNING: This strategy has LOW win rate — be EXTRA selective!");
+            let _ = writeln!(
+                s,
+                "  ⚠️ WARNING: This strategy has LOW win rate — be EXTRA selective!"
+            );
         }
         if self.strategy_loss_streak >= 3 {
-            let _ = writeln!(s, "  ⚠️ WARNING: {} consecutive losses — consider WAITING!", self.strategy_loss_streak);
+            let _ = writeln!(
+                s,
+                "  ⚠️ WARNING: {} consecutive losses — consider WAITING!",
+                self.strategy_loss_streak
+            );
         }
 
         if let Some(n) = &self.external.news {
