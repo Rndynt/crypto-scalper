@@ -11,10 +11,7 @@ pub enum TgDestination {
     /// Direct message or simple chat (no thread).
     Chat(String),
     /// Forum topic in a group chat.
-    Topic {
-        chat_id: String,
-        thread_id: i64,
-    },
+    Topic { chat_id: String, thread_id: i64 },
 }
 
 /// A single inline keyboard button.
@@ -35,11 +32,7 @@ pub struct TelegramNotifier {
 }
 
 impl TelegramNotifier {
-    pub fn new(
-        token: String,
-        chat_id: String,
-        signal_topic: Option<TgDestination>,
-    ) -> Self {
+    pub fn new(token: String, chat_id: String, signal_topic: Option<TgDestination>) -> Self {
         let enabled = !token.is_empty() && !chat_id.is_empty();
         Self {
             client: Client::builder()
@@ -55,12 +48,15 @@ impl TelegramNotifier {
 
     /// Send to the primary chat (DM / owner).
     pub async fn send(&self, text: &str) -> Result<()> {
-        self.send_to(&TgDestination::Chat(self.chat_id.clone()), text).await
+        self.send_to(&TgDestination::Chat(self.chat_id.clone()), text)
+            .await
     }
 
     /// Send to the signal topic (if configured), falling back to primary chat.
     pub async fn send_signal(&self, text: &str) -> Result<()> {
-        let dest = self.signal_topic.clone()
+        let dest = self
+            .signal_topic
+            .clone()
             .unwrap_or_else(|| TgDestination::Chat(self.chat_id.clone()));
         self.send_to(&dest, text).await
     }
@@ -147,7 +143,10 @@ impl TelegramNotifier {
         if !self.enabled {
             return Ok(());
         }
-        let url = format!("https://api.telegram.org/bot{}/answerCallbackQuery", self.token);
+        let url = format!(
+            "https://api.telegram.org/bot{}/answerCallbackQuery",
+            self.token
+        );
         let mut body = json!({
             "callback_query_id": callback_id,
         });

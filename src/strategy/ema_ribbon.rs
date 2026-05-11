@@ -3,8 +3,8 @@
 //! Tuned for HFT: works with just EMA8 + EMA21 (no EMA50/200 required).
 //! This means it fires during warmup too — critical for day-1 operation.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct EmaRibbon;
@@ -20,7 +20,7 @@ impl Strategy for EmaRibbon {
         let e8 = s.ema_8.value()?;
         let e21 = s.ema_21.value()?;
         let rsi = s.last_rsi.unwrap_or(50.0);
-        let atr = s.last_atr?;
+        let _atr = s.last_atr?;
 
         let e50 = s.ema_50.value();
         let e200 = s.ema_200.value();

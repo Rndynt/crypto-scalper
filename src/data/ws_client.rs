@@ -5,16 +5,16 @@
 //! exponential backoff up to a bounded ceiling.
 
 use crate::data::types::Trade;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use chrono::{TimeZone, Utc};
 use futures_util::{SinkExt, StreamExt};
+use native_tls::TlsConnector;
 use serde::Deserialize;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
-use native_tls::TlsConnector;
 use tokio_tungstenite::Connector;
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -230,25 +230,33 @@ async fn handle_text(txt: &str, tx: &mpsc::Sender<WsEvent>) -> anyhow::Result<()
     } else if stream.contains("@depth") {
         let parsed: CombinedMsg<BinanceDepth> =
             serde_json::from_value(value).context("parse depth")?;
-        let bids: Vec<(f64, f64)> = parsed.data.bids.iter()
+        let bids: Vec<(f64, f64)> = parsed
+            .data
+            .bids
+            .iter()
             .filter_map(|b| {
                 let price = b[0].parse::<f64>().ok()?;
                 let qty = b[1].parse::<f64>().ok()?;
                 Some((price, qty))
             })
             .collect();
-        let asks: Vec<(f64, f64)> = parsed.data.asks.iter()
+        let asks: Vec<(f64, f64)> = parsed
+            .data
+            .asks
+            .iter()
             .filter_map(|a| {
                 let price = a[0].parse::<f64>().ok()?;
                 let qty = a[1].parse::<f64>().ok()?;
                 Some((price, qty))
             })
             .collect();
-        let _ = tx.send(WsEvent::DepthUpdate {
-            symbol: parsed.data.symbol,
-            bids,
-            asks,
-        }).await;
+        let _ = tx
+            .send(WsEvent::DepthUpdate {
+                symbol: parsed.data.symbol,
+                bids,
+                asks,
+            })
+            .await;
     }
     Ok(())
 }

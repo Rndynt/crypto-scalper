@@ -11,7 +11,7 @@ use crate::strategy::momentum::Momentum;
 use crate::strategy::squeeze::Squeeze;
 use crate::strategy::state::{PreSignal, StrategyName, SymbolState};
 use crate::strategy::vwap_scalp::VwapScalp;
-use crate::strategy::{select_strategies, RegimeDetector, Strategy};
+use crate::strategy::{RegimeDetector, Strategy, select_strategies};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 

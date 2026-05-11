@@ -3,8 +3,8 @@
 //! Tuned for HFT: wider zones, more permissive slope check, tighter SL for
 //! faster risk resolution.
 
-use super::state::{PreSignal, StrategyName, SymbolState};
 use super::Strategy;
+use super::state::{PreSignal, StrategyName, SymbolState};
 use crate::data::{Candle, Side};
 
 pub struct VwapScalp;
@@ -17,7 +17,7 @@ impl Strategy for VwapScalp {
     fn evaluate(&self, s: &SymbolState, c: &Candle) -> Option<PreSignal> {
         let vwap = s.last_vwap?;
         let slope = s.last_vwap_slope.unwrap_or(0.0);
-        let atr = s.last_atr?;
+        let _atr = s.last_atr?;
 
         let dist_pct = (c.close - vwap) / vwap.max(1e-9) * 100.0;
 
@@ -36,10 +36,7 @@ impl Strategy for VwapScalp {
 
         // Fixed % SL/TP for 100x leverage HFT: 1.5% SL, 3.0% TP (R:R = 1:2)
         let (sl, tp) = match side {
-            Side::Long => (
-                c.close * 0.985,
-                c.close * 1.030,
-            ),
+            Side::Long => (c.close * 0.985, c.close * 1.030),
             Side::Short => (c.close * 1.015, c.close * 0.970),
         };
 

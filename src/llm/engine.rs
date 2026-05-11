@@ -256,7 +256,9 @@ impl LlmEngine {
 
         if raw_bytes.is_empty() || raw_str.trim().is_empty() {
             warn!(status = %status, "LLM returned empty body — check API key, model name, and parameters");
-            return Err(ScalperError::Llm(format!("empty body (HTTP {status}) — API may not support these parameters")));
+            return Err(ScalperError::Llm(format!(
+                "empty body (HTTP {status}) — API may not support these parameters"
+            )));
         }
 
         let resp: serde_json::Value = serde_json::from_str(&raw_str)
@@ -359,7 +361,7 @@ fn sanitize_prices(mut d: TradeDecision, current_price: f64) -> TradeDecision {
     let reference = d.entry_price.unwrap_or(current_price);
     if let Some(sl) = d.sl_adjustment {
         let dist = (sl - reference).abs() / reference;
-        if dist < 0.001 || dist > 0.03 {
+        if !(0.001..=0.03).contains(&dist) {
             warn!(
                 sl,
                 reference,
@@ -379,10 +381,7 @@ fn sanitize_prices(mut d: TradeDecision, current_price: f64) -> TradeDecision {
         if sl_dist > 0.0 && tp_dist < sl_dist * 1.4 {
             warn!(
                 sl,
-                tp,
-                sl_dist,
-                tp_dist,
-                "sanitize: R:R below 1.4 — nullifying TP"
+                tp, sl_dist, tp_dist, "sanitize: R:R below 1.4 — nullifying TP"
             );
             d.tp_adjustment = None;
         }
