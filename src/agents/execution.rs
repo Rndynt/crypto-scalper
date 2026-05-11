@@ -8,24 +8,24 @@
 //! process dies the position has protective exits sitting at the
 //! broker — survival rule #1.
 
-use crate::agents::messages::{
-    AgentEvent, ControlCommand, ManagerAction, ManagerProposal, ManagerVerdict, SurvivalMode,
-    SurvivalState,
-};
 use crate::agents::MessageBus;
+use crate::agents::messages::{
+    AgentEvent, AgentId, ControlCommand, ManagerAction, ManagerProposal, ManagerVerdict,
+    SurvivalMode, SurvivalState,
+};
 use crate::data::Side;
 use crate::execution::limit_order::plan_limit_order;
 use crate::execution::quality::{ExecutionQuality, TradeQualityRecord};
 use crate::execution::{
-    orders::OrderType, Exchange, OrderRequest, Position, PositionBook, PositionConfig,
-    PositionExitReason, RiskManager,
+    Exchange, OrderRequest, Position, PositionBook, PositionConfig, PositionExitReason,
+    RiskManager, orders::OrderType,
 };
 use chrono::Utc;
 use parking_lot::Mutex as PlMutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 type BookTop = (f64, f64, f64, f64);
 type SharedMap<T> = Arc<PlMutex<HashMap<String, T>>>;
@@ -40,6 +40,7 @@ pub struct ExecutionAgentDeps {
     /// "trade for life" gate — capital protection trumps any
     /// brain/manager approval.
     pub honor_survival: bool,
+    pub protective_orders_required: bool,
 }
 
 pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
@@ -49,6 +50,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
         risk,
         book,
         honor_survival,
+        protective_orders_required,
     } = deps;
 
     let mut rx = bus.subscribe();
@@ -59,16 +61,17 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
     let exec_quality = Arc::new(PlMutex::new(ExecutionQuality::default()));
     let decision_prices: SharedMap<f64> = Arc::new(PlMutex::new(HashMap::new()));
     let pos_cfg = PositionConfig {
-        max_hold_secs: 900,        // 15 min max hold for HFT
-        trail_atr_mult: 0.3,       // Tighter trail at 0.3× ATR
-        trail_activate_r: 1.0,     // Activate trailing at 1R profit
-        breakeven_r: 0.5,          // Move SL to entry at 0.5R profit
-        partial_tp_enabled: true,  // Take 50% at 1R profit
-        partial_tp_r: 1.0,         // Trigger at 1R profit
+        max_hold_secs: 900,       // 15 min max hold for HFT
+        trail_atr_mult: 0.3,      // Tighter trail at 0.3× ATR
+        trail_activate_r: 1.0,    // Activate trailing at 1R profit
+        breakeven_r: 0.5,         // Move SL to entry at 0.5R profit
+        partial_tp_enabled: true, // Take 50% at 1R profit
+        partial_tp_r: 1.0,        // Trigger at 1R profit
     };
 
     tokio::spawn(async move {
         info!("execution agent starting");
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Execution);
         while let Ok(ev) = rx.recv().await {
             match ev {
                 AgentEvent::Tick { symbol, trade } => {
@@ -346,18 +349,21 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                             };
                             book.open(pos.clone());
 
-                            // Dispatch broker-side protective orders
-                            // (SL/TP). Best-effort — if it fails, we
-                            // still have the in-memory exit tracker.
-                            if let Some(sl_req) = build_sl_request(&req) {
-                                if let Err(e) = exchange.place_order(&sl_req).await {
-                                    warn!(error = %e, "execution: SL order rejected");
-                                }
-                            }
-                            if let Some(tp_req) = build_tp_request(&req) {
-                                if let Err(e) = exchange.place_order(&tp_req).await {
-                                    warn!(error = %e, "execution: TP order rejected");
-                                }
+                            if let Err(e) =
+                                place_protective_orders(&exchange, &req, protective_orders_required)
+                                    .await
+                            {
+                                error!(symbol = %req.symbol, error = %e, "execution: protective order setup failed");
+                                let reason = format!(
+                                    "protective order setup failed for {}: {e}",
+                                    req.symbol
+                                );
+                                risk.freeze(reason.clone());
+                                bus.publish(AgentEvent::ControlCommand(ControlCommand::Freeze {
+                                    reason,
+                                }));
+                                let _ = exchange.cancel_all(&req.symbol).await;
+                                continue;
                             }
 
                             bus.publish(AgentEvent::OrderFilled {
@@ -458,6 +464,28 @@ fn build_tp_request(entry: &OrderRequest) -> Option<OrderRequest> {
         order_type: OrderType::TakeProfit,
         reduce_only: true,
     })
+}
+
+async fn place_protective_orders(
+    exchange: &Arc<dyn Exchange>,
+    entry: &OrderRequest,
+    required: bool,
+) -> crate::errors::Result<()> {
+    let mut placed = 0;
+    if let Some(sl_req) = build_sl_request(entry) {
+        exchange.place_order(&sl_req).await?;
+        placed += 1;
+    }
+    if let Some(tp_req) = build_tp_request(entry) {
+        exchange.place_order(&tp_req).await?;
+        placed += 1;
+    }
+    if required && placed < 2 {
+        return Err(crate::errors::ScalperError::Exchange(format!(
+            "expected 2 protective orders, placed {placed}"
+        )));
+    }
+    Ok(())
 }
 
 fn bps_offset(entry: f64, bps: f64, side: Side, _is_sl: bool) -> f64 {
