@@ -24,6 +24,7 @@ use crate::execution::tcm::TransactionCostModel;
 use crate::learning::LearningPolicy;
 use crate::quant::{QuantEngine, QuantSizingInput};
 use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -41,6 +42,12 @@ pub struct RiskAgentConfig {
     /// Base risk per trade % — passed to the quant engine for Kelly
     /// comparison.  Default 0.5%.
     pub base_risk_pct: f64,
+    /// Hard block trades when spread exceeds this percentage.
+    pub max_spread_pct_block: f64,
+    /// Reduce size when spread exceeds this percentage (but below hard block).
+    pub spread_caution_pct: f64,
+    /// Multiplier applied in spread caution zone.
+    pub spread_caution_size_mult: f64,
 }
 
 impl Default for RiskAgentConfig {
@@ -61,6 +68,9 @@ impl Default for RiskAgentConfig {
                 market_impact_bps: 1.0,
             },
             base_risk_pct: 0.5,
+            max_spread_pct_block: 0.20,
+            spread_caution_pct: 0.08,
+            spread_caution_size_mult: 0.6,
         }
     }
 }
@@ -79,6 +89,11 @@ pub fn spawn(
     let spreads: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     // Track symbols with open positions to prevent duplicate entries.
     let open_symbols: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    let slippage_bps: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
+    let strategy_perf: Arc<Mutex<HashMap<String, VecDeque<f64>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let disabled_strategies: Arc<Mutex<HashMap<String, i64>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     tokio::spawn(async move {
         info!("risk agent starting");
@@ -102,8 +117,39 @@ pub fn spawn(
                     open_symbols.lock().insert(symbol);
                     continue;
                 }
-                AgentEvent::PositionClosed { symbol, .. } => {
+                AgentEvent::PositionClosed {
+                    symbol,
+                    ref strategy,
+                    pnl_usd,
+                    ..
+                } => {
                     open_symbols.lock().remove(&symbol);
+                    let mut perf = strategy_perf.lock();
+                    let q = perf.entry(strategy.clone()).or_default();
+                    q.push_back(pnl_usd);
+                    while q.len() > 30 {
+                        q.pop_front();
+                    }
+                    if q.len() >= 20 {
+                        let wins = q.iter().filter(|&&p| p > 0.0).count();
+                        let wr = wins as f64 / q.len() as f64;
+                        let pnl_sum: f64 = q.iter().sum();
+                        if wr < 0.35 && pnl_sum < 0.0 {
+                            disabled_strategies
+                                .lock()
+                                .insert(strategy.clone(), chrono::Utc::now().timestamp() + 3600);
+                            warn!(strategy = %strategy, win_rate = wr, pnl_sum, "risk: strategy auto-disabled (OOS decay)");
+                        }
+                    }
+                    continue;
+                }
+                AgentEvent::SlippageObserved {
+                    symbol,
+                    shortfall_bps,
+                } => {
+                    slippage_bps
+                        .lock()
+                        .insert(symbol, shortfall_bps.clamp(0.0, 100.0));
                     continue;
                 }
                 AgentEvent::FeedsSnapshot(FeedsSnapshotMsg {
@@ -146,6 +192,27 @@ pub fn spawn(
                         }));
                         continue;
                     }
+                    // Auto-disable strategy on OOS decay (time-boxed cooldown).
+                    if let Some(until) = disabled_strategies
+                        .lock()
+                        .get(signal.strategy.as_str())
+                        .copied()
+                    {
+                        if chrono::Utc::now().timestamp() < until {
+                            bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
+                                signal: signal.clone(),
+                                regime,
+                                outcome: RiskOutcome::Blocked,
+                                size: 0.0,
+                                size_multiplier: 0.0,
+                                effective_ta_threshold: cfg.base_min_ta_threshold,
+                                effective_llm_floor: cfg.base_min_llm_floor,
+                                matched_lessons: vec!["strategy disabled by OOS decay".into()],
+                                reason: Some("strategy cooling-down (OOS decay)".into()),
+                            }));
+                            continue;
+                        }
+                    }
 
                     // Survival hard-gate: refuse outright when frozen or dead.
                     let surv = survival.lock().clone();
@@ -168,6 +235,22 @@ pub fn spawn(
 
                     let mut verdict =
                         policy.evaluate(signal.strategy.as_str(), regime.as_str(), &signal.symbol);
+                    // Adaptive portfolio risk budget based on current load.
+                    let open_n = open_symbols.lock().len() as f64;
+                    let load_mult = if open_n >= 3.0 {
+                        0.55
+                    } else if open_n >= 2.0 {
+                        0.75
+                    } else if open_n >= 1.0 {
+                        0.90
+                    } else {
+                        1.0
+                    };
+                    verdict.size_multiplier *= load_mult;
+                    verdict.matched_lessons.push(format!(
+                        "portfolio load {} => size x{:.2}",
+                        open_n, load_mult
+                    ));
                     let orchestrator_mult = *orchestrator_multiplier.lock();
                     verdict.size_multiplier *= orchestrator_mult;
                     verdict.matched_lessons.push(format!(
@@ -233,6 +316,45 @@ pub fn spawn(
                     }
 
                     let spread_pct = spreads.lock().get(&signal.symbol).copied();
+                    if let Some(sf) = slippage_bps.lock().get(&signal.symbol).copied() {
+                        if sf >= 12.0 {
+                            verdict.size_multiplier *= 0.5;
+                            verdict
+                                .matched_lessons
+                                .push(format!("slippage {:.2}bps => size x0.50", sf));
+                        } else if sf >= 7.0 {
+                            verdict.size_multiplier *= 0.75;
+                            verdict
+                                .matched_lessons
+                                .push(format!("slippage {:.2}bps => size x0.75", sf));
+                        }
+                    }
+                    if let Some(sp) = spread_pct {
+                        if sp >= cfg.max_spread_pct_block {
+                            bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
+                                signal: signal.clone(),
+                                regime,
+                                outcome: RiskOutcome::Blocked,
+                                size: 0.0,
+                                size_multiplier: verdict.size_multiplier,
+                                effective_ta_threshold,
+                                effective_llm_floor: llm_floor,
+                                matched_lessons: verdict.matched_lessons,
+                                reason: Some(format!(
+                                    "spread {:.4}% >= {:.4}%",
+                                    sp, cfg.max_spread_pct_block
+                                )),
+                            }));
+                            continue;
+                        }
+                        if sp >= cfg.spread_caution_pct {
+                            verdict.size_multiplier *= cfg.spread_caution_size_mult.clamp(0.1, 1.0);
+                            verdict.matched_lessons.push(format!(
+                                "spread caution {:.4}% => size x{:.2}",
+                                sp, cfg.spread_caution_size_mult
+                            ));
+                        }
+                    }
 
                     if let Err(e) = risk.validate_signal(
                         signal.entry,

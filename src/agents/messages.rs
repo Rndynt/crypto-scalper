@@ -103,6 +103,11 @@ pub enum AgentEvent {
         size: f64,
         ack: OrderAck,
     },
+    /// Execution quality feedback event (implementation shortfall in bps).
+    SlippageObserved {
+        symbol: String,
+        shortfall_bps: f64,
+    },
     PositionRecovered {
         symbol: String,
         side: Side,
