@@ -240,6 +240,17 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                         .insert(v.proposal.symbol.clone(), v.proposal.entry);
 
                     let req = build_entry_request(&v);
+                    if !has_valid_brackets(&req) {
+                        warn!(
+                            symbol = %req.symbol,
+                            side = %req.side.as_str(),
+                            entry = req.price.unwrap_or(0.0),
+                            sl = req.stop_loss,
+                            tp = req.take_profit,
+                            "execution: invalid SL/TP geometry — discarding proposal"
+                        );
+                        continue;
+                    }
 
                     // Smart order routing: use limit order when spread allows
                     // Scoped so the MutexGuard is dropped before any .await
@@ -318,6 +329,10 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                         is_bps = %format!("{:.1}", is),
                                         "execution: high implementation shortfall"
                                     );
+                                    bus.publish(AgentEvent::SlippageObserved {
+                                        symbol: req.symbol.clone(),
+                                        shortfall_bps: is,
+                                    });
                                 }
                             }
 
@@ -419,6 +434,17 @@ fn build_entry_request(v: &ManagerVerdict) -> OrderRequest {
         take_profit: tp,
         order_type: OrderType::Market,
         reduce_only: false,
+    }
+}
+
+fn has_valid_brackets(req: &OrderRequest) -> bool {
+    let entry = req.price.unwrap_or(0.0);
+    if entry <= 0.0 || req.stop_loss <= 0.0 || req.take_profit <= 0.0 {
+        return false;
+    }
+    match req.side {
+        Side::Long => req.stop_loss < entry && req.take_profit > entry,
+        Side::Short => req.stop_loss > entry && req.take_profit < entry,
     }
 }
 
@@ -543,5 +569,34 @@ mod tests {
         let a = idempotent_client_id("BTCUSDT", "ema_ribbon", &Side::Long, 67_240.5, 0.012);
         let b = idempotent_client_id("BTCUSDT", "ema_ribbon", &Side::Short, 67_240.5, 0.012);
         assert_ne!(a, b);
+    }
+
+    fn req(side: Side, entry: f64, sl: f64, tp: f64) -> OrderRequest {
+        OrderRequest {
+            client_id: "t".into(),
+            symbol: "BTCUSDT".into(),
+            side,
+            size: 0.01,
+            price: Some(entry),
+            stop_price: None,
+            stop_loss: sl,
+            take_profit: tp,
+            order_type: OrderType::Market,
+            reduce_only: false,
+        }
+    }
+
+    #[test]
+    fn long_brackets_must_be_sl_below_tp_above() {
+        assert!(has_valid_brackets(&req(Side::Long, 100.0, 99.0, 101.0)));
+        assert!(!has_valid_brackets(&req(Side::Long, 100.0, 101.0, 99.0)));
+        assert!(!has_valid_brackets(&req(Side::Long, 100.0, 100.0, 101.0)));
+    }
+
+    #[test]
+    fn short_brackets_must_be_tp_below_sl_above() {
+        assert!(has_valid_brackets(&req(Side::Short, 100.0, 101.0, 99.0)));
+        assert!(!has_valid_brackets(&req(Side::Short, 100.0, 99.0, 101.0)));
+        assert!(!has_valid_brackets(&req(Side::Short, 100.0, 101.0, 100.0)));
     }
 }

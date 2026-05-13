@@ -205,13 +205,26 @@ pub fn spawn(
                         }
                     }
 
-                    // REJECT low-confidence GOs — minimum 62 for real quant trading
-                    if llm_out.decision.decision == Decision::Go && llm_out.decision.confidence < 62
+                    // Live confidence calibration: raise floor when recent
+                    // realized performance degrades.
+                    let mut live_conf_floor = 62u8;
+                    if let Some(ref ss) = shared_state {
+                        let overall = ss.get_overall_stats();
+                        if overall.total_trades >= 25 && overall.win_rate < 0.45 {
+                            live_conf_floor = 68;
+                        } else if overall.total_trades >= 12 && overall.win_rate < 0.50 {
+                            live_conf_floor = 65;
+                        }
+                    }
+                    // REJECT low-confidence GOs with calibrated floor.
+                    if llm_out.decision.decision == Decision::Go
+                        && llm_out.decision.confidence < live_conf_floor
                     {
                         info!(
                             symbol = %symbol,
                             confidence = llm_out.decision.confidence,
-                            "brain: REJECTED — confidence < 62"
+                            conf_floor = live_conf_floor,
+                            "brain: REJECTED — confidence below calibrated floor"
                         );
                         continue;
                     }
