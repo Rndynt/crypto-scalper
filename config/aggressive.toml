@@ -1,0 +1,101 @@
+# AGGRESSIVE HFT paper trading config
+# Quant strategies: OrderFlow, TradeFlow, KalmanTrend, MicrostructureReversion
+
+[mode]
+run_mode = "paper"
+dry_run  = true
+fail_closed_without_llm = false   # paper mode: allow TA fallback if LLM fails
+
+[pairs]
+symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+timeframes = ["1m", "5m", "15m"]
+
+[strategy]
+mode                = "adaptive"
+active              = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
+min_ta_confidence   = 62
+paper_scout_enabled = true        # fallback signal generator while quant strategies warm up
+
+[advanced_alpha]
+enabled             = false       # re-enable after 50+ trades
+
+[llm]
+provider      = "openai"
+model         = "mimo-v2.5-pro"
+api_base      = "https://api.xiaomimimo.com/v1/chat/completions"
+timeout_secs  = 60
+min_confidence       = 40
+fallback_ta_threshold = 50
+max_tokens    = 2000
+
+[manager]
+enabled               = true
+provider              = "openai"
+api_base              = "https://api.xiaomimimo.com/v1/chat/completions"
+model                 = "mimo-v2.5-pro"
+timeout_secs          = 30
+max_tokens            = 400
+fast_approve_min_conf = 55
+fail_open_on_error    = true
+
+[risk]
+equity_usd                = 1000.0    # realistic sim equity
+risk_per_trade_pct        = 1.0       # 1% per trade = $10 risk — safe
+max_open_positions        = 3
+max_daily_loss_pct        = 5.0
+max_drawdown_pct          = 10.0
+max_leverage              = 10        # 10x paper mode — not 100x until proven profitable
+max_spread_pct            = 0.1
+min_reward_risk           = 1.5       # minimum 1.5:1 R:R
+min_net_edge_bps          = 2.0
+max_position_notional_pct = 200.0
+assumed_daily_volume_usd  = 1_000_000_000.0
+
+[schedule]
+dead_zone_start_hour_wib = 0
+dead_zone_end_hour_wib   = 0
+
+[backtest]
+slippage_bps      = 2.0
+market_impact_bps = 1.0
+
+[survival]
+enabled                        = true
+death_line_pct                 = 0.50
+loss_streak_short              = 5
+loss_streak_short_cooldown_min = 15
+loss_streak_long               = 8
+loss_streak_long_window_min    = 60
+loss_streak_long_cooldown_min  = 60
+daily_loss_count               = 10
+auto_flat_drawdown_pct         = 8.0
+refresh_secs                   = 10
+equity_refresh_secs            = 30
+vol_spike_mult                 = 3.0
+news_panic_threshold           = -0.7
+news_euphoria_threshold        = 0.8
+daily_pnl_ratchet_pct          = 2.0
+
+[control]
+telegram_commands_enabled = true
+allowed_user_ids          = [7773988648]
+poll_secs                 = 2
+
+[quant]
+enabled                  = true
+kelly_cap                = 0.20
+kelly_min_trades         = 20
+target_vol_annual        = 0.30
+max_vol_multiplier       = 2.0
+vol_window               = 30
+var_confidence           = 0.95
+max_var_pct              = 0.05
+ic_window                = 30
+ic_min_abs               = 0.03
+ic_max_boost             = 10
+kalman_process_noise     = 0.005
+kalman_measurement_noise = 0.5
+kalman_min_velocity_bps  = 2.0
+
+[monitoring]
+db_path = "trades.db"

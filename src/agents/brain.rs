@@ -1,0 +1,256 @@
+//! Brain agent — owns the existing LLM specialist. Listens for allowed
+//! `RiskVerdict` events, builds a `MarketContext` (with the historical
+//! summary injected), calls the LLM, and emits `BrainOutcomeReady`.
+
+use crate::agents::MessageBus;
+use crate::agents::messages::{
+    AgentEvent, AgentId, BrainOutcome, FeedsSnapshotMsg, ManagerProposal, RiskOutcome,
+};
+use crate::feeds::ExternalSnapshot;
+use crate::learning::LearningPolicy;
+use crate::llm::ContextBuilder;
+use crate::llm::engine::{Decision, LlmEngine};
+use crate::strategy::state::SymbolState;
+use parking_lot::RwLock as PlRwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tracing::{debug, info, warn};
+
+/// Minimum seconds between LLM calls for the same symbol.
+/// Prevents redundant API calls when multiple signals fire in quick succession.
+const LLM_COOLDOWN_SECS: u64 = 45;
+
+pub fn spawn(
+    bus: MessageBus,
+    llm: Arc<LlmEngine>,
+    states: Arc<Mutex<HashMap<String, SymbolState>>>,
+    policy: LearningPolicy,
+    feeds_cache: Arc<PlRwLock<HashMap<String, ExternalSnapshot>>>,
+    shared_state: Option<Arc<crate::shared_state::SharedState>>,
+    fail_closed_without_llm: bool,
+) -> JoinHandle<()> {
+    let mut rx = bus.subscribe();
+    // Track last LLM call time per symbol for deduplication
+    let last_llm_call: Arc<PlRwLock<HashMap<String, Instant>>> =
+        Arc::new(PlRwLock::new(HashMap::new()));
+
+    tokio::spawn(async move {
+        info!("brain agent starting");
+        crate::agents::heartbeat::spawn(bus.clone(), AgentId::Brain);
+        while let Ok(ev) = rx.recv().await {
+            match ev {
+                AgentEvent::FeedsSnapshot(FeedsSnapshotMsg {
+                    symbol, snapshot, ..
+                }) => {
+                    feeds_cache.write().insert(symbol, snapshot);
+                }
+                AgentEvent::RiskVerdict(risk) => {
+                    if risk.outcome != RiskOutcome::Allowed {
+                        continue;
+                    }
+                    let signal = (*risk.signal).clone();
+                    let regime = risk.regime;
+                    let symbol = signal.symbol.clone();
+
+                    // Deduplication: skip if same symbol analyzed recently
+                    {
+                        let mut cache = last_llm_call.write();
+                        if let Some(last) = cache.get(&symbol) {
+                            if last.elapsed().as_secs() < LLM_COOLDOWN_SECS {
+                                debug!(
+                                    symbol = %symbol,
+                                    elapsed_ms = last.elapsed().as_millis() as u64,
+                                    cooldown_ms = LLM_COOLDOWN_SECS * 1000,
+                                    "brain: LLM cooldown active — skipping"
+                                );
+                                continue;
+                            }
+                        }
+                        cache.insert(symbol.clone(), Instant::now());
+                    }
+
+                    let external = feeds_cache.read().get(&symbol).cloned().unwrap_or_default();
+
+                    // CONFLUENCE CHECK — don't call LLM for weak signals
+                    let ta_strong = signal.ta_confidence >= 60;
+
+                    if !ta_strong {
+                        info!(
+                            symbol = %symbol,
+                            ta_confidence = signal.ta_confidence,
+                            "brain: SKIPPED — weak signal (TA too low)"
+                        );
+                        continue;
+                    }
+
+                    let mut ctx = {
+                        let states = states.lock().await;
+                        match states.get(&symbol) {
+                            Some(s) => ContextBuilder::build(s, regime, &signal, external),
+                            None => continue,
+                        }
+                    };
+                    ctx.historical_summary = policy.historical_summary(
+                        signal.strategy.as_str(),
+                        regime.as_str(),
+                        &symbol,
+                    );
+
+                    // Populate strategy performance data from SharedState
+                    if let Some(ref ss) = shared_state {
+                        let strategy_perf = ss.get_strategy_health(signal.strategy.as_str());
+                        let overall_perf = ss.get_overall_stats();
+
+                        ctx.strategy_win_rate = strategy_perf.win_rate;
+                        ctx.strategy_total_trades = strategy_perf.total_trades;
+                        ctx.strategy_recent_pnl = strategy_perf.total_pnl;
+                        ctx.strategy_loss_streak = strategy_perf.loss_streak;
+                        ctx.overall_win_rate = overall_perf.win_rate;
+                        ctx.overall_total_trades = overall_perf.total_trades;
+                        ctx.recent_trade_pnl = overall_perf.last_trade_pnl;
+                    }
+
+                    info!(
+                        symbol = %symbol,
+                        side = %signal.side.as_str(),
+                        strategy = %signal.strategy.as_str(),
+                        regime = %regime.as_str(),
+                        ta_confidence = signal.ta_confidence,
+                        entry = signal.entry,
+                        sl = signal.stop_loss,
+                        tp = signal.take_profit,
+                        "brain: analyzing risk-approved setup"
+                    );
+
+                    let llm_out = match llm.analyze(&ctx).await {
+                        Ok(o) => o,
+                        Err(e) => {
+                            warn!(error = %e, "brain agent: LLM call failed");
+                            continue;
+                        }
+                    };
+
+                    // Apply LLM position sizing recommendation
+                    // High conviction = larger size, Low conviction = smaller size
+                    let llm_size_pct = llm_out.decision.position_size_pct.clamp(0.1, 1.0);
+                    let adjusted_size = risk.size * llm_size_pct;
+
+                    info!(
+                        symbol = %symbol,
+                        risk_size = risk.size,
+                        llm_size_pct = llm_size_pct,
+                        adjusted_size = adjusted_size,
+                        "brain: position sizing applied"
+                    );
+
+                    // Update risk size with LLM-adjusted size
+                    let mut adjusted_risk = risk.clone();
+                    adjusted_risk.size = adjusted_size;
+
+                    // Use LLM-adjusted SL/TP — brain sets exact levels
+                    let final_sl = llm_out.decision.sl_adjustment.unwrap_or(signal.stop_loss);
+                    let final_tp = llm_out.decision.tp_adjustment.unwrap_or(signal.take_profit);
+                    let final_entry = llm_out.decision.entry_price.unwrap_or(signal.entry);
+
+                    let _proposal = ManagerProposal {
+                        symbol: symbol.clone(),
+                        side: signal.side,
+                        strategy: signal.strategy.as_str().to_string(),
+                        regime: regime.as_str().to_string(),
+                        entry: final_entry,
+                        stop_loss: final_sl,
+                        take_profit: final_tp,
+                        size: adjusted_size,
+                        ta_confidence: signal.ta_confidence,
+                        llm_confidence: llm_out.decision.confidence,
+                    };
+
+                    info!(
+                        symbol = %symbol,
+                        decision = ?llm_out.decision.decision,
+                        confidence = llm_out.decision.confidence,
+                        offline_fallback = llm_out.offline_fallback,
+                        reason = %llm_out.decision.reasoning.summary,
+                        "brain: decision"
+                    );
+
+                    // BLOCK TA-only fallback if fail_closed_without_llm is set.
+                    if llm_out.offline_fallback && fail_closed_without_llm {
+                        warn!(symbol = %symbol, "brain: BLOCKED — LLM unavailable, fail_closed=true");
+                        continue;
+                    }
+
+                    // HARD RULE: regime alignment — never trade against the trend
+                    // LONG in BEARISH or SHORT in BULLISH = instant reject
+                    {
+                        let states_r = states.lock().await;
+                        if let Some(st) = states_r.get(&symbol) {
+                            let regime = crate::strategy::RegimeDetector::detect(st);
+                            let is_long = matches!(signal.side, crate::data::Side::Long);
+                            let regime_str = regime.as_str().to_lowercase();
+                            let bearish = regime_str.contains("bear");
+                            let bullish = regime_str.contains("bull");
+                            if (is_long && bearish) || (!is_long && bullish) {
+                                info!(
+                                    symbol = %symbol,
+                                    regime = %regime.as_str(),
+                                    side = ?signal.side,
+                                    "brain: BLOCKED — trade against regime trend"
+                                );
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Live confidence calibration: raise floor when recent
+                    // realized performance degrades.
+                    let mut live_conf_floor = 62u8;
+                    if let Some(ref ss) = shared_state {
+                        let overall = ss.get_overall_stats();
+                        if overall.total_trades >= 25 && overall.win_rate < 0.45 {
+                            live_conf_floor = 68;
+                        } else if overall.total_trades >= 12 && overall.win_rate < 0.50 {
+                            live_conf_floor = 65;
+                        }
+                    }
+                    // REJECT low-confidence GOs with calibrated floor.
+                    if llm_out.decision.decision == Decision::Go
+                        && llm_out.decision.confidence < live_conf_floor
+                    {
+                        info!(
+                            symbol = %symbol,
+                            confidence = llm_out.decision.confidence,
+                            conf_floor = live_conf_floor,
+                            "brain: REJECTED — confidence below calibrated floor"
+                        );
+                        continue;
+                    }
+
+                    // REJECT if not Go
+                    if llm_out.decision.decision != Decision::Go {
+                        info!(
+                            symbol = %symbol,
+                            decision = ?llm_out.decision.decision,
+                            "brain: REJECTED — not Go"
+                        );
+                        continue;
+                    }
+
+                    bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
+                        signal: Box::new(signal),
+                        regime,
+                        risk: adjusted_risk,
+                        decision: llm_out.decision,
+                        latency_ms: llm_out.latency_ms,
+                        offline_fallback: llm_out.offline_fallback,
+                    }));
+                }
+                AgentEvent::Shutdown => break,
+                _ => {}
+            }
+        }
+    })
+}

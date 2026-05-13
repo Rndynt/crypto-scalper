@@ -1,0 +1,106 @@
+# HFT LIVE overlay — 50-100x leverage, real money mode.
+# ⚠️  WARNING: This trades REAL money. Only use after thorough paper testing.
+# ⚠️  Set BINANCE_API_KEY and BINANCE_API_SECRET in .env before running.
+
+[mode]
+run_mode = "live"
+dry_run = false
+
+[pairs]
+symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+timeframes = ["1m", "5m", "15m"]
+
+[strategy]
+mode   = "adaptive"
+active = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
+min_ta_confidence = 50
+paper_scout_enabled = false
+
+[advanced_alpha]
+enabled = true
+min_abs_score = 0.20
+reduce_confidence_delta = 5
+feed_max_age_secs = 120
+
+[llm]
+# RECOMMENDED for live: Use proven LLM (Claude/GPT-4o-mini)
+# Set OPENROUTER_API_KEY in .env before using!
+provider = "openrouter"
+model    = "anthropic/claude-3.5-haiku"
+api_base = "https://openrouter.ai/api/v1/chat/completions"
+timeout_secs = 25
+min_confidence = 50
+fallback_ta_threshold = 60
+max_tokens = 512
+
+[manager]
+enabled = true
+provider = "openrouter"
+api_base = "https://openrouter.ai/api/v1/chat/completions"
+model    = "anthropic/claude-3.5-haiku"
+timeout_secs = 20
+max_tokens   = 512
+fast_approve_min_conf = 60
+fail_open_on_error = false
+
+[risk]
+# LIVE mode — conservative risk, tight stops
+risk_per_trade_pct = 0.3
+max_open_positions = 4
+max_daily_loss_pct = 3.0
+max_drawdown_pct   = 8.0
+max_leverage       = 100
+max_spread_pct     = 0.06
+min_reward_risk    = 2.0
+min_net_edge_bps   = 5.0
+max_position_notional_pct = 50.0
+assumed_daily_volume_usd = 1000000000000.0
+equity_usd         = 5000.0
+
+[schedule]
+# Avoid low-liquidity hours (2-6 AM WIB)
+dead_zone_start_hour_wib = 2
+dead_zone_end_hour_wib   = 6
+
+[backtest]
+slippage_bps = 2.0
+market_impact_bps = 1.0
+
+[survival]
+# Aggressive capital protection for live trading
+enabled                            = true
+death_line_pct                     = 0.80
+loss_streak_short                  = 5
+loss_streak_short_cooldown_min     = 60
+loss_streak_long                   = 5
+loss_streak_long_window_min        = 60
+loss_streak_long_cooldown_min      = 240
+daily_loss_count                   = 8
+auto_flat_drawdown_pct             = 5.0
+refresh_secs                       = 3
+equity_refresh_secs                = 10
+vol_spike_mult                     = 1.8
+news_panic_threshold               = -0.6
+news_euphoria_threshold            = 0.7
+daily_pnl_ratchet_pct              = 2.0
+
+[control]
+telegram_commands_enabled = true
+allowed_user_ids          = [7773988648]
+poll_secs                 = 2
+
+[quant]
+enabled                = true
+kelly_cap              = 0.15
+kelly_min_trades       = 20
+target_vol_annual      = 0.40
+max_vol_multiplier     = 1.5
+vol_window             = 30
+var_confidence         = 0.99
+max_var_pct            = 0.02
+ic_window              = 30
+ic_min_abs             = 0.05
+ic_max_boost           = 8
+kalman_process_noise   = 0.005
+kalman_measurement_noise = 0.5
+kalman_min_velocity_bps = 3.0
