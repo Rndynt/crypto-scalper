@@ -20,6 +20,7 @@ use crate::execution::{
     Exchange, OrderRequest, Position, PositionBook, PositionConfig, PositionExitReason,
     RiskManager, orders::OrderType,
 };
+use crate::learning::LearningPolicy;
 use chrono::Utc;
 use parking_lot::Mutex as PlMutex;
 use std::collections::HashMap;
@@ -41,6 +42,8 @@ pub struct ExecutionAgentDeps {
     /// brain/manager approval.
     pub honor_survival: bool,
     pub protective_orders_required: bool,
+    pub policy: LearningPolicy,
+    pub enforce_single_position_per_symbol: bool,
 }
 
 pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
@@ -51,6 +54,8 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
         book,
         honor_survival,
         protective_orders_required,
+        policy,
+        enforce_single_position_per_symbol,
     } = deps;
 
     let mut rx = bus.subscribe();
@@ -234,12 +239,79 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                         continue;
                     }
 
+                    // Final learning-policy gate at the last mile.
+                    // Ensures newly learned lessons can still block/derate
+                    // right before execution (defense in depth).
+                    let exec_policy = policy.evaluate(
+                        v.proposal.strategy.as_str(),
+                        v.proposal.regime.as_str(),
+                        v.proposal.symbol.as_str(),
+                    );
+                    if !exec_policy.allowed {
+                        info!(
+                            symbol = %v.proposal.symbol,
+                            strategy = %v.proposal.strategy,
+                            regime = %v.proposal.regime,
+                            lessons = ?exec_policy.matched_lessons,
+                            "execution: blocked by learning policy"
+                        );
+                        continue;
+                    }
+
+                    // Final anti-stacking guard: verify both local book and
+                    // exchange truth before opening a new entry for symbol.
+                    if enforce_single_position_per_symbol {
+                        if has_open_position_for_symbol(&book, v.proposal.symbol.as_str()) {
+                            warn!(symbol = %v.proposal.symbol, "execution: blocked duplicate (local book)");
+                            continue;
+                        }
+                        match exchange
+                            .fetch_open_positions(std::slice::from_ref(&v.proposal.symbol))
+                            .await
+                        {
+                            Ok(positions) => {
+                                let has_exchange_pos = positions
+                                    .iter()
+                                    .any(|p| p.symbol == v.proposal.symbol && p.size.abs() > 0.0);
+                                if has_exchange_pos {
+                                    warn!(
+                                        symbol = %v.proposal.symbol,
+                                        count = positions.len(),
+                                        "execution: blocked duplicate (exchange position already open)"
+                                    );
+                                    continue;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    symbol = %v.proposal.symbol,
+                                    error = %e,
+                                    "execution: failed fetching exchange positions — failing closed"
+                                );
+                                continue;
+                            }
+                        }
+                    }
+
                     // Record decision price for execution quality tracking
                     decision_prices
                         .lock()
                         .insert(v.proposal.symbol.clone(), v.proposal.entry);
 
-                    let req = build_entry_request(&v);
+                    let mut req = build_entry_request(&v);
+                    // Apply last-mile lesson-derived size multiplier so
+                    // derate/boost policies also influence final execution.
+                    req.size *= exec_policy.size_multiplier.clamp(0.0, 2.0);
+                    if req.size <= 0.0 {
+                        info!(
+                            symbol = %v.proposal.symbol,
+                            strategy = %v.proposal.strategy,
+                            regime = %v.proposal.regime,
+                            size_mult = exec_policy.size_multiplier,
+                            "execution: blocked by lesson size multiplier"
+                        );
+                        continue;
+                    }
                     if !has_valid_brackets(&req) {
                         warn!(
                             symbol = %req.symbol,
@@ -521,6 +593,12 @@ fn bps_offset(entry: f64, bps: f64, side: Side, _is_sl: bool) -> f64 {
         Side::Long => raw,
         Side::Short => -raw,
     }
+}
+
+fn has_open_position_for_symbol(book: &PositionBook, symbol: &str) -> bool {
+    book.snapshot()
+        .into_iter()
+        .any(|p| p.symbol == symbol && p.size.abs() > 0.0)
 }
 
 /// Deterministic client-id derived from the proposal contents.

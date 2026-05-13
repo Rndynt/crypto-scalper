@@ -7,6 +7,7 @@
 # "backtest" processes historical CSVs and exits.
 run_mode = "paper"
 dry_run  = true
+single_position_per_symbol = true
 
 [exchange]
 name    = "binance"

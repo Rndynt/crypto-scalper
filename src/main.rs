@@ -532,6 +532,8 @@ async fn run_agents(cfg: Config) -> Result<()> {
         book: Arc::clone(&book),
         honor_survival: cfg.survival.enabled,
         protective_orders_required: cfg.mode.run_mode == "live" && !cfg.mode.dry_run,
+        policy: policy.clone(),
+        enforce_single_position_per_symbol: cfg.mode.single_position_per_symbol,
     });
     let _monitor = crypto_scalper::agents::monitor::spawn(
         bus.clone(),

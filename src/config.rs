@@ -35,9 +35,15 @@ pub struct Mode {
     pub dry_run: bool,
     #[serde(default = "default_fail_closed")]
     pub fail_closed_without_llm: bool,
+    #[serde(default = "default_single_position_per_symbol")]
+    pub single_position_per_symbol: bool,
 }
 
 fn default_fail_closed() -> bool {
+    true
+}
+
+fn default_single_position_per_symbol() -> bool {
     true
 }
 
