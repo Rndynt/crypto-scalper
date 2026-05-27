@@ -26,7 +26,7 @@ api_base = "http://69.197.164.221:20128/v1/chat/completions"
 timeout_secs  = 60
 min_confidence       = 40
 fallback_ta_threshold = 50
-max_tokens    = 2000
+max_tokens    = 4096
 
 [manager]
 enabled               = true

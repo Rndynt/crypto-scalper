@@ -229,6 +229,7 @@ impl LlmEngine {
             "model": self.cfg.model,
             "max_tokens": self.cfg.max_tokens,
             "temperature": 0.1,   // 0.0 causes empty responses on some APIs including Mimo
+            "stream": false,
             // top_p intentionally omitted — not supported by all providers (Mimo, Together, etc.)
             "messages": [
                 { "role": "system", "content": ARIA_SYSTEM_PROMPT },
