@@ -21,8 +21,8 @@ enabled             = false       # re-enable after 50+ trades
 
 [llm]
 provider      = "openai"
-model         = "mimo-v2.5-pro"
-api_base      = "https://api.xiaomimimo.com/v1/chat/completions"
+model = "Freecombo"
+api_base = "http://69.197.164.221:20128/v1/chat/completions"
 timeout_secs  = 60
 min_confidence       = 40
 fallback_ta_threshold = 50
@@ -31,8 +31,8 @@ max_tokens    = 2000
 [manager]
 enabled               = true
 provider              = "openai"
-api_base              = "https://api.xiaomimimo.com/v1/chat/completions"
-model                 = "mimo-v2.5-pro"
+api_base = "http://69.197.164.221:20128/v1/chat/completions"
+model = "Freecombo"
 timeout_secs          = 30
 max_tokens            = 400
 fast_approve_min_conf = 55
