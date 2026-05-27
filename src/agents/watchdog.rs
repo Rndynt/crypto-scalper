@@ -63,7 +63,15 @@ pub fn spawn(bus: MessageBus, cfg: WatchdogConfig) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!("watchdog agent starting");
         crate::agents::heartbeat::spawn(bus_evt, AgentId::Watchdog);
-        while let Ok(ev) = rx.recv().await {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             match ev {
                 AgentEvent::Heartbeat { from, ts } => {
                     last_seen_evt.lock().insert(from, ts);

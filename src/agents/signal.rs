@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct SignalAgentConfig {
     pub active: Vec<StrategyName>,
@@ -78,7 +78,15 @@ pub fn spawn(
         let mut feeds_by_symbol: HashMap<String, TimedExternalSnapshot> = HashMap::new();
         let mut higher_timeframes: HashMap<String, BTreeMap<i64, HigherTimeframeSnapshot>> =
             HashMap::new();
-        while let Ok(ev) = rx.recv().await {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             match ev {
                 AgentEvent::FeedsSnapshot(msg) => {
                     feeds_by_symbol.insert(

@@ -40,7 +40,15 @@ pub fn spawn(
     tokio::spawn(async move {
         info!("brain agent starting");
         crate::agents::heartbeat::spawn(bus.clone(), AgentId::Brain);
-        while let Ok(ev) = rx.recv().await {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "brain: broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             match ev {
                 AgentEvent::FeedsSnapshot(FeedsSnapshotMsg {
                     symbol, snapshot, ..

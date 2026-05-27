@@ -142,7 +142,15 @@ pub fn spawn(deps: SurvivalAgentDeps) -> JoinHandle<()> {
     let inner_ev = inner.clone();
     tokio::spawn(async move {
         info!("survival agent starting");
-        while let Ok(ev) = rx.recv().await {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             match ev {
                 AgentEvent::PositionClosed { pnl_usd, .. } => {
                     on_position_closed(&inner_ev, pnl_usd, &cfg_ev);

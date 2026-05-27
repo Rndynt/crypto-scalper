@@ -143,7 +143,15 @@ pub fn spawn(
             let seen_rt = seen_realtime_trades.clone();
             tokio::spawn(async move {
                 let mut rx = bus_rt.subscribe();
-                while let Ok(ev) = rx.recv().await {
+                loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
                     if let AgentEvent::PositionClosed {
                         ref client_id,
                         pnl_usd,
