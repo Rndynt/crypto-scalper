@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 
 /// Minimum seconds between LLM calls for the same symbol.
 /// Prevents redundant API calls when multiple signals fire in quick succession.
-const LLM_COOLDOWN_SECS: u64 = 45;
+const LLM_COOLDOWN_SECS: u64 = 12;
 
 pub fn spawn(
     bus: MessageBus,
@@ -128,7 +128,7 @@ pub fn spawn(
                     let llm_out = match llm.analyze(&ctx).await {
                         Ok(o) => o,
                         Err(e) => {
-                            warn!(error = %e, "brain agent: LLM call failed");
+                            warn!(error = %e, fail_closed = fail_closed_without_llm, "brain agent: LLM call failed");
                             continue;
                         }
                     };

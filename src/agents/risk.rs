@@ -29,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
+use chrono::Utc;
 
 #[derive(Debug, Clone)]
 pub struct RiskAgentConfig {
@@ -48,6 +49,8 @@ pub struct RiskAgentConfig {
     pub spread_caution_pct: f64,
     /// Multiplier applied in spread caution zone.
     pub spread_caution_size_mult: f64,
+    /// Hard block when latest book ticker age exceeds this threshold.
+    pub max_book_staleness_secs: i64,
 }
 
 impl Default for RiskAgentConfig {
@@ -71,6 +74,7 @@ impl Default for RiskAgentConfig {
             max_spread_pct_block: 0.20,
             spread_caution_pct: 0.08,
             spread_caution_size_mult: 0.6,
+            max_book_staleness_secs: 20,
         }
     }
 }
@@ -87,6 +91,7 @@ pub fn spawn(
     let orchestrator_multiplier: Arc<Mutex<f64>> = Arc::new(Mutex::new(1.0));
     let funding: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     let spreads: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
+    let spread_ts: Arc<Mutex<HashMap<String, i64>>> = Arc::new(Mutex::new(HashMap::new()));
     // Track symbols with open positions to prevent duplicate entries.
     let open_symbols: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let slippage_bps: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -171,11 +176,29 @@ pub fn spawn(
                     if mid > 0.0 && best_ask >= best_bid {
                         spreads
                             .lock()
-                            .insert(symbol, (best_ask - best_bid) / mid * 100.0);
+                            .insert(symbol.clone(), (best_ask - best_bid) / mid * 100.0);
+                        spread_ts.lock().insert(symbol, Utc::now().timestamp());
                     }
                     continue;
                 }
                 AgentEvent::PreSignalEmitted { signal, regime } => {
+                    // Hard gate stale market microstructure inputs.
+                    let now_ts = Utc::now().timestamp();
+                    let last_book_ts = spread_ts.lock().get(&signal.symbol).copied().unwrap_or(0);
+                    if last_book_ts == 0 || (now_ts - last_book_ts) > cfg.max_book_staleness_secs {
+                        bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
+                            signal: signal.clone(),
+                            regime,
+                            outcome: RiskOutcome::Blocked,
+                            size: 0.0,
+                            size_multiplier: 0.0,
+                            effective_ta_threshold: cfg.base_min_ta_threshold,
+                            effective_llm_floor: cfg.base_min_llm_floor,
+                            matched_lessons: vec!["stale/missing book ticker".into()],
+                            reason: Some("market data stale: book ticker age exceeded threshold".into()),
+                        }));
+                        continue;
+                    }
                     // Block if symbol already has an open position.
                     if open_symbols.lock().contains(&signal.symbol) {
                         warn!(symbol = %signal.symbol, "risk blocked: duplicate position");
