@@ -18,6 +18,7 @@ meaning. The configuration is layered:
 |---|---|---|
 | `run_mode` | `"paper"` | `paper` (simulated fills), `live` (real orders), `backtest` (CSV replay + exit) |
 | `dry_run` | `true` | When `true`, even live mode will skip order dispatch (extra safety) |
+| `fail_closed_without_llm` | `true` | When `true`, any brain LLM outage/timeout blocks trading (no TA-only fallback) |
 
 In `live` mode, **both** `run_mode = "live"` and `dry_run = false` are
 required to actually place orders.

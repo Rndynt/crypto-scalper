@@ -4,7 +4,7 @@
 [mode]
 run_mode = "paper"
 dry_run  = true
-fail_closed_without_llm = false   # paper mode: allow TA fallback if LLM fails
+fail_closed_without_llm = true    # force LLM-online; block trades when LLM is unavailable
 
 [pairs]
 symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
