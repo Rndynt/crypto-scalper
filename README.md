@@ -241,6 +241,7 @@ ARIA uses a layered configuration system:
 [mode]
 run_mode = "paper"          # "paper", "live", or "backtest"
 dry_run = true              # true = no real orders
+fail_closed_without_llm = true  # block trading if brain LLM is unavailable
 
 [pairs]
 symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
