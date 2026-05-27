@@ -136,7 +136,7 @@ pub fn spawn(
                     let llm_out = match llm.analyze(&ctx).await {
                         Ok(o) => o,
                         Err(e) => {
-                            warn!(error = %e, "brain agent: LLM call failed");
+                            warn!(error = %e, fail_closed = fail_closed_without_llm, "brain agent: LLM call failed");
                             continue;
                         }
                     };

@@ -4,7 +4,7 @@
 [mode]
 run_mode = "paper"
 dry_run  = true
-fail_closed_without_llm = false   # aggressive mode: allow fallback when LLM outage occurs
+fail_closed_without_llm = true    # strict LLM path: no TA-only fallback
 
 [pairs]
 symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
