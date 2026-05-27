@@ -55,7 +55,7 @@ timeout_secs = 8
 # Lower LLM confidence floor — let TA signals through even when LLM is uncertain.
 min_confidence = 60
 # Lower fallback threshold so TA-only mode still trades.
-fallback_ta_threshold = 62
+fallback_ta_threshold = 60
 max_tokens = 1024
 
 [manager]
