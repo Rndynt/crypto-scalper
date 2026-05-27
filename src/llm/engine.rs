@@ -227,7 +227,8 @@ impl LlmEngine {
     async fn call_openai_compat(&self, prompt: &str, current_price: f64) -> Result<TradeDecision> {
         let body = serde_json::json!({
             "model": self.cfg.model,
-            "max_tokens": self.cfg.max_tokens,
+            "max_completion_tokens": self.cfg.max_tokens,
+            "thinking": { "type": "disabled" },
             "temperature": 0.1,   // 0.0 causes empty responses on some APIs including Mimo
             "stream": false,
             // top_p intentionally omitted — not supported by all providers (Mimo, Together, etc.)
@@ -240,7 +241,7 @@ impl LlmEngine {
         let mut req = self
             .client
             .post(&self.cfg.api_base)
-            .bearer_auth(&self.cfg.api_key)
+            .header("api-key", &self.cfg.api_key)
             .json(&body);
         if let Some(ref r) = self.cfg.http_referer {
             req = req.header("HTTP-Referer", r);
