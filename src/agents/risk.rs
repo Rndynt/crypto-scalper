@@ -74,7 +74,7 @@ impl Default for RiskAgentConfig {
             max_spread_pct_block: 0.20,
             spread_caution_pct: 0.08,
             spread_caution_size_mult: 0.6,
-            max_book_staleness_secs: 8,
+            max_book_staleness_secs: 20,
         }
     }
 }
