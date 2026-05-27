@@ -852,45 +852,83 @@ async fn send_signal_notification(telegram: &TelegramNotifier, brain: &BrainOutc
     } else {
         "📉 SHORT"
     };
+    let side_emoji = if brain.signal.side == crate::data::Side::Long {
+        "📈"
+    } else {
+        "📉"
+    };
     let decision_emoji = match brain.decision.decision {
-        Decision::Go => "✅",
-        Decision::NoGo => "🚫",
-        Decision::Wait => "⏳",
+        Decision::Go => "✅ GO",
+        Decision::NoGo => "🚫 NO-GO",
+        Decision::Wait => "⏳ WAIT",
     };
     let decision_label = match brain.decision.decision {
         Decision::Go => "<b>APPROVED</b>",
         Decision::NoGo => "<b>VETOED</b>",
         Decision::Wait => "<b>WAITING</b>",
     };
-    let summary = truncate(&brain.decision.reasoning.summary, 120);
+    let summary = truncate(&brain.decision.reasoning.summary, 150);
+    let ta_analysis = truncate(&brain.decision.reasoning.ta_analysis, 150);
+    let microstructure = truncate(&brain.decision.reasoning.microstructure, 120);
+    let risks = truncate(&brain.decision.reasoning.risk_factors, 120);
+    let invalidation = truncate(&brain.decision.reasoning.invalidation, 100);
+
+    let fallback = if brain.offline_fallback {
+        " ⚠ fallback"
+    } else {
+        ""
+    };
 
     let msg = format!(
         "🔔 <b>SIGNAL DETECTED</b>\n\
          ──────────\n\
-         📊 Symbol: <code>{sym}</code>\n\
-         ➡ Direction: {side}\n\
-         🎯 Confidence: <code>{conf}%</code>\n\
-         📋 Strategy: <code>{strat}</code>\n\
+         {side_emoji} <b>{sym}</b> · {side_label} · {decision_emoji} {decision_label}\n\
          \n\
-         🤖 <b>AI Assessment:</b> {decision_emoji} {decision_label}\n\
-         💬 <i>{summary}</i>\n\
+         ├ 🎯 Confidence: <code>{conf}%</code>\n\
+         ├ 📋 Strategy: <code>{strat}</code>\n\
+         ├ 🧭 Regime: <code>{regime}</code>\n\
+         ├ 💰 Entry: <code>{entry:.6}</code>\n\
+         ├ 🛑 SL: <code>{sl:.6}</code>\n\
+         ├ 🎯 TP: <code>{tp:.6}</code>\n\
+         └ 📐 R:R: <code>1:{rr:.1}</code>\n\
          \n\
          📊 <b>Scores</b>\n\
-         ├ TA: <code>{ta}</code> · Sentiment: <code>{sent}</code>\n\
-         ├ Fundamental: <code>{fund}</code> · Risk: <code>{risk_s}</code>\n\
-         └ Composite: <code>{comp}</code>/100",
+         ├ TA: <code>{ta}</code> · Micro: <code>{micro}</code>\n\
+         ├ Sentiment: <code>{sent}</code> · Risk: <code>{risk_s}</code>\n\
+         └ Composite: <code>{comp}</code>/100\n\
+         \n\
+         🧠 <b>AI Reasoning</b>\n\
+         ├ <i>Summary:</i> {summary}\n\
+         ├ <i>TA:</i> {ta_analysis}\n\
+         ├ <i>Micro:</i> {microstructure}\n\
+         ├ <i>Risks:</i> {risks}\n\
+         └ <i>Invalidate:</i> {invalidation}\n\
+         \n\
+         ⏱ Latency: <code>{latency}ms</code>{fallback}",
+        side_emoji = side_emoji,
         sym = short_sym(symbol),
-        side = side_label,
-        conf = brain.decision.confidence,
-        strat = brain.signal.strategy.as_str(),
+        side_label = side_label,
         decision_emoji = decision_emoji,
         decision_label = decision_label,
-        summary = html_escape(&summary),
+        conf = brain.decision.confidence,
+        strat = brain.signal.strategy.as_str(),
+        regime = brain.regime.as_str(),
+        entry = brain.signal.entry,
+        sl = brain.signal.stop_loss,
+        tp = brain.signal.take_profit,
+        rr = brain.signal.rr(),
         ta = brain.decision.market_context_score.ta_score,
+        micro = brain.decision.market_context_score.microstructure_score,
         sent = brain.decision.market_context_score.sentiment_score,
-        fund = brain.decision.market_context_score.microstructure_score,
         risk_s = brain.decision.market_context_score.risk_score,
         comp = brain.decision.market_context_score.composite_score,
+        summary = html_escape(&summary),
+        ta_analysis = html_escape(&ta_analysis),
+        microstructure = html_escape(&microstructure),
+        risks = html_escape(&risks),
+        invalidation = html_escape(&invalidation),
+        latency = brain.latency_ms,
+        fallback = fallback,
     );
     let _ = telegram.send_signal(&msg).await;
 }
