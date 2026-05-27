@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 
 /// Minimum seconds between LLM calls for the same symbol.
 /// Prevents redundant API calls when multiple signals fire in quick succession.
-const LLM_COOLDOWN_SECS: u64 = 45;
+const LLM_COOLDOWN_SECS: u64 = 12;
 
 pub fn spawn(
     bus: MessageBus,

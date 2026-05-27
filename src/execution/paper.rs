@@ -15,6 +15,10 @@ pub struct OpenPaperOrder {
 
 pub struct PaperExchange {
     fee_bps: f64,
+    /// Synthetic execution slippage per fill (basis points).
+    slippage_bps: f64,
+    /// Simulated latency before order acknowledgement.
+    ack_latency_ms: u64,
     orders: Mutex<HashMap<String, OpenPaperOrder>>,
     /// Synthetic balance the paper exchange "holds". Updated by callers
     /// (RiskAgent / SurvivalAgent) so they can simulate equity drift.
@@ -25,6 +29,8 @@ impl PaperExchange {
     pub fn new(fee_bps: f64, equity_usd: f64) -> Self {
         Self {
             fee_bps,
+            slippage_bps: 1.5,
+            ack_latency_ms: 60,
             orders: Mutex::new(HashMap::new()),
             equity_usd: Mutex::new(equity_usd),
         }
@@ -49,7 +55,14 @@ impl Exchange for PaperExchange {
         req: &'a OrderRequest,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<OrderAck>> + Send + 'a>> {
         Box::pin(async move {
-            let price = req.price.unwrap_or(0.0);
+            tokio::time::sleep(std::time::Duration::from_millis(self.ack_latency_ms)).await;
+            let base = req.price.unwrap_or(0.0);
+            // Conservative paper model: longs pay up, shorts sell lower.
+            let signed_slip = match req.side {
+                crate::data::Side::Long => 1.0,
+                crate::data::Side::Short => -1.0,
+            };
+            let price = base * (1.0 + signed_slip * self.slippage_bps / 10_000.0);
             let notional = price * req.size;
             let fee = notional * self.fee_bps / 10_000.0;
             self.orders.lock().insert(
