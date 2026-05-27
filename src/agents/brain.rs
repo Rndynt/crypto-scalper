@@ -207,7 +207,7 @@ pub fn spawn(
 
                     // Live confidence calibration: raise floor when recent
                     // realized performance degrades.
-                    let mut live_conf_floor = 62u8;
+                    let mut live_conf_floor = 60u8;
                     if let Some(ref ss) = shared_state {
                         let overall = ss.get_overall_stats();
                         if overall.total_trades >= 25 && overall.win_rate < 0.45 {
