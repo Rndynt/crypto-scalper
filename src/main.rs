@@ -397,7 +397,15 @@ async fn run_agents(cfg: Config) -> Result<()> {
         let survival_state = Arc::clone(&survival_state);
         tokio::spawn(async move {
             let mut rx = bus_sub.subscribe();
-            while let Ok(ev) = rx.recv().await {
+            loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
                 match ev {
                     crypto_scalper::agents::messages::AgentEvent::SurvivalUpdated(s) => {
                         *survival_state.write() = Some(s);

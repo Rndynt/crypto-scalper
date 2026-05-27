@@ -109,7 +109,15 @@ pub fn spawn(
             "manager agent starting"
         );
         crate::agents::heartbeat::spawn(bus.clone(), AgentId::Manager);
-        while let Ok(ev) = rx.recv().await {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             match ev {
                 AgentEvent::Shutdown => break,
                 AgentEvent::SurvivalUpdated(s) => {

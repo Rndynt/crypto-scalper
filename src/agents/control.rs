@@ -98,7 +98,15 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let survival_state = survival_state.clone();
         tokio::spawn(async move {
             let mut rx = bus_sub.subscribe();
-            while let Ok(ev) = rx.recv().await {
+            loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
                 match ev {
                     AgentEvent::BrainOutcomeReady(brain) => {
                         // Signal notification is handled by monitor.rs (inline, ordered).
@@ -192,7 +200,15 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!("control agent starting");
         crate::agents::heartbeat::spawn(bus.clone(), AgentId::Control);
-        while let Ok(ev) = rx.recv().await {
+        loop {
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "broadcast lagged — skipping events");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             match ev {
                 AgentEvent::ControlCommand(ControlCommand::Freeze { reason }) => {
                     risk_ev.freeze(reason);
