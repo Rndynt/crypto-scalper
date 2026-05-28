@@ -215,7 +215,7 @@ pub fn spawn(
 
                     // Live confidence calibration: raise floor when recent
                     // realized performance degrades.
-                    let mut live_conf_floor = 60u8;
+                    let mut live_conf_floor = 50u8;
                     if let Some(ref ss) = shared_state {
                         let overall = ss.get_overall_stats();
                         if overall.total_trades >= 25 && overall.win_rate < 0.45 {
@@ -237,11 +237,25 @@ pub fn spawn(
                         continue;
                     }
 
-                    // REJECT if not Go
-                    if llm_out.decision.decision != Decision::Go {
+                    // OVERRIDE: if LLM says NoGo but confidence >= 55, force Go
+                    // (LLM reasoning models sometimes misclassify despite good signals)
+                    let mut final_decision = llm_out.decision.clone();
+                    if final_decision.decision == Decision::NoGo
+                        && final_decision.confidence >= 55
+                    {
                         info!(
                             symbol = %symbol,
-                            decision = ?llm_out.decision.decision,
+                            confidence = final_decision.confidence,
+                            "brain: OVERRIDE — LLM said NoGo but confidence >= 55, forcing Go"
+                        );
+                        final_decision.decision = Decision::Go;
+                    }
+
+                    // REJECT if not Go
+                    if final_decision.decision != Decision::Go {
+                        info!(
+                            symbol = %symbol,
+                            decision = ?final_decision.decision,
                             "brain: REJECTED — not Go"
                         );
                         continue;
@@ -251,7 +265,7 @@ pub fn spawn(
                         signal: Box::new(signal),
                         regime,
                         risk: adjusted_risk,
-                        decision: llm_out.decision,
+                        decision: final_decision,
                         latency_ms: llm_out.latency_ms,
                         offline_fallback: llm_out.offline_fallback,
                     }));
