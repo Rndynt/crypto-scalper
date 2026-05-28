@@ -253,6 +253,7 @@ async fn telegram_loop(
             {"command": "performance", "description": "📋 Daily/weekly performance"},
             {"command": "config", "description": "⚙ Config panel (leverage, risk, thresholds)"},
             {"command": "lessons", "description": "🧠 Learning system & active lessons"},
+            {"command": "reset", "description": "🔄 Reset equity & clear lessons"},
             {"command": "leverage", "description": "⚡ View/change leverage"},
             {"command": "risk", "description": "🛡 Risk metrics & limits"},
             {"command": "survival", "description": "🏥 Survival mode details"},
@@ -682,6 +683,7 @@ fn handle_command(
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
         "/config" | "config" => cmd_config(risk),
         "/lessons" | "lessons" => cmd_lessons(),
+        "/reset" | "reset" => cmd_reset(risk, book, bus),
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -705,6 +707,7 @@ fn cmd_help() -> String {
      ├ <code>/config</code> — ⚙ Config panel (all settings)\n\
      ├ <code>/history</code> — Recent trade history (NeonDB)\n\
      ├ <code>/lessons</code> — 🧠 Learning system & active lessons\n\
+     ├ <code>/reset</code> — 🔄 Reset equity & clear lessons (fresh start)\n\
      └ <code>/health</code> — System health check\n\
      \n\
      🎮 <b>Control</b>\n\
@@ -716,6 +719,36 @@ fn cmd_help() -> String {
      \n\
      🤖 ARIA v1.0"
         .to_string()
+}
+
+fn cmd_reset(risk: &Arc<RiskManager>, book: &Arc<PositionBook>, bus: &MessageBus) -> String {
+    // 1. Close all positions
+    let positions = book.snapshot();
+    let pos_count = positions.len();
+    for p in &positions {
+        book.close(&p.client_id);
+    }
+
+    // 2. Reset equity to config value (300.0)
+    risk.set_equity(300.0);
+
+    // 3. Clear learning state
+    let _ = std::fs::remove_file("data/learning_state.json");
+
+    // 4. Clear positions file (already cleared by book.close, but just in case)
+    let _ = std::fs::remove_file("data/positions.json");
+
+    // 5. Publish flat all to execution agent
+    bus.publish(AgentEvent::ControlCommand(ControlCommand::FlatAll {
+        reason: "operator /reset".into(),
+    }));
+
+    format!(
+        "🔄 <b>RESET COMPLETE</b>\n──────────\n         ├ Closed positions: <code>{pos_count}</code>\n         ├ Equity reset: <code>$300.00</code>\n         ├ Learning state: <b>cleared</b>\n\
+         ├ Trade history: preserved in DB\n\
+         └ Fresh start ready\n\
+         🤖 ARIA v1.0"
+    )
 }
 
 fn cmd_lessons() -> String {
