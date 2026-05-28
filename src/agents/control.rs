@@ -785,246 +785,119 @@ fn help_buttons() -> Vec<Vec<InlineButton>> {
     ]
 }
 
-/// Get contextual buttons for a given command.
+/// Get contextual buttons for a given command. NO duplicates — each button appears once max.
 fn command_buttons(cmd: &str) -> Vec<Vec<InlineButton>> {
-    // Always include a navigation row
-    let nav_row = vec![
-        InlineButton {
-            text: "📊 Status".into(),
-            callback_data: "btn_status".into(),
-        },
-        InlineButton {
-            text: "📈 Positions".into(),
-            callback_data: "btn_positions".into(),
-        },
-        InlineButton {
-            text: "🏠 Help".into(),
-            callback_data: "btn_help".into(),
-        },
-    ];
+    // Shared: single Help button for the nav row
+    let help_btn = InlineButton {
+        text: "🏠 Help".into(),
+        callback_data: "btn_help".into(),
+    };
 
     match cmd {
         "/help" | "help" | "/start" | "start" => help_buttons(),
         "/status" | "status" => vec![
             vec![
-                InlineButton {
-                    text: "📈 Positions".into(),
-                    callback_data: "btn_positions".into(),
-                },
-                InlineButton {
-                    text: "📋 Performance".into(),
-                    callback_data: "btn_performance".into(),
-                },
-                InlineButton {
-                    text: "💚 Health".into(),
-                    callback_data: "btn_health".into(),
-                },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/positions" | "positions" => vec![
             vec![
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "📜 History".into(),
-                    callback_data: "btn_history".into(),
-                },
-                InlineButton {
-                    text: "🚨 FLAT ALL".into(),
-                    callback_data: "btn_flat".into(),
-                },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
+                InlineButton { text: "🚨 FLAT ALL".into(), callback_data: "btn_flat".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/signals" | "signals" => vec![
             vec![
-                InlineButton {
-                    text: "🧠 Brain".into(),
-                    callback_data: "btn_brain".into(),
-                },
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "🛡 Risk".into(),
-                    callback_data: "btn_risk".into(),
-                },
+                InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/brain" | "brain" => vec![
             vec![
-                InlineButton {
-                    text: "🔔 Signals".into(),
-                    callback_data: "btn_signals".into(),
-                },
-                InlineButton {
-                    text: "📋 Performance".into(),
-                    callback_data: "btn_performance".into(),
-                },
-                InlineButton {
-                    text: "🛡 Risk".into(),
-                    callback_data: "btn_risk".into(),
-                },
+                InlineButton { text: "🔔 Signals".into(), callback_data: "btn_signals".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/performance" | "performance" => vec![
             vec![
-                InlineButton {
-                    text: "📜 History".into(),
-                    callback_data: "btn_history".into(),
-                },
-                InlineButton {
-                    text: "🏥 Survival".into(),
-                    callback_data: "btn_survival".into(),
-                },
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
+                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/risk" | "risk" => vec![
             vec![
-                InlineButton {
-                    text: "⚙ Leverage".into(),
-                    callback_data: "btn_leverage".into(),
-                },
-                InlineButton {
-                    text: "📈 Positions".into(),
-                    callback_data: "btn_positions".into(),
-                },
-                InlineButton {
-                    text: "🏥 Survival".into(),
-                    callback_data: "btn_survival".into(),
-                },
+                InlineButton { text: "⚙ Leverage".into(), callback_data: "btn_leverage".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/leverage" | "leverage" => vec![
             vec![
-                InlineButton {
-                    text: "🛡 Risk".into(),
-                    callback_data: "btn_risk".into(),
-                },
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "📈 Positions".into(),
-                    callback_data: "btn_positions".into(),
-                },
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/survival" | "survival" => vec![
             vec![
-                InlineButton {
-                    text: "🛡 Risk".into(),
-                    callback_data: "btn_risk".into(),
-                },
-                InlineButton {
-                    text: "💚 Health".into(),
-                    callback_data: "btn_health".into(),
-                },
-                InlineButton {
-                    text: "📋 Performance".into(),
-                    callback_data: "btn_performance".into(),
-                },
+                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+                InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/history" | "history" => vec![
             vec![
-                InlineButton {
-                    text: "📋 Performance".into(),
-                    callback_data: "btn_performance".into(),
-                },
-                InlineButton {
-                    text: "📈 Positions".into(),
-                    callback_data: "btn_positions".into(),
-                },
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/health" | "health" => vec![
             vec![
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "🏥 Survival".into(),
-                    callback_data: "btn_survival".into(),
-                },
-                InlineButton {
-                    text: "🧠 Brain".into(),
-                    callback_data: "btn_brain".into(),
-                },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+                InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/freeze" | "freeze" => vec![
             vec![
-                InlineButton {
-                    text: "▶ Unfreeze".into(),
-                    callback_data: "btn_unfreeze".into(),
-                },
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "🏥 Survival".into(),
-                    callback_data: "btn_survival".into(),
-                },
+                InlineButton { text: "▶ Unfreeze".into(), callback_data: "btn_unfreeze".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/unfreeze" | "unfreeze" => vec![
             vec![
-                InlineButton {
-                    text: "⏸ Freeze".into(),
-                    callback_data: "btn_freeze".into(),
-                },
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "📈 Positions".into(),
-                    callback_data: "btn_positions".into(),
-                },
+                InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/flat" | "flat" => vec![
             vec![
-                InlineButton {
-                    text: "📊 Status".into(),
-                    callback_data: "btn_status".into(),
-                },
-                InlineButton {
-                    text: "📈 Positions".into(),
-                    callback_data: "btn_positions".into(),
-                },
-                InlineButton {
-                    text: "⏸ Freeze".into(),
-                    callback_data: "btn_freeze".into(),
-                },
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
+                InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
+                help_btn,
             ],
-            nav_row,
         ],
         "/config" | "config" => config_buttons(),
         _ => vec![],
