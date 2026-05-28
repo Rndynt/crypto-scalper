@@ -1088,6 +1088,8 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>, risk: 
 
         // Notional value in USD
         let notional_usd = p.size * p.entry_price;
+        let max_lev = risk.limits().max_leverage as f64;
+        let margin_usd = if max_lev > 0.0 { notional_usd / max_lev } else { notional_usd };
 
         lines.push(format!(
             "{side_emoji} <b>#{idx} {sym}</b> — {side_label}{trailing}{be}\n\
@@ -1095,6 +1097,7 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>, risk: 
              {price_line}\
              ├ SL: <code>{sl:.4}</code> · TP: <code>{tp:.4}</code>\n\
              ├ Size: <code>{size:.4}</code> ({notional:.2}$)\n\
+             ├ ⚡ {leverage:.0}x · Margin: <code>{margin:.2}$</code>\n\
              ├ {pnl_emoji} PnL: <code>{pnl}</code> {pnl_pct}\n\
              └ Duration: <code>{duration}</code> · Opened: <code>{opened}</code>",
             idx = i + 1,
@@ -1105,6 +1108,8 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>, risk: 
             tp = p.take_profit,
             size = p.size,
             notional = notional_usd,
+            leverage = max_lev,
+            margin = margin_usd,
             pnl_emoji = pnl_emoji,
             pnl = pnl_str,
             pnl_pct = pnl_pct_str,
