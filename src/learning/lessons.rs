@@ -90,13 +90,13 @@ pub struct LessonConfig {
 impl Default for LessonConfig {
     fn default() -> Self {
         Self {
-            min_trades_for_significance: 30,
-            lose_streak_trigger: -8,
+            min_trades_for_significance: 10,  // was 30 — learn faster
+            lose_streak_trigger: -5,           // was -8 — react sooner
             lose_streak_cooldown_minutes: 15,
             derate_win_rate: 0.35,
             boost_win_rate: 0.65,
             regime_blacklist_win_rate: 0.30,
-            regime_blacklist_min_trades: 12,
+            regime_blacklist_min_trades: 5,    // was 12 — react sooner
             drawdown_cooldown_pct: -5.0,
             drawdown_cooldown_minutes: 60,
             llm_overconf_actual_wr: 0.40,

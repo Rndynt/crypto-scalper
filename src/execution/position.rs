@@ -108,6 +108,8 @@ pub enum PositionAction {
     None,
 }
 
+const POSITION_FILE: &str = "data/positions.json";
+
 #[derive(Default)]
 pub struct PositionBook {
     inner: Arc<Mutex<HashMap<String, Position>>>,
@@ -118,12 +120,44 @@ impl PositionBook {
         Self::default()
     }
 
+    /// Load persisted positions from disk (paper mode persistence).
+    pub fn load_from_disk(&self) {
+        if let Ok(data) = std::fs::read_to_string(POSITION_FILE) {
+            if let Ok(positions) = serde_json::from_str::<Vec<Position>>(&data) {
+                let count = positions.len();
+                let mut book = self.inner.lock();
+                for p in positions {
+                    book.insert(p.client_id.clone(), p);
+                }
+                if count > 0 {
+                    tracing::info!(count, "loaded persisted positions from disk");
+                }
+            }
+        }
+    }
+
+    /// Save current positions to disk.
+    fn save_to_disk(&self) {
+        let positions: Vec<Position> = self.inner.lock().values().cloned().collect();
+        if let Some(parent) = std::path::Path::new(POSITION_FILE).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(data) = serde_json::to_string_pretty(&positions) {
+            let _ = std::fs::write(POSITION_FILE, data);
+        }
+    }
+
     pub fn open(&self, p: Position) {
         self.inner.lock().insert(p.client_id.clone(), p);
+        self.save_to_disk();
     }
 
     pub fn close(&self, client_id: &str) -> Option<Position> {
-        self.inner.lock().remove(client_id)
+        let result = self.inner.lock().remove(client_id);
+        if result.is_some() {
+            self.save_to_disk();
+        }
+        result
     }
 
     pub fn get(&self, client_id: &str) -> Option<Position> {
@@ -148,6 +182,8 @@ impl PositionBook {
         for p in positions {
             book.insert(p.client_id.clone(), p);
         }
+        drop(book);
+        self.save_to_disk();
     }
 
     pub fn update_price(&self, symbol: &str, price: f64) {

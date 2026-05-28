@@ -252,6 +252,7 @@ async fn telegram_loop(
             {"command": "brain", "description": "🧠 Last AI brain analysis"},
             {"command": "performance", "description": "📋 Daily/weekly performance"},
             {"command": "config", "description": "⚙ Config panel (leverage, risk, thresholds)"},
+            {"command": "lessons", "description": "🧠 Learning system & active lessons"},
             {"command": "leverage", "description": "⚡ View/change leverage"},
             {"command": "risk", "description": "🛡 Risk metrics & limits"},
             {"command": "survival", "description": "🏥 Survival mode details"},
@@ -334,6 +335,7 @@ async fn telegram_loop(
                             "btn_unfreeze" => "/unfreeze",
                             "btn_flat" => "/flat",
                             "btn_help" => "/help",
+                            "btn_lessons" => "/lessons",
                             "btn_config" => "/config",
                             _ if data.starts_with("cfg_lev_") => {
                                 // Leverage preset: cfg_lev_20, cfg_lev_50, etc.
@@ -679,6 +681,7 @@ fn handle_command(
         "/leverage" | "leverage" if !cmd.contains(' ') => cmd_leverage(risk, ""),
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
         "/config" | "config" => cmd_config(risk),
+        "/lessons" | "lessons" => cmd_lessons(),
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -701,6 +704,7 @@ fn cmd_help() -> String {
      ├ <code>/leverage</code> — View/change leverage settings\n\
      ├ <code>/config</code> — ⚙ Config panel (all settings)\n\
      ├ <code>/history</code> — Recent trade history (NeonDB)\n\
+     ├ <code>/lessons</code> — 🧠 Learning system & active lessons\n\
      └ <code>/health</code> — System health check\n\
      \n\
      🎮 <b>Control</b>\n\
@@ -712,6 +716,77 @@ fn cmd_help() -> String {
      \n\
      🤖 ARIA v1.0"
         .to_string()
+}
+
+fn cmd_lessons() -> String {
+    const LEARNING_STATE_PATH: &str = "data/learning_state.json";
+    let data = match std::fs::read_to_string(LEARNING_STATE_PATH) {
+        Ok(d) => d,
+        Err(_) => return "📭 <b>No learning data yet</b>
+Bot needs more trades to generate lessons.
+🤖 ARIA v1.0".to_string(),
+    };
+    let snap: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(e) => return format!("⚠ <b>Error reading lessons:</b> {e}
+🤖 ARIA v1.0"),
+    };
+
+    let overall_trades = snap.get("overall_trades").and_then(|v| v.as_u64()).unwrap_or(0);
+    let overall_wins = snap.get("overall_wins").and_then(|v| v.as_u64()).unwrap_or(0);
+    let overall_losses = snap.get("overall_losses").and_then(|v| v.as_u64()).unwrap_or(0);
+    let overall_pnl = snap.get("overall_net_pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let lessons_count = snap.get("lessons_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let wr = if overall_trades > 0 { overall_wins as f64 / overall_trades as f64 * 100.0 } else { 0.0 };
+    let pnl_sign = if overall_pnl >= 0.0 { "+" } else { "" };
+
+    let mut lines = vec![
+        "🧠 <b>Learning System</b>".to_string(),
+        "──────────".to_string(),
+        format!("📊 Overall: <code>{overall_trades}</code> trades (<code>{overall_wins}W/{overall_losses}L</code> · <code>{wr:.1}%</code>)"),
+        format!("💰 Net PnL: <code>{pnl_sign}{overall_pnl:.2}$</code>"),
+        format!("📋 Active Lessons: <code>{lessons_count}</code>"),
+        "".to_string(),
+    ];
+
+    if let Some(lessons) = snap.get("lessons").and_then(|v| v.as_array()) {
+        if lessons.is_empty() {
+            lines.push("  └ (no active lessons)".to_string());
+        } else {
+            lines.push("📋 <b>Active Lessons</b>".to_string());
+            lines.push("──────────".to_string());
+            for (i, lesson) in lessons.iter().enumerate().take(10) {
+                let kind = lesson.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+                let strategy = lesson.get("strategy").and_then(|v| v.as_str()).unwrap_or("*");
+                let symbol = lesson.get("symbol").and_then(|v| v.as_str()).unwrap_or("*");
+                let regime = lesson.get("regime").and_then(|v| v.as_str()).unwrap_or("*");
+                let size_mult = lesson.get("size_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                let reason = lesson.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                let valid_until = lesson.get("valid_until").and_then(|v| v.as_str()).unwrap_or("?");
+                let kind_emoji = match kind {
+                    "Derate" => "🟡",
+                    "Boost" => "🟢",
+                    "Cooldown" => "🟠",
+                    "Blacklist" => "🔴",
+                    "LlmCalibration" => "🧠",
+                    _ => "⚪",
+                };
+                lines.push(format!(
+                    "{kind_emoji} <b>#{}</b> {kind}
+  ├ Strategy: <code>{}</code> · Symbol: <code>{}</code>
+  ├ Regime: <code>{}</code> · Size: <code>{:.2}×</code>
+  ├ <i>{}</i>
+  └ Expires: <code>{}</code>",
+                    i + 1, strategy, symbol, regime, size_mult, reason, &valid_until[..16.min(valid_until.len())]
+                ));
+            }
+        }
+    }
+
+    lines.push("".to_string());
+    lines.push("🤖 ARIA v1.0".to_string());
+    lines.join("
+")
 }
 
 /// Build inline keyboard buttons for the /help message.
@@ -745,6 +820,10 @@ fn help_buttons() -> Vec<Vec<InlineButton>> {
             InlineButton {
                 text: "📜 History".into(),
                 callback_data: "btn_history".into(),
+            },
+            InlineButton {
+                text: "🎓 Lessons".into(),
+                callback_data: "btn_lessons".into(),
             },
         ],
         // Row 3: Risk & Survival
@@ -896,6 +975,14 @@ fn command_buttons(cmd: &str) -> Vec<Vec<InlineButton>> {
                 InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
                 InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
                 InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
+                help_btn,
+            ],
+        ],
+        "/lessons" | "lessons" => vec![
+            vec![
+                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
+                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
+                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
                 help_btn,
             ],
         ],

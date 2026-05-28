@@ -85,12 +85,51 @@ impl RiskManager {
     /// Replace the in-memory equity with a fresh value (e.g. fetched
     /// from the exchange). Adjusts `peak_equity` if the new value is
     /// higher. Resets `tripped` if equity recovers above the limits.
+    /// Load persisted equity from disk (paper mode).
+    pub fn load_equity_from_disk(&self) {
+        const EQUITY_FILE: &str = "data/equity.json";
+        if let Ok(data) = std::fs::read_to_string(EQUITY_FILE) {
+            if let Ok(snap) = serde_json::from_str::<serde_json::Value>(&data) {
+                let equity = snap.get("equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let peak = snap.get("peak_equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let pnl_today = snap.get("realized_pnl_today").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                if equity > 0.0 {
+                    let mut i = self.inner.lock();
+                    i.equity = equity;
+                    i.peak_equity = peak.max(equity);
+                    i.realized_pnl_today = pnl_today;
+                    tracing::info!(equity, peak, pnl_today, "loaded persisted equity from disk");
+                }
+            }
+        }
+    }
+
+    /// Save current equity to disk.
+    fn save_equity_to_disk(&self) {
+        const EQUITY_FILE: &str = "data/equity.json";
+        let i = self.inner.lock();
+        let snap = serde_json::json!({
+            "equity": i.equity,
+            "peak_equity": i.peak_equity,
+            "initial_equity": i.initial_equity,
+            "realized_pnl_today": i.realized_pnl_today,
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        drop(i);
+        if let Some(parent) = std::path::Path::new(EQUITY_FILE).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(EQUITY_FILE, snap.to_string());
+    }
+
     pub fn set_equity(&self, equity: f64) {
         let mut i = self.inner.lock();
         i.equity = equity;
         if equity > i.peak_equity {
             i.peak_equity = equity;
         }
+        drop(i);
+        self.save_equity_to_disk();
     }
 
     pub fn equity(&self) -> f64 {
@@ -352,33 +391,36 @@ impl RiskManager {
     }
 
     pub fn on_position_closed(&self, realized_pnl: f64) {
-        let mut i = self.inner.lock();
-        if i.open_positions > 0 {
-            i.open_positions -= 1;
+        {
+            let mut i = self.inner.lock();
+            if i.open_positions > 0 {
+                i.open_positions -= 1;
+            }
+            i.realized_pnl_today += realized_pnl;
+            i.equity += realized_pnl;
+            if i.equity > i.peak_equity {
+                i.peak_equity = i.equity;
+            }
+            let dd = if i.peak_equity > 0.0 {
+                ((i.peak_equity - i.equity) / i.peak_equity * 100.0).max(0.0)
+            } else {
+                0.0
+            };
+            if dd >= i.limits.max_drawdown_pct && !i.tripped {
+                i.tripped = true;
+                i.trip_reason = Some(format!("max drawdown {dd:.2}%"));
+            }
+            let loss_pct = if i.equity > 0.0 && i.realized_pnl_today < 0.0 {
+                -i.realized_pnl_today / i.equity * 100.0
+            } else {
+                0.0
+            };
+            if loss_pct >= i.limits.max_daily_loss_pct && !i.tripped {
+                i.tripped = true;
+                i.trip_reason = Some(format!("daily loss {loss_pct:.2}%"));
+            }
         }
-        i.realized_pnl_today += realized_pnl;
-        i.equity += realized_pnl;
-        if i.equity > i.peak_equity {
-            i.peak_equity = i.equity;
-        }
-        let dd = if i.peak_equity > 0.0 {
-            ((i.peak_equity - i.equity) / i.peak_equity * 100.0).max(0.0)
-        } else {
-            0.0
-        };
-        if dd >= i.limits.max_drawdown_pct && !i.tripped {
-            i.tripped = true;
-            i.trip_reason = Some(format!("max drawdown {dd:.2}%"));
-        }
-        let loss_pct = if i.equity > 0.0 && i.realized_pnl_today < 0.0 {
-            -i.realized_pnl_today / i.equity * 100.0
-        } else {
-            0.0
-        };
-        if loss_pct >= i.limits.max_daily_loss_pct && !i.tripped {
-            i.tripped = true;
-            i.trip_reason = Some(format!("daily loss {loss_pct:.2}%"));
-        }
+        self.save_equity_to_disk();
     }
 
     pub fn reset_daily(&self) {

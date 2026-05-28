@@ -261,7 +261,9 @@ async fn run_agents(cfg: Config) -> Result<()> {
         cfg.risk.equity_usd,
     ));
 
+    risk.load_equity_from_disk(); // Restore persisted equity (paper mode)
     let book = Arc::new(PositionBook::new());
+    book.load_from_disk(); // Restore persisted positions (paper mode)
     let journal = Arc::new(TradeJournal::open(&cfg.monitoring.db_path)?);
     // Build optional signal topic destination from env or config.
     let signal_topic = {
