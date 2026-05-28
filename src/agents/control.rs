@@ -242,6 +242,33 @@ async fn telegram_loop(
         .unwrap_or_default();
     let last_update_id: Arc<Mutex<i64>> = Arc::new(Mutex::new(0));
 
+    // Register bot commands with Telegram so they appear in the "/" menu
+    let cmd_url = format!("https://api.telegram.org/bot{token}/setMyCommands");
+    let cmd_body = serde_json::json!({
+        "commands": [
+            {"command": "status", "description": "📊 Full bot status & risk overview"},
+            {"command": "positions", "description": "📈 Open positions with P&L"},
+            {"command": "signals", "description": "🔔 Recent AI signal analysis"},
+            {"command": "brain", "description": "🧠 Last AI brain analysis"},
+            {"command": "performance", "description": "📋 Daily/weekly performance"},
+            {"command": "config", "description": "⚙ Config panel (leverage, risk, thresholds)"},
+            {"command": "leverage", "description": "⚡ View/change leverage"},
+            {"command": "risk", "description": "🛡 Risk metrics & limits"},
+            {"command": "survival", "description": "🏥 Survival mode details"},
+            {"command": "history", "description": "📜 Recent trade history"},
+            {"command": "health", "description": "💚 System health check"},
+            {"command": "freeze", "description": "⏸ Pause trading"},
+            {"command": "unfreeze", "description": "▶ Resume trading"},
+            {"command": "flat", "description": "🚨 Close ALL positions"},
+            {"command": "help", "description": "📖 Command list"}
+        ]
+    });
+    if let Err(e) = client.post(&cmd_url).json(&cmd_body).send().await {
+        warn!(error = %e, "setMyCommands failed");
+    } else {
+        info!("registered {} bot commands with Telegram", 15);
+    }
+
     loop {
         let offset = *last_update_id.lock() + 1;
         let url = format!(
@@ -307,6 +334,43 @@ async fn telegram_loop(
                             "btn_unfreeze" => "/unfreeze",
                             "btn_flat" => "/flat",
                             "btn_help" => "/help",
+                            "btn_config" => "/config",
+                            _ if data.starts_with("cfg_lev_") => {
+                                // Leverage preset: cfg_lev_20, cfg_lev_50, etc.
+                                let val = data.strip_prefix("cfg_lev_").unwrap_or("");
+                                let reply = cmd_leverage(&risk, &format!("/leverage {val}"));
+                                let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                continue;
+                            }
+                            _ if data.starts_with("cfg_risk_") => {
+                                // Risk preset: cfg_risk_1, cfg_risk_2, cfg_risk_5
+                                let val = data.strip_prefix("cfg_risk_").unwrap_or("1");
+                                if let Ok(pct) = val.parse::<f64>() {
+                                    risk.set_risk_per_trade_pct(pct);
+                                    let reply = format!(
+                                        "✅ <b>Risk Updated</b>\n──────────\n📐 Risk per trade: <code>{pct:.1}%</code>\n🤖 ARIA v1.0"
+                                    );
+                                    let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                }
+                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                continue;
+                            }
+                            _ if data.starts_with("cfg_maxpos_") => {
+                                let val = data.strip_prefix("cfg_maxpos_").unwrap_or("3");
+                                if let Ok(n) = val.parse::<u32>() {
+                                    risk.set_max_open_positions(n);
+                                    let reply = format!(
+                                        "✅ <b>Max Positions Updated</b>\n──────────\n📊 Max open: <code>{n}</code>\n🤖 ARIA v1.0"
+                                    );
+                                    let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                }
+                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                continue;
+                            }
                             _ => "",
                         };
 
@@ -565,6 +629,7 @@ fn handle_command(
         "/history" | "history" => cmd_history(journal),
         "/leverage" | "leverage" if !cmd.contains(' ') => cmd_leverage(risk, ""),
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
+        "/config" | "config" => cmd_config(risk),
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -585,6 +650,7 @@ fn cmd_help() -> String {
      ├ <code>/survival</code> — Survival mode details\n\
      ├ <code>/risk</code> — Current risk metrics & limits\n\
      ├ <code>/leverage</code> — View/change leverage settings\n\
+     ├ <code>/config</code> — ⚙ Config panel (all settings)\n\
      ├ <code>/history</code> — Recent trade history (NeonDB)\n\
      └ <code>/health</code> — System health check\n\
      \n\
@@ -639,8 +705,8 @@ fn help_buttons() -> Vec<Vec<InlineButton>> {
                 callback_data: "btn_risk".into(),
             },
             InlineButton {
-                text: "⚙ Leverage".into(),
-                callback_data: "btn_leverage".into(),
+                text: "⚙ Config".into(),
+                callback_data: "btn_config".into(),
             },
             InlineButton {
                 text: "🏥 Survival".into(),
@@ -911,6 +977,7 @@ fn command_buttons(cmd: &str) -> Vec<Vec<InlineButton>> {
             ],
             nav_row,
         ],
+        "/config" | "config" => config_buttons(),
         _ => vec![],
     }
 }
@@ -1619,6 +1686,63 @@ fn cmd_leverage(risk: &Arc<RiskManager>, args: &str) -> String {
             tp_gain = 0.6 * current as f64,
         )
     }
+}
+
+fn cmd_config(risk: &Arc<RiskManager>) -> String {
+    let limits = risk.limits();
+    format!(
+        "⚙ <b>ARIA Config Panel</b>\n\
+         ──────────\n\
+         \n\
+         ⚡ <b>Leverage</b>: <code>{lev}x</code>\n\
+         📐 <b>Risk/Trade</b>: <code>{risk_pct:.1}%</code>\n\
+         📊 <b>Max Positions</b>: <code>{max_pos}</code>\n\
+         🛡 <b>Max Daily Loss</b>: <code>{daily_loss:.1}%</code>\n\
+         📉 <b>Max Spread</b>: <code>{spread:.2}%</code>\n\
+         🎯 <b>Min R:R</b>: <code>{rr:.1}</code>\n\
+         \n\
+         👆 <b>Tap buttons below to change settings!</b>\n\
+         \n\
+         🤖 ARIA v1.0",
+        lev = limits.max_leverage,
+        risk_pct = limits.risk_per_trade_pct,
+        max_pos = limits.max_open_positions,
+        daily_loss = limits.max_daily_loss_pct,
+        spread = limits.max_spread_pct,
+        rr = limits.min_reward_risk,
+    )
+}
+
+fn config_buttons() -> Vec<Vec<InlineButton>> {
+    vec![
+        // Row 1: Leverage presets
+        vec![
+            InlineButton { text: "🟢 20x".into(), callback_data: "cfg_lev_20".into() },
+            InlineButton { text: "🟡 50x".into(), callback_data: "cfg_lev_50".into() },
+            InlineButton { text: "🟠 75x".into(), callback_data: "cfg_lev_75".into() },
+            InlineButton { text: "🔴 100x".into(), callback_data: "cfg_lev_100".into() },
+        ],
+        // Row 2: Risk per trade presets
+        vec![
+            InlineButton { text: "0.5% Risk".into(), callback_data: "cfg_risk_0.5".into() },
+            InlineButton { text: "1% Risk".into(), callback_data: "cfg_risk_1".into() },
+            InlineButton { text: "2% Risk".into(), callback_data: "cfg_risk_2".into() },
+            InlineButton { text: "5% Risk".into(), callback_data: "cfg_risk_5".into() },
+        ],
+        // Row 3: Max positions
+        vec![
+            InlineButton { text: "📍 1 Pos".into(), callback_data: "cfg_maxpos_1".into() },
+            InlineButton { text: "📍 2 Pos".into(), callback_data: "cfg_maxpos_2".into() },
+            InlineButton { text: "📍 3 Pos".into(), callback_data: "cfg_maxpos_3".into() },
+            InlineButton { text: "📍 5 Pos".into(), callback_data: "cfg_maxpos_5".into() },
+        ],
+        // Row 4: Navigation
+        vec![
+            InlineButton { text: "⚡ Leverage".into(), callback_data: "btn_leverage".into() },
+            InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
+            InlineButton { text: "🏠 Help".into(), callback_data: "btn_help".into() },
+        ],
+    ]
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

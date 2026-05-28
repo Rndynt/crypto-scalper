@@ -120,6 +120,21 @@ impl RiskManager {
         i.limits.max_leverage = leverage.max(1);
     }
 
+    pub fn set_risk_per_trade_pct(&self, pct: f64) {
+        let mut i = self.inner.lock();
+        i.limits.risk_per_trade_pct = pct.clamp(0.1, 10.0);
+    }
+
+    pub fn set_max_open_positions(&self, n: u32) {
+        let mut i = self.inner.lock();
+        i.limits.max_open_positions = n.max(1);
+    }
+
+    pub fn set_max_daily_loss_pct(&self, pct: f64) {
+        let mut i = self.inner.lock();
+        i.limits.max_daily_loss_pct = pct.clamp(1.0, 50.0);
+    }
+
     pub fn set_size_multiplier(&self, m: f64) {
         let mut i = self.inner.lock();
         i.size_multiplier = m.clamp(0.0, 2.0);
