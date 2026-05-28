@@ -371,6 +371,16 @@ async fn telegram_loop(
                                 let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
                                 continue;
                             }
+                            _ if data.starts_with("close_") => {
+                                let sym = data.strip_prefix("close_").unwrap_or("");
+                                let full_sym = format!("{}USDT", sym.to_uppercase());
+                                bus.publish(AgentEvent::ControlCommand(ControlCommand::ClosePosition { symbol: full_sym.clone() }));
+                                let reply = format!("🔧 <b>Closing {}</b>...\n🤖 ARIA v1.0", sym.to_uppercase());
+                                let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                continue;
+                            }
                             _ => "",
                         };
 
@@ -437,7 +447,23 @@ async fn telegram_loop(
                         let cmd_lower = text.trim().to_lowercase();
 
                         // Get contextual buttons for this command
-                        let buttons = command_buttons(&cmd_lower);
+                        let mut buttons = command_buttons(&cmd_lower);
+
+                        // Add close buttons for each open position
+                        if cmd_lower == "/positions" || cmd_lower == "positions" {
+                            let positions = book.snapshot();
+                            let mut close_row = Vec::new();
+                            for p in &positions {
+                                let sym = p.symbol.replace("USDT", "");
+                                close_row.push(InlineButton {
+                                    text: format!("❌ Close {}", sym),
+                                    callback_data: format!("close_{}", sym.to_lowercase()),
+                                });
+                            }
+                            if !close_row.is_empty() {
+                                buttons.insert(0, close_row);
+                            }
+                        }
 
                         // Reply to originating chat (DM or group topic)
                         if let Some(thread_id) = origin_thread_id {

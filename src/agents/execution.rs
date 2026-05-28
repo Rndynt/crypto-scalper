@@ -77,6 +77,51 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!("execution agent starting");
         crate::agents::heartbeat::spawn(bus.clone(), AgentId::Execution);
+
+        // Fallback exit check timer — runs every 5s even without Tick events
+        let book_fb = book.clone();
+        let risk_fb = risk.clone();
+        let marks_fb = last_marks.clone();
+        let pos_cfg_fb = pos_cfg.clone();
+        let bus_fb = bus_for_close.clone();
+        let exchange_fb = exchange.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let marks = marks_fb.lock().clone();
+                for (sym, price) in &marks {
+                    if *price <= 0.0 { continue; }
+                    let exits = book_fb.check_exits(sym, *price, &pos_cfg_fb);
+                    for (pos, reason) in exits {
+                        let pnl = crate::execution::position::pnl_usd(&pos, *price);
+                        risk_fb.on_position_closed(pnl);
+                        let _ = exchange_fb.cancel_all(&pos.symbol).await;
+                        let pnl_pct = if pos.entry_price > 0.0 {
+                            (*price - pos.entry_price) / pos.entry_price * 100.0
+                        } else { 0.0 };
+                        info!(
+                            symbol = %pos.symbol, side = %pos.side.as_str(), reason = %reason.as_str(),
+                            entry = %format!("{:.4}", pos.entry_price), exit = %format!("{:.4}", *price),
+                            pnl_usd = %format!("{:+.4}", pnl), pnl_pct = %format!("{:+.4}%", pnl_pct),
+                            "execution(fallback): position closed"
+                        );
+                        bus_fb.publish(AgentEvent::PositionClosed {
+                            client_id: pos.client_id.clone(),
+                            symbol: pos.symbol.clone(),
+                            side: pos.side,
+                            size: pos.size,
+                            entry_price: pos.entry_price,
+                            exit_price: *price,
+                            pnl_usd: pnl,
+                            reason,
+                            strategy: pos.strategy.clone(),
+                        });
+                    }
+                }
+            }
+        });
         loop {
             let ev = match rx.recv().await {
                 Ok(ev) => ev,
@@ -150,9 +195,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                     let marks = last_marks.lock().clone();
                     for pos in positions {
                         let mark = *marks.get(&pos.symbol).unwrap_or(&pos.entry_price);
-                        // Cancel SL/TP first so we don't double-close.
                         let _ = exchange.cancel_all(&pos.symbol).await;
-                        // Send a reduce-only market in the opposite direction.
                         let close_side = match pos.side {
                             Side::Long => Side::Short,
                             Side::Short => Side::Long,
@@ -195,6 +238,58 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 size    = %format!("{:.6}", closed.size),
                                 pnl_usd = %format!("{:+.4}", pnl),
                                 pnl_pct = %format!("{:+.4}%", pnl_pct),
+                                "execution: position closed"
+                            );
+                            bus_for_close.publish(AgentEvent::PositionClosed {
+                                client_id: closed.client_id,
+                                symbol: closed.symbol,
+                                side: closed.side,
+                                size: closed.size,
+                                entry_price: closed.entry_price,
+                                exit_price: mark,
+                                pnl_usd: pnl,
+                                reason: PositionExitReason::Manual,
+                                strategy: closed.strategy.clone(),
+                            });
+                        }
+                    }
+                }
+                AgentEvent::ControlCommand(ControlCommand::ClosePosition { symbol }) => {
+                    warn!(%symbol, "execution: close position requested");
+                    let positions = book.snapshot();
+                    let marks = last_marks.lock().clone();
+                    for pos in positions.iter().filter(|p| p.symbol == symbol) {
+                        let mark = *marks.get(&pos.symbol).unwrap_or(&pos.entry_price);
+                        let _ = exchange.cancel_all(&pos.symbol).await;
+                        let close_side = match pos.side {
+                            Side::Long => Side::Short,
+                            Side::Short => Side::Long,
+                        };
+                        let close_req = OrderRequest {
+                            client_id: format!("aria-close-{}-{}", pos.symbol, Utc::now().timestamp_millis()),
+                            symbol: pos.symbol.clone(),
+                            side: close_side,
+                            size: pos.size,
+                            price: None,
+                            stop_price: None,
+                            stop_loss: 0.0,
+                            take_profit: 0.0,
+                            order_type: OrderType::Market,
+                            reduce_only: true,
+                        };
+                        if let Err(e) = exchange.place_order(&close_req).await {
+                            warn!(error = %e, symbol = %pos.symbol, "close order failed");
+                        }
+                        let pnl = crate::execution::position::pnl_usd(pos, mark);
+                        risk.on_position_closed(pnl);
+                        if let Some(closed) = book.close_by_id(&pos.client_id) {
+                            info!(
+                                symbol = %closed.symbol,
+                                side = %closed.side.as_str(),
+                                reason = "MANUAL(close)",
+                                entry = %format!("{:.4}", closed.entry_price),
+                                exit = %format!("{:.4}", mark),
+                                pnl_usd = %format!("{:+.4}", pnl),
                                 "execution: position closed"
                             );
                             bus_for_close.publish(AgentEvent::PositionClosed {

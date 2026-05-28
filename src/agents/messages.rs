@@ -159,6 +159,8 @@ pub enum ControlCommand {
     Unfreeze,
     /// Close every open position at market right now and freeze.
     FlatAll { reason: String },
+    /// Close a single position by symbol at market.
+    ClosePosition { symbol: String },
     /// Reset daily pnl counters (cron 00:00 UTC). Internal use.
     ResetDaily,
     /// External request to publish a fresh /status snapshot to Telegram.
