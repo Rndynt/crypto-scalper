@@ -78,19 +78,19 @@ impl StrategyHealth {
 
     pub fn should_disable(&self) -> bool {
         // Disable if:
-        // - 5+ loss streak
-        // - Win rate < 30% after 10+ trades
-        // - Total PnL < -$10 after 5+ trades
-        self.loss_streak >= 5
-            || (self.total_trades >= 10 && self.win_rate < 0.3)
-            || (self.total_trades >= 5 && self.total_pnl < -10.0)
+        // - 15+ loss streak (very aggressive failure)
+        // - Win rate < 15% after 20+ trades (clearly broken strategy)
+        // - Total PnL < -$50 after 10+ trades (significant losses)
+        self.loss_streak >= 15
+            || (self.total_trades >= 20 && self.win_rate < 0.15)
+            || (self.total_trades >= 10 && self.total_pnl < -50.0)
     }
 
     pub fn should_reduce_size(&self) -> bool {
         // Reduce size if:
-        // - 3+ loss streak
-        // - Win rate < 40% after 5+ trades
-        self.loss_streak >= 3 || (self.total_trades >= 5 && self.win_rate < 0.4)
+        // - 5+ loss streak
+        // - Win rate < 30% after 10+ trades
+        self.loss_streak >= 5 || (self.total_trades >= 10 && self.win_rate < 0.3)
     }
 
     pub fn size_multiplier(&self) -> f64 {

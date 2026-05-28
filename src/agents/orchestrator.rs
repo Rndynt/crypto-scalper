@@ -126,7 +126,7 @@ impl Default for OrchestratorConfig {
         Self {
             caution_score_threshold: 60,
             freeze_score_threshold: 30,
-            max_consecutive_losses: 5,
+            max_consecutive_losses: 10,
             min_win_rate: 40.0,
             lessons_injection_enabled: true,
             emergency_freeze_enabled: true,
@@ -212,14 +212,14 @@ pub fn spawn(
                     }
 
                     // Dynamic size multiplier based on survival
-                    state.size_multiplier = if surv.score >= 80 {
+                    state.size_multiplier = if surv.score >= 70 {
                         1.0
-                    } else if surv.score >= 60 {
-                        0.7
-                    } else if surv.score >= 40 {
-                        0.4
+                    } else if surv.score >= 50 {
+                        0.8
+                    } else if surv.score >= 30 {
+                        0.6
                     } else {
-                        0.2
+                        0.4
                     };
 
                     // Extra reduction for consecutive losses
