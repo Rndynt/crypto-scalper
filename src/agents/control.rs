@@ -395,7 +395,30 @@ async fn telegram_loop(
                                 &journal,
                             );
                             if !reply.is_empty() {
-                                send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                // Reattach inline keyboard buttons (same as text command path)
+                                let mut buttons = command_buttons(cmd);
+
+                                // Add close buttons for each open position
+                                if cmd == "/positions" || cmd == "positions" {
+                                    let positions = book.snapshot();
+                                    let mut close_row = Vec::new();
+                                    for p in &positions {
+                                        let sym = p.symbol.replace("USDT", "");
+                                        close_row.push(InlineButton {
+                                            text: format!("❌ Close {}", sym),
+                                            callback_data: format!("close_{}", sym.to_lowercase()),
+                                        });
+                                    }
+                                    if !close_row.is_empty() {
+                                        buttons.insert(0, close_row);
+                                    }
+                                }
+
+                                if !buttons.is_empty() {
+                                    send_telegram_html_with_buttons(&client, &token, &cb_chat, &reply, buttons).await;
+                                } else {
+                                    send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                }
                             }
                         }
 
@@ -1410,7 +1433,7 @@ fn cmd_survival(ctrl_state: &Arc<Mutex<ControlState>>) -> String {
         death = s.death_line_usd,
         pnl_sign = pnl_sign,
         pnl = s.realized_pnl_today,
-        pnl_pct = s.realized_pnl_today,
+        pnl_pct = if s.initial_equity_usd > 0.0 { s.realized_pnl_today / s.initial_equity_usd * 100.0 } else { 0.0 },
         dd = s.drawdown_pct,
         pos = s.open_positions,
         losses = s.consecutive_losses,

@@ -630,14 +630,21 @@ pub fn spawn(
 
                     let daily_pnl_sign = if daily_pnl >= 0.0 { "+" } else { "" };
 
+                    // Calculate ROE and margin (same logic as open notification)
+                    let notional = size * entry_price;
+                    let close_max_lev = max_leverage;
+                    let margin_usd = if close_max_lev > 0.0 { notional / close_max_lev } else { notional };
+                    let roe_pct = pnl_pct.abs() * close_max_lev; // ROE = price change × leverage
+
                     let msg = format!(
                         "{header}\n\
                          ──────────\n\
                          📊 <b>{side_label}</b> #{trade_no} · <code>{sym}</code>\n\
                          📍 Entry: <code>{entry:.4}</code>\n\
                          🏁 Exit:  <code>{exit:.4}</code>\n\
-                         💼 Size:  <code>{size:.4}</code> {sym_short}\n\
-                         {pnl_emoji} PnL:   <code>{pnl_sign}{pnl:.2}$</code> ({pnl_sign}{pnl_pct_val:.4}%)\n\
+                         💼 Size:  <code>{size:.4}</code> {sym_short} (<code>${notional:.2}</code>)\n\
+                         ⚡ Leverage: <code>{leverage:.0}x</code> · Margin: <code>${margin:.2}</code>\n\
+                         {pnl_emoji} PnL:   <code>{pnl_sign}{pnl:.2}$</code> ({pnl_sign}{pnl_pct_val:.4}% price · {pnl_sign}{roe:.2}% ROE)\n\
                          ⏱ Duration: <code>{duration}</code>\n\
                          {result_emoji} Result: <b>{result_text}</b>\n\
                          ──────────\n\
@@ -654,10 +661,14 @@ pub fn spawn(
                         exit = exit_price,
                         size = size,
                         sym_short = short_sym(&symbol),
+                        notional = notional,
+                        leverage = close_max_lev,
+                        margin = margin_usd,
                         pnl_emoji = pnl_emoji,
                         pnl_sign = pnl_sign,
                         pnl = pnl_usd,
                         pnl_pct_val = pnl_pct.abs(),
+                        roe = roe_pct,
                         duration = duration_str,
                         result_emoji = result_emoji,
                         result_text = result_text,
