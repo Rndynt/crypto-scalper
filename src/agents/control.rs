@@ -551,7 +551,7 @@ fn handle_command(
         "/status" | "status" => cmd_status(bus, risk, book, metrics),
         "/positions" | "positions" => {
             let prices = ctrl_state.lock().prices.clone();
-            cmd_positions(book, &prices)
+            cmd_positions(book, &prices, risk)
         }
         "/signals" | "signals" => cmd_signals(ctrl_state),
         "/performance" | "performance" => cmd_performance(risk, metrics, ctrl_state),
@@ -1020,7 +1020,7 @@ fn cmd_status(
     )
 }
 
-fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>) -> String {
+fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>, risk: &Arc<RiskManager>) -> String {
     let positions = book.snapshot();
     if positions.is_empty() {
         return "📭 <b>No open positions</b>\n🤖 ARIA v1.0".to_string();
@@ -1049,18 +1049,21 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>) -> Str
         // Current price and unrealized PnL
         let current = prices.get(&p.symbol).copied().unwrap_or(0.0);
         let (pnl_str, pnl_emoji, pnl_pct_str) = if current > 0.0 && p.entry_price > 0.0 {
-            let pnl_pct = match p.side {
+            let price_pct = match p.side {
                 crate::data::Side::Long => (current - p.entry_price) / p.entry_price * 100.0,
                 crate::data::Side::Short => (p.entry_price - current) / p.entry_price * 100.0,
             };
-            let pnl_usd = pnl_pct / 100.0 * p.size * p.entry_price;
+            let pnl_usd = price_pct / 100.0 * p.size * p.entry_price;
+            // ROE = price change × leverage
+            let max_lev = risk.limits().max_leverage as f64;
+            let roe_pct = price_pct * max_lev;
             total_pnl += pnl_usd;
             let sign = if pnl_usd >= 0.0 { "+" } else { "" };
             let emoji = if pnl_usd >= 0.0 { "📈" } else { "📉" };
             (
                 format!("{}{:.2}$", sign, pnl_usd),
                 emoji,
-                format!("({}{:.2}%)", sign, pnl_pct.abs()),
+                format!("({}{:.2}% ROE)", sign, roe_pct),
             )
         } else {
             ("—".to_string(), "⚪", "".to_string())
