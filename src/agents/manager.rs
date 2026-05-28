@@ -592,7 +592,8 @@ async fn call_manager_llm(
     } else {
         json!({
             "model": cfg.model,
-            "max_tokens": cfg.max_tokens,
+            "max_completion_tokens": cfg.max_tokens,
+            "thinking": { "type": "disabled" },
             "temperature": 0.2,
             "messages": [
                 {"role": "system", "content": MANAGER_SYSTEM_PROMPT},
@@ -607,7 +608,7 @@ async fn call_manager_llm(
             .header("x-api-key", &cfg.api_key)
             .header("anthropic-version", "2023-06-01");
     } else {
-        req = req.bearer_auth(&cfg.api_key);
+        req = req.header("api-key", &cfg.api_key);
         if let Some(r) = &cfg.http_referer {
             req = req.header("HTTP-Referer", r);
         }
@@ -624,12 +625,16 @@ async fn call_manager_llm(
     }
 
     // Both Anthropic and OpenAI-compatible put the text inside a known path.
+    // MiMo reasoning models may put the response in reasoning_content instead.
     let v: Value = serde_json::from_str(&raw)?;
     let text = if cfg.provider.eq_ignore_ascii_case("anthropic") {
         v["content"][0]["text"].as_str().unwrap_or("").to_string()
     } else {
-        v["choices"][0]["message"]["content"]
+        let msg = &v["choices"][0]["message"];
+        msg["content"]
             .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| msg["reasoning_content"].as_str())
             .unwrap_or("")
             .to_string()
     };
