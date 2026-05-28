@@ -237,11 +237,11 @@ pub fn spawn(
                         continue;
                     }
 
-                    // OVERRIDE: if LLM says NoGo but confidence >= 55, force Go
+                    // OVERRIDE: if LLM says NoGo but confidence >= 50, force Go
                     // (LLM reasoning models sometimes misclassify despite good signals)
                     let mut final_decision = llm_out.decision.clone();
                     if final_decision.decision == Decision::NoGo
-                        && final_decision.confidence >= 55
+                        && final_decision.confidence >= 50
                     {
                         info!(
                             symbol = %symbol,
