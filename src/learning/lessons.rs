@@ -118,8 +118,7 @@ impl LessonExtractor {
         let now = Utc::now();
         let mut out = Vec::new();
 
-        // 1. Drawdown cooldown — global pause if the last hour took a chunk
-        //    out of equity.
+        // 1. Drawdown cooldown — reduce size, NEVER block completely
         let dd_pct = mem.recent_hour_pnl / self.cfg.equity_for_drawdown * 100.0;
         if dd_pct <= self.cfg.drawdown_cooldown_pct && mem.recent_hour_trades >= 2 {
             out.push(Lesson {
@@ -127,18 +126,18 @@ impl LessonExtractor {
                 strategy: None,
                 regime: None,
                 symbol: None,
-                size_multiplier: 0.0,
-                ta_threshold_delta: 0,
-                llm_min_confidence_floor: None,
+                size_multiplier: 0.3,  // was 0.0 — reduce, don't kill
+                ta_threshold_delta: 10,
+                llm_min_confidence_floor: Some(65),
                 valid_until: now + chrono::Duration::minutes(self.cfg.drawdown_cooldown_minutes),
                 reason: format!(
-                    "{:.2}% drawdown in last 60 min over {} trades — cooling down",
+                    "{:.2}% drawdown in last 60 min over {} trades — size reduced",
                     dd_pct, mem.recent_hour_trades
                 ),
             });
         }
 
-        // 2. Per-(strategy, symbol) lose streak.
+        // 2. Per-(strategy, symbol) lose streak — reduce size, keep trading
         for ((strategy, symbol), s) in &mem.by_strategy_symbol {
             if s.recent_streak <= self.cfg.lose_streak_trigger {
                 out.push(Lesson {
@@ -146,13 +145,13 @@ impl LessonExtractor {
                     strategy: Some(strategy.clone()),
                     regime: None,
                     symbol: Some(symbol.clone()),
-                    size_multiplier: 0.0,
-                    ta_threshold_delta: 0,
-                    llm_min_confidence_floor: None,
+                    size_multiplier: 0.4,  // was 0.0 — reduce, don't kill
+                    ta_threshold_delta: 10,
+                    llm_min_confidence_floor: Some(65),
                     valid_until: now
                         + chrono::Duration::minutes(self.cfg.lose_streak_cooldown_minutes),
                     reason: format!(
-                        "lose-streak {} on {strategy}/{symbol} — pausing 30m",
+                        "lose-streak {} on {strategy}/{symbol} — size reduced",
                         s.recent_streak.abs()
                     ),
                 });
@@ -201,7 +200,7 @@ impl LessonExtractor {
             }
         }
 
-        // 4. (Strategy, regime) blacklist.
+        // 4. (Strategy, regime) derate — reduce size, never block
         for ((strategy, regime), s) in &mem.by_strategy_regime {
             if s.trades >= self.cfg.regime_blacklist_min_trades
                 && s.win_rate() < self.cfg.regime_blacklist_win_rate
@@ -211,12 +210,12 @@ impl LessonExtractor {
                     strategy: Some(strategy.clone()),
                     regime: Some(regime.clone()),
                     symbol: None,
-                    size_multiplier: 0.0,
-                    ta_threshold_delta: 0,
-                    llm_min_confidence_floor: None,
-                    valid_until: now + chrono::Duration::hours(12),
+                    size_multiplier: 0.2,  // was 0.0 — reduce, don't kill
+                    ta_threshold_delta: 15,
+                    llm_min_confidence_floor: Some(75),
+                    valid_until: now + chrono::Duration::hours(3),  // was 12h
                     reason: format!(
-                        "WR {:.1}% on {strategy} during {regime} ({} trades) — blacklist",
+                        "WR {:.1}% on {strategy} during {regime} ({} trades) — size reduced 3h",
                         s.win_rate() * 100.0,
                         s.trades
                     ),
@@ -247,7 +246,7 @@ impl LessonExtractor {
             });
         }
 
-        // 6. Per-symbol derate — losing money outright.
+        // 6. Per-symbol derate — reduce size, NEVER block completely
         for (symbol, s) in &mem.by_symbol {
             if s.trades >= self.cfg.min_trades_for_significance
                 && s.net_pnl_usd < 0.0
@@ -258,12 +257,12 @@ impl LessonExtractor {
                     strategy: None,
                     regime: None,
                     symbol: Some(symbol.clone()),
-                    size_multiplier: 0.0,
-                    ta_threshold_delta: 0,
-                    llm_min_confidence_floor: None,
-                    valid_until: now + chrono::Duration::hours(24),
+                    size_multiplier: 0.3,  // was 0.0 — reduce, don't kill
+                    ta_threshold_delta: 15,
+                    llm_min_confidence_floor: Some(70),
+                    valid_until: now + chrono::Duration::hours(4),  // was 24h
                     reason: format!(
-                        "{symbol} net {:+.2} over {} trades, WR {:.1}% — pause 24h",
+                        "{symbol} net {:+.2} over {} trades, WR {:.1}% — size reduced 4h",
                         s.net_pnl_usd,
                         s.trades,
                         s.win_rate() * 100.0

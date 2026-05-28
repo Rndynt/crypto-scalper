@@ -295,13 +295,13 @@ fn on_position_closed(inner: &Arc<Mutex<SurvivalInner>>, pnl: f64, cfg: &Surviva
                 ));
             }
         }
-        // Daily-loss-count cooldown (e.g. 10 losses today → freeze 24h).
+        // Daily-loss-count cooldown — reduce size, NOT freeze (owner must approve freeze)
         if g.daily_loss_count >= cfg.daily_loss_count {
-            let until = now + ChronoDuration::hours(24);
+            let until = now + ChronoDuration::hours(2);  // was 24h — just cooldown, not death
             if g.cooldown_until.map(|t| t < until).unwrap_or(true) {
                 g.cooldown_until = Some(until);
                 g.cooldown_reason =
-                    Some(format!("{} losses today — pausing 24h", g.daily_loss_count));
+                    Some(format!("{} losses today — defensive mode 2h", g.daily_loss_count));
             }
         }
     } else {
@@ -449,9 +449,11 @@ fn recompute(
     let score_clamped = score.clamp(0, 100) as u8;
     let mode = if snap.equity <= death_line {
         SurvivalMode::Dead
-    } else if in_cooldown || ratchet_locked || score_clamped < 15 {
-        SurvivalMode::Frozen
-    } else if score_clamped < 35 {
+    } else if score_clamped < 15 {
+        // Very low survival score — defensive, NOT frozen
+        // Bot must keep trading to recover. Only death-line freezes.
+        SurvivalMode::Defensive
+    } else if in_cooldown || ratchet_locked || score_clamped < 35 {
         SurvivalMode::Defensive
     } else if score_clamped < 65 {
         SurvivalMode::Cautious
@@ -490,17 +492,27 @@ fn recompute(
 fn apply_state(risk: &Arc<RiskManager>, state: &SurvivalState) {
     risk.set_size_multiplier(state.size_multiplier);
     match state.mode {
-        SurvivalMode::Frozen | SurvivalMode::Dead => {
+        SurvivalMode::Dead => {
+            // Only death-line breach auto-freezes. Owner can also manual freeze via /freeze.
             risk.freeze(format!(
-                "survival mode {} (score {})",
+                "survival mode {} (score {}) — death line breached",
                 state.mode.as_str(),
                 state.score
             ));
         }
-        _ => {
-            // Only auto-unfreeze if the only reason we were frozen is
-            // a stale survival lock — leave manual freezes in place.
+        SurvivalMode::Frozen => {
+            // Frozen mode should NOT exist in normal operation anymore.
+            // If somehow entered, treat as Defensive (reduce size, don't freeze).
+            risk.set_size_multiplier(0.3);
             if risk.is_frozen() {
+                // Only unfreeze if it was a survival auto-freeze, not manual
+                risk.unfreeze();
+            }
+        }
+        _ => {
+            // Cooldown/Defensive/Cautious/Healthy — just reduce size, keep trading
+            if risk.is_frozen() {
+                // Only auto-unfreeze stale survival locks, leave manual freezes
                 risk.unfreeze();
             }
         }
