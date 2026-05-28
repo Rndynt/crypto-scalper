@@ -548,6 +548,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         Arc::clone(&metrics),
         Arc::clone(&journal),
         Arc::clone(&telegram),
+        cfg.risk.max_leverage as f64,
     );
     let _learning = crypto_scalper::agents::learning::spawn(
         bus.clone(),

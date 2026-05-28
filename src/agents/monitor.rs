@@ -179,6 +179,7 @@ pub fn spawn(
     metrics: Arc<MetricsState>,
     journal: Arc<TradeJournal>,
     telegram: Arc<TelegramNotifier>,
+    max_leverage: f64,
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
     let last_brain: Arc<PlMutex<HashMap<String, BrainOutcome>>> =
@@ -532,7 +533,7 @@ pub fn spawn(
                         short_sym(&symbol),
                         &strategy,
                         brain.as_ref(),
-                        100.0, // max_leverage from config
+                        max_leverage,
                     );
                     let _ = telegram.send(&msg).await;
                 }
