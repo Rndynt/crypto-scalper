@@ -772,3 +772,4 @@ async fn recover_protection_prices(
     }
     (stop_loss, take_profit)
 }
+
