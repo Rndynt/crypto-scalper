@@ -39,7 +39,7 @@ fast_approve_min_conf = 50
 fail_open_on_error    = true
 
 [risk]
-equity_usd                = 1000.0    # realistic sim equity
+equity_usd                = 300.0     # reset equity
 risk_per_trade_pct        = 1.0       # 1% per trade = $10 risk — safe
 max_open_positions        = 3
 max_daily_loss_pct        = 5.0
