@@ -90,7 +90,7 @@ pub struct LessonConfig {
 impl Default for LessonConfig {
     fn default() -> Self {
         Self {
-            min_trades_for_significance: 15,
+            min_trades_for_significance: 30,
             lose_streak_trigger: -8,
             lose_streak_cooldown_minutes: 15,
             derate_win_rate: 0.35,
