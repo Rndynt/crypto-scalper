@@ -141,17 +141,17 @@ pub fn spawn(
                         }
                     };
 
-                    // Apply LLM position sizing recommendation
-                    // High conviction = larger size, Low conviction = smaller size
-                    let llm_size_pct = llm_out.decision.position_size_pct.clamp(0.1, 1.0);
-                    let adjusted_size = risk.size * llm_size_pct;
+                    // Risk engine already calculates optimal size using
+                    // survival score, learning policy, quant engine (Kelly, vol-target, VaR).
+                    // Brain LLM should NOT further reduce size — it only decides GO/NOGO.
+                    // Use risk.size directly (already well-calibrated).
+                    let adjusted_size = risk.size;
 
                     info!(
                         symbol = %symbol,
                         risk_size = risk.size,
-                        llm_size_pct = llm_size_pct,
                         adjusted_size = adjusted_size,
-                        "brain: position sizing applied"
+                        "brain: position sizing (risk engine direct)"
                     );
 
                     // Update risk size with LLM-adjusted size

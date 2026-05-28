@@ -268,11 +268,11 @@ pub fn spawn(
                         policy.evaluate(signal.strategy.as_str(), regime.as_str(), &signal.symbol);
                     // Adaptive portfolio risk budget based on current load.
                     let open_n = open_symbols.lock().len() as f64;
-                    let load_mult = if open_n >= 3.0 {
-                        0.55
+                    let load_mult = if open_n >= 5.0 {
+                        0.70
+                    } else if open_n >= 3.0 {
+                        0.80
                     } else if open_n >= 2.0 {
-                        0.75
-                    } else if open_n >= 1.0 {
                         0.90
                     } else {
                         1.0

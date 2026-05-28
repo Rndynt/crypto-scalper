@@ -525,7 +525,7 @@ impl From<ManagerActionDe> for ManagerAction {
                 tp_offset_bps,
                 reason,
             } => ManagerAction::Adjust {
-                size_multiplier: size_multiplier.unwrap_or(1.0).clamp(0.1, 1.5),
+                size_multiplier: size_multiplier.unwrap_or(1.0).clamp(0.5, 1.5),
                 sl_offset_bps: sl_offset_bps.unwrap_or(0.0).clamp(-50.0, 50.0),
                 tp_offset_bps: tp_offset_bps.unwrap_or(0.0).clamp(-50.0, 50.0),
                 reason,

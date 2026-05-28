@@ -449,11 +449,11 @@ fn recompute(
     let score_clamped = score.clamp(0, 100) as u8;
     let mode = if snap.equity <= death_line {
         SurvivalMode::Dead
-    } else if in_cooldown || ratchet_locked || score_clamped < 25 {
+    } else if in_cooldown || ratchet_locked || score_clamped < 15 {
         SurvivalMode::Frozen
-    } else if score_clamped < 50 {
+    } else if score_clamped < 35 {
         SurvivalMode::Defensive
-    } else if score_clamped < 80 {
+    } else if score_clamped < 65 {
         SurvivalMode::Cautious
     } else {
         SurvivalMode::Healthy
