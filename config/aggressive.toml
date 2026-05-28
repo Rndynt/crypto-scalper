@@ -13,7 +13,7 @@ timeframes = ["1m", "5m", "15m"]
 [strategy]
 mode                = "adaptive"
 active              = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
-min_ta_confidence   = 55
+min_ta_confidence   = 45
 paper_scout_enabled = true        # fallback signal generator while quant strategies warm up
 
 [advanced_alpha]

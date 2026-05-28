@@ -91,7 +91,7 @@ impl Default for LessonConfig {
     fn default() -> Self {
         Self {
             min_trades_for_significance: 8,
-            lose_streak_trigger: -3,
+            lose_streak_trigger: -5,
             lose_streak_cooldown_minutes: 30,
             derate_win_rate: 0.35,
             boost_win_rate: 0.65,
