@@ -44,7 +44,7 @@ risk_per_trade_pct        = 1.0       # 1% per trade = $10 risk — safe
 max_open_positions        = 3
 max_daily_loss_pct        = 5.0
 max_drawdown_pct          = 10.0
-max_leverage              = 10        # 10x paper mode — not 100x until proven profitable
+max_leverage              = 100       # 100x — change dynamically via /leverage
 max_spread_pct            = 0.1
 min_reward_risk           = 1.0       # scalping-friendly: allow 1:1 setups
 min_net_edge_bps          = 0.0

@@ -115,6 +115,11 @@ impl RiskManager {
 
     /// SurvivalAgent calls this to scale all future trade sizing
     /// (multiplier ∈ [0.0, 2.0] with 0.0 meaning "do not size at all").
+    pub fn set_max_leverage(&self, leverage: u32) {
+        let mut i = self.inner.lock();
+        i.limits.max_leverage = leverage.max(1);
+    }
+
     pub fn set_size_multiplier(&self, m: f64) {
         let mut i = self.inner.lock();
         i.size_multiplier = m.clamp(0.0, 2.0);

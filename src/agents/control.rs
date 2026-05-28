@@ -563,7 +563,8 @@ fn handle_command(
         "/brain" | "brain" => cmd_brain(ctrl_state),
         "/risk" | "risk" => cmd_risk(risk),
         "/history" | "history" => cmd_history(journal),
-        "/leverage" | "leverage" => cmd_leverage(risk),
+        "/leverage" | "leverage" if !cmd.contains(' ') => cmd_leverage(risk, ""),
+        _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -1082,12 +1083,15 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>) -> Str
             String::new()
         };
 
+        // Notional value in USD
+        let notional_usd = p.size * p.entry_price;
+
         lines.push(format!(
             "{side_emoji} <b>#{idx} {sym}</b> — {side_label}{trailing}{be}\n\
              ├ Entry: <code>{entry:.4}</code>\n\
              {price_line}\
              ├ SL: <code>{sl:.4}</code> · TP: <code>{tp:.4}</code>\n\
-             ├ Size: <code>{size:.4}</code>\n\
+             ├ Size: <code>{size:.4}</code> ({notional:.2}$)\n\
              ├ {pnl_emoji} PnL: <code>{pnl}</code> {pnl_pct}\n\
              └ Duration: <code>{duration}</code> · Opened: <code>{opened}</code>",
             idx = i + 1,
@@ -1097,6 +1101,7 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>) -> Str
             sl = p.stop_loss,
             tp = p.take_profit,
             size = p.size,
+            notional = notional_usd,
             pnl_emoji = pnl_emoji,
             pnl = pnl_str,
             pnl_pct = pnl_pct_str,
@@ -1547,33 +1552,65 @@ fn cmd_history(journal: &Option<Arc<TradeJournal>>) -> String {
     )
 }
 
-fn cmd_leverage(risk: &Arc<RiskManager>) -> String {
+fn cmd_leverage(risk: &Arc<RiskManager>, args: &str) -> String {
     let limits = risk.limits();
     let current = limits.max_leverage;
 
-    format!(
-        "⚙ <b>Leverage Settings</b>\n\
-         ──────────\n\
-         📊 Current Max Leverage: <code>{current}x</code>\n\
-         \n\
-         ⚡ <b>Quick Presets</b>\n\
-         ├ 🟢 <code>20x</code> — Conservative\n\
-         ├ 🟡 <code>50x</code> — Moderate\n\
-         ├ 🟠 <code>75x</code> — Aggressive\n\
-         └ 🔴 <code>100x</code> — Maximum HFT\n\
-         \n\
-         📐 <b>SL/TP at {current}x</b>\n\
-         ├ SL 0.3% = <code>{sl_loss:.1}%</code> position loss\n\
-         ├ TP 0.6% = <code>{tp_gain:.1}%</code> position gain\n\
-         └ R:R = <code>1:2.0</code>\n\
-         \n\
-         💡 To change: edit <code>max_leverage</code> in config TOML\n\
-         \n\
-         🤖 ARIA v1.0",
-        current = current,
-        sl_loss = 0.3 * current as f64,
-        tp_gain = 0.6 * current as f64,
-    )
+    // Parse new leverage from args: "/leverage 100" or "leverage 100"
+    let new_lev = args
+        .split_whitespace()
+        .last()
+        .and_then(|s| s.parse::<u32>().ok());
+
+    if let Some(lev) = new_lev {
+        if lev < 1 || lev > 200 {
+            return format!(
+                "⚠ Leverage must be 1-200x. You entered: <code>{}</code>\n🤖 ARIA v1.0",
+                lev
+            );
+        }
+        risk.set_max_leverage(lev);
+        format!(
+            "✅ <b>Leverage Updated</b>\n\
+             ──────────\n\
+             ⚡ Max Leverage: <code>{old}x</code> → <code>{new}x</code>\n\
+             \n\
+             📐 <b>Impact at {new}x</b>\n\
+             ├ SL 0.3% = <code>{sl_loss:.1}%</code> position loss\n\
+             ├ TP 0.6% = <code>{tp_gain:.1}%</code> position gain\n\
+             └ Max notional = equity × {new}\n\
+             \n\
+             🤖 ARIA v1.0",
+            old = current,
+            new = lev,
+            sl_loss = 0.3 * lev as f64,
+            tp_gain = 0.6 * lev as f64,
+        )
+    } else {
+        format!(
+            "⚙ <b>Leverage Settings</b>\n\
+             ──────────\n\
+             📊 Current Max Leverage: <code>{current}x</code>\n\
+             \n\
+             ⚡ <b>Quick Presets</b>\n\
+             ├ 🟢 <code>20x</code> — Conservative\n\
+             ├ 🟡 <code>50x</code> — Moderate\n\
+             ├ 🟠 <code>75x</code> — Aggressive\n\
+             └ 🔴 <code>100x</code> — Maximum HFT\n\
+             \n\
+             📐 <b>SL/TP at {current}x</b>\n\
+             ├ SL 0.3% = <code>{sl_loss:.1}%</code> position loss\n\
+             ├ TP 0.6% = <code>{tp_gain:.1}%</code> position gain\n\
+             └ R:R = <code>1:2.0</code>\n\
+             \n\
+             💡 To change: <code>/leverage 100</code>\n\
+             \n\
+             🤖 ARIA v1.0",
+            current = current,
+            sl_loss = 0.3 * current as f64,
+            tp_gain = 0.6 * current as f64,
+        )
+    }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
