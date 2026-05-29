@@ -972,26 +972,8 @@ async fn send_signal_notification(
             &chart_candles,
         )?;
 
-        // Compact caption (Telegram limit 1024 chars) — chart shows entry/SL/TP visually
-        let short = brain.signal.symbol.replace("USDT", "");
-        let side_str = if brain.signal.side == crate::data::Side::Long { "📈 LONG" } else { "📉 SHORT" };
-        let summary = truncate(&brain.decision.reasoning.summary, 120);
-        let caption = format!(
-            "🔔 <b>SIGNAL</b> · {} <b>{}</b> · {} {}\n\
-             🎯 Conf: <code>{}%</code> · Strategy: <code>{}</code> · Regime: <code>{}</code>\n\
-             💰 Entry <code>{:.4}</code> · SL <code>{:.4}</code> · TP <code>{:.4}</code> · R:R <code>1:{:.1}</code>\n\
-             🧠 <i>{}</i>",
-            side_str, short,
-            if brain.decision.decision == Decision::Go { "✅ GO" } else { "⏳ WAIT" },
-            if brain.offline_fallback { "⚠" } else { "" },
-            brain.decision.confidence,
-            brain.signal.strategy.as_str(),
-            brain.regime.as_str(),
-            brain.signal.entry, brain.signal.stop_loss, brain.signal.take_profit,
-            brain.signal.rr(),
-            html_escape(&summary),
-        );
-        telegram.send_photo(&img, &caption).await?;
+        // Full signal text as caption
+        telegram.send_photo(&img, &msg).await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
     .await;
