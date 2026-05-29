@@ -951,11 +951,8 @@ async fn send_signal_notification(
         latency = brain.latency_ms,
         fallback = fallback,
     );
-    let _ = telegram.send_signal(&msg).await;
-
-    // ─── Generate and send chart image ─────────────────────
+    // ─── Generate chart and send as single photo message ────
     let chart_result = async {
-        // Fetch last 100 5m candles from Binance
         let candles = chart::fetch_klines(http_client, &brain.signal.symbol, "5m", 100).await?;
         let chart_candles: Vec<chart::ChartCandle> = candles.iter().map(|c| chart::ChartCandle {
             open_time: c.open_time,
@@ -975,22 +972,34 @@ async fn send_signal_notification(
             &chart_candles,
         )?;
 
-        // Build caption
+        // Compact caption (Telegram limit 1024 chars) — chart shows entry/SL/TP visually
         let short = brain.signal.symbol.replace("USDT", "");
-        let side_emoji = if brain.signal.side == crate::data::Side::Long { "📈" } else { "📉" };
+        let side_str = if brain.signal.side == crate::data::Side::Long { "📈 LONG" } else { "📉 SHORT" };
+        let summary = truncate(&brain.decision.reasoning.summary, 120);
         let caption = format!(
-            "{} {} {} · Entry <code>{:.4}</code> · SL <code>{:.4}</code> · TP <code>{:.4}</code>",
-            side_emoji, short,
-            if brain.signal.side == crate::data::Side::Long { "LONG" } else { "SHORT" },
+            "🔔 <b>SIGNAL</b> · {} <b>{}</b> · {} {}\n\
+             🎯 Conf: <code>{}%</code> · Strategy: <code>{}</code> · Regime: <code>{}</code>\n\
+             💰 Entry <code>{:.4}</code> · SL <code>{:.4}</code> · TP <code>{:.4}</code> · R:R <code>1:{:.1}</code>\n\
+             🧠 <i>{}</i>",
+            side_str, short,
+            if brain.decision.decision == Decision::Go { "✅ GO" } else { "⏳ WAIT" },
+            if brain.offline_fallback { "⚠" } else { "" },
+            brain.decision.confidence,
+            brain.signal.strategy.as_str(),
+            brain.regime.as_str(),
             brain.signal.entry, brain.signal.stop_loss, brain.signal.take_profit,
+            brain.signal.rr(),
+            html_escape(&summary),
         );
         telegram.send_photo(&img, &caption).await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
     .await;
 
+    // Fallback: if chart fails, send full text only
     if let Err(e) = chart_result {
-        warn!("chart generation/send failed: {}", e);
+        warn!("chart generation/send failed: {} — sending text only", e);
+        let _ = telegram.send_signal(&msg).await;
     }
 }
 
