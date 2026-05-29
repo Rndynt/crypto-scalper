@@ -331,16 +331,10 @@ impl RiskManager {
                 ));
             }
         }
-        let risk_amount = i.limits.min_margin_usd;
+        let margin = i.equity * i.limits.risk_per_trade_pct / 100.0;
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
-        let size = if risk_amount > 0.0 {
-            let notional = risk_amount * i.limits.max_leverage as f64;
-            (notional / entry.max(1e-9)).min(leverage_cap).max(0.0)
-        } else {
-            let risk_pct = i.equity * i.limits.risk_per_trade_pct / 100.0;
-            let risk_size = risk_pct / risk_per_unit;
-            risk_size.min(leverage_cap).max(0.0)
-        };
+        let notional = margin * i.limits.max_leverage as f64;
+        let size = (notional / entry.max(1e-9)).min(leverage_cap).max(0.0);
         // For HFT scalping: skip the net edge gate entirely when
         // min_net_edge_bps <= 0.  The reward/risk check above already
         // ensures positive expected value.  The TCM round-trip cost
@@ -361,13 +355,16 @@ impl RiskManager {
         Ok(())
     }
 
-    /// Calculate qty from fixed margin target.
-    /// size = (min_margin_usd × max_leverage) / entry
-    /// Gives consistent margin regardless of SL distance.
+    /// Calculate qty from equity × risk% as margin target.
+    /// size = (equity × risk_per_trade_pct% × max_leverage) / entry
+    /// Gives consistent margin based on config risk setting.
     pub fn calculate_size(&self, entry: f64, _stop_loss: f64) -> f64 {
         let i = self.inner.lock();
-        let margin = i.limits.min_margin_usd;
-        if margin <= 0.0 || entry <= 0.0 {
+        if entry <= 0.0 {
+            return 0.0;
+        }
+        let margin = i.equity * i.limits.risk_per_trade_pct / 100.0;
+        if margin <= 0.0 {
             return 0.0;
         }
         let notional = margin * i.limits.max_leverage as f64;
@@ -461,8 +458,8 @@ mod tests {
     fn size_calculation() {
         let r = RiskManager::new(default_limits(), 10_000.0);
         let size = r.calculate_size(100.0, 99.0);
-        // fixed margin: 6.0 * 5 leverage / 100 entry = 0.3
-        approx::assert_abs_diff_eq!(size, 0.3, epsilon = 1e-6);
+        // equity 10000 * 1% = $100 margin; notional = 100 * 5 = 500; qty = 500/100 = 5.0
+        approx::assert_abs_diff_eq!(size, 5.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -531,12 +528,13 @@ mod tests {
     fn size_respects_leverage_cap() {
         let mut limits = default_limits();
         limits.max_leverage = 1; // only 1x
-        limits.min_margin_usd = 6.0;
+        limits.risk_per_trade_pct = 1.0;
         let r = RiskManager::new(limits, 1000.0);
         let size = r.calculate_size(100.0, 99.0);
-        // leverage_cap = 1000 * 1 / 100 = 10, margin-based = 6 * 1 / 100 = 0.06
-        // min(0.06, 10) = 0.06
-        approx::assert_abs_diff_eq!(size, 0.06, epsilon = 1e-6);
+        // margin = 1000 * 1% = $10; notional = 10 * 1 = 10; qty = 10/100 = 0.1
+        // leverage_cap = 1000 * 1 / 100 = 10
+        // min(0.1, 10) = 0.1
+        approx::assert_abs_diff_eq!(size, 0.1, epsilon = 1e-6);
     }
 
     #[test]
