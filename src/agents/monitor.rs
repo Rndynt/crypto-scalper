@@ -951,7 +951,7 @@ async fn send_signal_notification(
         latency = brain.latency_ms,
         fallback = fallback,
     );
-    // ─── Generate chart and send as single photo message ────
+    // ─── Generate chart and send as single message ───────────
     let chart_result = async {
         let candles = chart::fetch_klines(http_client, &brain.signal.symbol, "5m", 100).await?;
         let chart_candles: Vec<chart::ChartCandle> = candles.iter().map(|c| chart::ChartCandle {
@@ -972,13 +972,25 @@ async fn send_signal_notification(
             &chart_candles,
         )?;
 
-        // Full signal text as caption
-        telegram.send_photo(&img, &msg).await?;
+        // Telegram caption limit = 1024 chars. Signal text is longer.
+        // Send photo first, then reply with full text — visually 1 message.
+        let short = brain.signal.symbol.replace("USDT", "");
+        let side_str = if brain.signal.side == crate::data::Side::Long { "📈" } else { "📉" };
+        let photo_caption = format!(
+            "{} {} {} · Entry <code>{:.4}</code> · SL <code>{:.4}</code> · TP <code>{:.4}</code>",
+            side_str, short,
+            if brain.signal.side == crate::data::Side::Long { "LONG" } else { "SHORT" },
+            brain.signal.entry, brain.signal.stop_loss, brain.signal.take_profit,
+        );
+        // send_photo returns message_id for reply threading
+        let msg_id = telegram.send_photo_get_id(&img, &photo_caption).await;
+        // Send full signal text as reply to the chart photo
+        telegram.send_signal_reply(&msg, msg_id).await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
     .await;
 
-    // Fallback: if chart fails, send full text only
+    // Fallback: if chart fails, send text only
     if let Err(e) = chart_result {
         warn!("chart generation/send failed: {} — sending text only", e);
         let _ = telegram.send_signal(&msg).await;
