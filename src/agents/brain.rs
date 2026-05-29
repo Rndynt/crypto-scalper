@@ -4,7 +4,7 @@
 
 use crate::agents::MessageBus;
 use crate::agents::messages::{
-    AgentEvent, AgentId, BrainOutcome, FeedsSnapshotMsg, ManagerProposal, RiskOutcome,
+    AgentEvent, AgentId, BrainOutcome, FeedsSnapshotMsg, RiskOutcome,
 };
 use crate::feeds::ExternalSnapshot;
 use crate::learning::LearningPolicy;
@@ -163,18 +163,33 @@ pub fn spawn(
                     let final_tp = llm_out.decision.tp_adjustment.unwrap_or(signal.take_profit);
                     let final_entry = llm_out.decision.entry_price.unwrap_or(signal.entry);
 
-                    let _proposal = ManagerProposal {
-                        symbol: symbol.clone(),
-                        side: signal.side,
-                        strategy: signal.strategy.as_str().to_string(),
-                        regime: regime.as_str().to_string(),
-                        entry: final_entry,
-                        stop_loss: final_sl,
-                        take_profit: final_tp,
-                        size: adjusted_size,
-                        ta_confidence: signal.ta_confidence,
-                        llm_confidence: llm_out.decision.confidence,
+                    // Validate LLM-adjusted SL/TP geometry — reject if wrong side of entry
+                    let geometry_ok = match signal.side {
+                        crate::data::Side::Long => final_sl < final_entry && final_tp > final_entry,
+                        crate::data::Side::Short => final_sl > final_entry && final_tp < final_entry,
                     };
+                    if !geometry_ok {
+                        info!(
+                            symbol = %symbol,
+                            sl = final_sl, tp = final_tp, entry = final_entry,
+                            side = %signal.side.as_str(),
+                            "brain: REJECTED — LLM-adjusted SL/TP geometry invalid"
+                        );
+                        continue;
+                    }
+
+                    // Validate minimum R:R after LLM adjustment
+                    let risk_dist = (final_entry - final_sl).abs();
+                    let reward_dist = (final_tp - final_entry).abs();
+                    let rr = if risk_dist > 0.0 { reward_dist / risk_dist } else { 0.0 };
+                    if rr < 0.8 {
+                        info!(
+                            symbol = %symbol,
+                            rr = %format!("{:.2}", rr),
+                            "brain: REJECTED — LLM-adjusted SL/TP gives R:R < 0.8"
+                        );
+                        continue;
+                    }
 
                     info!(
                         symbol = %symbol,
@@ -237,19 +252,7 @@ pub fn spawn(
                         continue;
                     }
 
-                    // OVERRIDE: if LLM says NoGo but confidence >= 50, force Go
-                    // (LLM reasoning models sometimes misclassify despite good signals)
-                    let mut final_decision = llm_out.decision.clone();
-                    if final_decision.decision == Decision::NoGo
-                        && final_decision.confidence >= 50
-                    {
-                        info!(
-                            symbol = %symbol,
-                            confidence = final_decision.confidence,
-                            "brain: OVERRIDE — LLM said NoGo but confidence >= 55, forcing Go"
-                        );
-                        final_decision.decision = Decision::Go;
-                    }
+                    let final_decision = llm_out.decision.clone();
 
                     // REJECT if not Go
                     if final_decision.decision != Decision::Go {

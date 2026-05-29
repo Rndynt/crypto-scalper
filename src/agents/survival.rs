@@ -14,7 +14,7 @@
 //!    streaks, news regime, and equity floor proximity into a single
 //!    fitness score. Translate to `SurvivalMode` and `size_multiplier`.
 //! 3. **Cooldown enforcement**: 3-loss / 30-min, 5-loss-in-1h / 4-h,
-//!    10 daily losses / 24-h. While a cooldown is active, mode = Frozen.
+//!    10 daily losses / 24-h. While a cooldown is active, mode = Defensive.
 //! 4. **Death detection**: if equity ≤ initial × `death_line_pct`,
 //!    auto-flat all positions (broadcast `ControlCommand::FlatAll`),
 //!    set mode = Dead, freeze the [`RiskManager`].
@@ -61,7 +61,7 @@ struct SurvivalInner {
     /// Last computed state — re-broadcast on every refresh tick.
     last_state: Option<SurvivalState>,
     /// PnL history for Monte Carlo drawdown CI (last 200 trades).
-    pnl_history: Vec<f64>,
+    pnl_history: VecDeque<f64>,
 }
 
 pub struct SurvivalAgentDeps {
@@ -246,9 +246,9 @@ fn on_position_closed(inner: &Arc<Mutex<SurvivalInner>>, pnl: f64, cfg: &Surviva
 
     g.daily_pnl += pnl;
     g.recent_closes.push_back((now, pnl));
-    g.pnl_history.push(pnl);
+    g.pnl_history.push_back(pnl);
     if g.pnl_history.len() > 200 {
-        g.pnl_history.remove(0);
+        g.pnl_history.pop_front(); // O(1)
     }
     while let Some((t, _)) = g.recent_closes.front() {
         if (now - *t) > ChronoDuration::hours(24) {
@@ -419,13 +419,14 @@ fn recompute(
         0.0
     };
     let mut ratchet_locked = false;
-    if realized_pct >= cfg.daily_pnl_ratchet_pct {
-        let lock_floor = snap.realized_pnl_today * 0.5;
-        if snap.realized_pnl_today < lock_floor {
+    if realized_pct >= cfg.daily_pnl_ratchet_pct && g.daily_pnl > 0.0 {
+        let protected_amount = g.daily_pnl * 0.5;
+        let equity_floor = g.daily_peak_equity - protected_amount;
+        if snap.equity < equity_floor {
             ratchet_locked = true;
             reasons.push(format!(
-                "ratchet locked: daily PnL ${:.2} < lock ${:.2}",
-                snap.realized_pnl_today, lock_floor
+                "ratchet: equity ${:.2} < floor ${:.2} (protecting 50% of ${:.2} daily gain)",
+                snap.equity, equity_floor, g.daily_pnl
             ));
         }
     }
@@ -434,7 +435,8 @@ fn recompute(
     // trade history. If P95 drawdown exceeds the auto-flat threshold,
     // proactively reduce the survival score.
     if g.pnl_history.len() >= 20 {
-        if let Some(mc) = drawdown_confidence_intervals(&g.pnl_history, 100) {
+        let pnl_slice: Vec<f64> = g.pnl_history.iter().copied().collect();
+        if let Some(mc) = drawdown_confidence_intervals(&pnl_slice, 100) {
             if mc.p95 > cfg.auto_flat_drawdown_pct {
                 let penalty = ((mc.p95 - cfg.auto_flat_drawdown_pct) * 5.0).min(20.0) as i32;
                 score -= penalty;
@@ -501,13 +503,9 @@ fn apply_state(risk: &Arc<RiskManager>, state: &SurvivalState) {
             ));
         }
         SurvivalMode::Frozen => {
-            // Frozen mode should NOT exist in normal operation anymore.
-            // If somehow entered, treat as Defensive (reduce size, don't freeze).
-            risk.set_size_multiplier(0.3);
-            if risk.is_frozen() {
-                // Only unfreeze if it was a survival auto-freeze, not manual
-                risk.unfreeze();
-            }
+            // Full stop — no new positions allowed.
+            risk.set_size_multiplier(0.0);
+            risk.freeze("survival: Frozen mode active");
         }
         _ => {
             // Cooldown/Defensive/Cautious/Healthy — just reduce size, keep trading
@@ -596,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn cooldown_forces_frozen_mode() {
+    fn cooldown_forces_defensive_mode() {
         let cfg = cfg();
         let inner = inner();
         on_position_closed(&inner, -10.0, &cfg);
@@ -605,6 +603,8 @@ mod tests {
         let risk = Arc::new(RiskManager::new(limits(), 1000.0));
         risk.on_position_closed(-30.0);
         let s = recompute(&inner, &risk, &cfg, 1000.0);
-        assert!(matches!(s.mode, SurvivalMode::Frozen));
+        // Cooldown active → Defensive (not Frozen — Frozen only via apply_state manually)
+        assert!(matches!(s.mode, SurvivalMode::Defensive | SurvivalMode::Cautious));
+        assert!(s.size_multiplier <= 0.6);
     }
 }

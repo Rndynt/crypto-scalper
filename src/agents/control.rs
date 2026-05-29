@@ -53,6 +53,8 @@ pub struct ControlAgentDeps {
     pub survival_state: Arc<RwLock<Option<SurvivalState>>>,
     /// Trade journal for /history command.
     pub journal: Option<Arc<TradeJournal>>,
+    /// Initial equity from config, used for /reset command.
+    pub initial_equity: f64,
 }
 
 /// State tracked by the control agent from bus events.
@@ -63,6 +65,8 @@ struct ControlState {
     survival: Option<SurvivalState>,
     /// Latest mid-prices by symbol (updated from L2 events).
     prices: HashMap<String, f64>,
+    /// Initial equity from config, used for /reset command.
+    initial_equity: f64,
 }
 
 pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
@@ -80,6 +84,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         metrics,
         survival_state,
         journal,
+        initial_equity,
     } = deps;
 
     let allowed: HashSet<i64> = cfg.allowed_user_ids.iter().copied().collect();
@@ -89,6 +94,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         recent_brains: Vec::new(),
         survival: None,
         prices: HashMap::new(),
+        initial_equity,
     }));
 
     // Bus subscriber to track brain outcomes and survival updates.
@@ -683,7 +689,10 @@ fn handle_command(
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
         "/config" | "config" => cmd_config(risk),
         "/lessons" | "lessons" => cmd_lessons(),
-        "/reset" | "reset" => cmd_reset(risk, book, bus),
+        "/reset" | "reset" => {
+            let initial_equity = ctrl_state.lock().initial_equity;
+            cmd_reset(risk, book, bus, initial_equity)
+        }
         "/help" | "help" | "/start" | "start" => cmd_help(),
         _ => String::new(),
     }
@@ -721,7 +730,12 @@ fn cmd_help() -> String {
         .to_string()
 }
 
-fn cmd_reset(risk: &Arc<RiskManager>, book: &Arc<PositionBook>, bus: &MessageBus) -> String {
+fn cmd_reset(
+    risk: &Arc<RiskManager>,
+    book: &Arc<PositionBook>,
+    bus: &MessageBus,
+    initial_equity: f64,
+) -> String {
     // 1. Close all positions
     let positions = book.snapshot();
     let pos_count = positions.len();
@@ -729,8 +743,8 @@ fn cmd_reset(risk: &Arc<RiskManager>, book: &Arc<PositionBook>, bus: &MessageBus
         book.close(&p.client_id);
     }
 
-    // 2. Reset equity to config value (300.0)
-    risk.set_equity(300.0);
+    // 2. Reset equity to configured initial value (not hardcoded)
+    risk.set_equity(initial_equity);
 
     // 3. Clear learning state
     let _ = std::fs::remove_file("data/learning_state.json");
@@ -744,7 +758,7 @@ fn cmd_reset(risk: &Arc<RiskManager>, book: &Arc<PositionBook>, bus: &MessageBus
     }));
 
     format!(
-        "🔄 <b>RESET COMPLETE</b>\n──────────\n         ├ Closed positions: <code>{pos_count}</code>\n         ├ Equity reset: <code>$300.00</code>\n         ├ Learning state: <b>cleared</b>\n\
+        "🔄 <b>RESET COMPLETE</b>\n──────────\n         ├ Closed positions: <code>{pos_count}</code>\n         ├ Equity reset: <code>${initial_equity:.2}</code>\n         ├ Learning state: <b>cleared</b>\n\
          ├ Trade history: preserved in DB\n\
          └ Fresh start ready\n\
          🤖 ARIA v1.0"

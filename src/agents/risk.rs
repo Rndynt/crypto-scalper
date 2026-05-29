@@ -295,7 +295,9 @@ pub fn spawn(
                         .unwrap_or(cfg.base_min_llm_floor)
                         .max(cfg.base_min_llm_floor);
 
-                    // Hard policy block?
+                    // NOTE: As of current policy design, verdict.allowed is always true
+                    // (policy reduces size instead of blocking). This gate is kept as a
+                    // safety net for future policy changes that may reintroduce hard blocks.
                     if !verdict.allowed {
                         bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
                             signal: signal.clone(),

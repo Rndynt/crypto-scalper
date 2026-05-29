@@ -714,24 +714,29 @@ fn idempotent_client_id(
     entry: f64,
     size: f64,
 ) -> String {
-    use std::collections::hash_map::DefaultHasher;
+    use rustc_hash::FxHasher;
     use std::hash::{Hash, Hasher};
     let bucket = Utc::now().timestamp() / 60; // 1-minute bucket
-    let side = match side {
+    let side_str = match side {
         Side::Long => "L",
         Side::Short => "S",
     };
-    let mut h = DefaultHasher::new();
+    // FxHasher is deterministic across processes (no random seed).
+    let mut h = FxHasher::default();
     (
         symbol,
         strategy,
-        side,
+        side_str,
         (entry * 1e6) as i64,
         (size * 1e6) as i64,
         bucket,
     )
         .hash(&mut h);
-    format!("aria-{}-{}-{:x}", symbol, side, h.finish())
+    // Binance newClientOrderId max 36 chars, alphanumeric + hyphen only
+    format!("aria-{}-{}-{:x}", symbol, side_str, h.finish())
+        .chars()
+        .take(36)
+        .collect()
 }
 
 #[cfg(test)]

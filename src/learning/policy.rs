@@ -195,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn lose_streak_blocks() {
+    fn lose_streak_reduces_size() {
         // 3 consecutive losses on same (strategy, symbol) triggers LoseStreak.
         let trades = vec![
             t("ema_ribbon", "BTCUSDT", "TRENDING", -1.0),
@@ -209,13 +209,16 @@ mod tests {
         policy.update(mem, lessons);
 
         let v = policy.evaluate("ema_ribbon", "TRENDING", "BTCUSDT");
-        assert!(!v.allowed);
-        assert_eq!(v.size_multiplier, 0.0);
+        // Policy no longer blocks, only reduces size (min 0.5 enforced)
+        assert!(v.allowed);
+        assert!(v.size_multiplier < 1.0);   // size dikurangi
+        assert!(v.size_multiplier >= 0.5);  // tapi tidak pernah di bawah minimum
         assert!(!v.matched_lessons.is_empty());
 
-        // Different symbol still allowed.
+        // Different symbol still at full size.
         let v2 = policy.evaluate("ema_ribbon", "TRENDING", "ETHUSDT");
         assert!(v2.allowed);
+        assert!((v2.size_multiplier - 1.0).abs() < 0.01); // no lesson matched
     }
 
     #[test]

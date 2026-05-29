@@ -598,6 +598,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         metrics: Arc::clone(&metrics),
         survival_state: Arc::clone(&survival_state),
         journal: Some(Arc::clone(&journal)),
+        initial_equity: cfg.risk.equity_usd,
     });
 
     let _watchdog = crypto_scalper::agents::watchdog::spawn(bus.clone(), WatchdogConfig::default());

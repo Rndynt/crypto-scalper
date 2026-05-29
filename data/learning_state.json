@@ -1,9 +1,21 @@
 {
-  "lessons_count": 0,
-  "last_refresh_ts": "2026-05-29T06:11:34.003294765+00:00",
-  "overall_trades": 3,
+  "lessons_count": 1,
+  "last_refresh_ts": "2026-05-29T06:29:13.026286373+00:00",
+  "overall_trades": 5,
   "overall_wins": 2,
-  "overall_losses": 1,
-  "overall_net_pnl": 2.0694956177882258,
-  "lessons": []
+  "overall_losses": 3,
+  "overall_net_pnl": -43.23946934722112,
+  "lessons": [
+    {
+      "kind": "DrawdownCooldown",
+      "strategy": null,
+      "regime": null,
+      "symbol": null,
+      "size_multiplier": 0.3,
+      "ta_threshold_delta": 10,
+      "llm_min_confidence_floor": 65,
+      "valid_until": "2026-05-29T07:29:13.026225607Z",
+      "reason": "-14.41% drawdown in last 60 min over 5 trades — size reduced"
+    }
+  ]
 }
