@@ -165,6 +165,10 @@ pub enum ControlCommand {
     ResetDaily,
     /// External request to publish a fresh /status snapshot to Telegram.
     StatusRequest,
+    /// Dynamically update max hold time for positions (seconds). 0 = no limit.
+    SetMaxHold { secs: i64 },
+    /// Dynamically update breakeven R-multiple threshold.
+    SetBreakevenR { r: f64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -269,6 +269,7 @@ async fn telegram_loop(
             {"command": "reset", "description": "🔄 Reset equity & clear lessons"},
             {"command": "leverage", "description": "⚡ View/change leverage"},
             {"command": "hold", "description": "⏱ View/change max hold time"},
+            {"command": "breakeven", "description": "🔒 View/change breakeven threshold"},
             {"command": "risk", "description": "🛡 Risk metrics & limits"},
             {"command": "survival", "description": "🏥 Survival mode details"},
             {"command": "history", "description": "📜 Recent trade history"},
@@ -348,6 +349,10 @@ async fn telegram_loop(
                             "hold_15m" => "/hold 15m",
                             "hold_30m" => "/hold 30m",
                             "hold_1h" => "/hold 1h",
+                            "be_0.3" => "/breakeven 0.3",
+                            "be_0.5" => "/breakeven 0.5",
+                            "be_0.6" => "/breakeven 0.6",
+                            "be_1.0" => "/breakeven 1.0",
                             "btn_survival" => "/survival",
                             "btn_brain" => "/brain",
                             "btn_health" => "/health",
@@ -705,6 +710,8 @@ fn handle_command(
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
         "/hold" | "hold" if !cmd.contains(' ') => cmd_hold(pos_cfg, ""),
         _ if cmd.starts_with("/hold ") || cmd.starts_with("hold ") => cmd_hold(pos_cfg, &cmd),
+        "/breakeven" | "breakeven" if !cmd.contains(' ') => cmd_breakeven(pos_cfg, ""),
+        _ if cmd.starts_with("/breakeven ") || cmd.starts_with("breakeven ") => cmd_breakeven(pos_cfg, &cmd),
         "/config" | "config" => cmd_config(risk),
         "/lessons" | "lessons" => cmd_lessons(),
         "/reset" | "reset" => {
@@ -1824,6 +1831,56 @@ fn cmd_hold(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> S
     }
 }
 
+fn cmd_breakeven(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> String {
+    let current = pos_cfg.read().breakeven_r;
+    let arg = args.trim_start_matches("/breakeven").trim_start_matches("breakeven").trim();
+    if arg.is_empty() {
+        return format!(
+            "🔒 <b>Breakeven Settings</b>\n\
+             ──────────\n\
+             \n\
+             Current: <code>{current:.1}R</code>\n\
+             \n\
+             Breakeven moves SL to entry price when profit reaches this R-multiple.\n\
+             \n\
+             🕐 <b>Presets</b>:\n\
+             ├ <code>/breakeven 0.3</code> — Aggressive (lock early)\n\
+             ├ <code>/breakeven 0.5</code> — Moderate\n\
+             ├ <code>/breakeven 0.6</code> — Conservative (default)\n\
+             ├ <code>/breakeven 1.0</code> — Very conservative\n\
+             └ <code>/breakeven 0</code> — Disable breakeven\n\
+             \n\
+             Or use <code>/config</code> buttons.\n\
+             \n\
+             🤖 ARIA v1.0",
+            current = current,
+        );
+    }
+    let new_r: f64 = match arg.parse() {
+        Ok(v) => v,
+        Err(_) => return "⚠ Invalid value. Use e.g. <code>/breakeven 0.6</code>\n🤖 ARIA v1.0".to_string(),
+    };
+    if new_r < 0.0 || new_r > 5.0 {
+        return "⚠ Breakeven R must be 0.0–5.0. Set 0 to disable.\n🤖 ARIA v1.0".to_string();
+    }
+    let old_r = pos_cfg.read().breakeven_r;
+    pos_cfg.write().breakeven_r = new_r;
+    if new_r == 0.0 {
+        "✅ <b>Breakeven Disabled</b>\n──────────\n🔒 SL will NOT move to entry.\n🤖 ARIA v1.0".to_string()
+    } else {
+        format!(
+            "✅ <b>Breakeven Updated</b>\n\
+             ──────────\n\
+             🔒 Breakeven: <code>{old:.1}R</code> → <code>{new:.1}R</code>\n\
+             \n\
+             SL moves to entry when profit reaches <code>{new:.1}R</code>.\n\
+             🤖 ARIA v1.0",
+            old = old_r,
+            new = new_r,
+        )
+    }
+}
+
 fn cmd_config(risk: &Arc<RiskManager>) -> String {
     let limits = risk.limits();
     format!(
@@ -1879,7 +1936,14 @@ fn config_buttons() -> Vec<Vec<InlineButton>> {
             InlineButton { text: "⏱ 30m".into(), callback_data: "hold_30m".into() },
             InlineButton { text: "⏱ 1h".into(), callback_data: "hold_1h".into() },
         ],
-        // Row 5: Navigation
+        // Row 5: Breakeven presets
+        vec![
+            InlineButton { text: "🔒 0.3R".into(), callback_data: "be_0.3".into() },
+            InlineButton { text: "🔒 0.5R".into(), callback_data: "be_0.5".into() },
+            InlineButton { text: "🔒 0.6R".into(), callback_data: "be_0.6".into() },
+            InlineButton { text: "🔒 1.0R".into(), callback_data: "be_1.0".into() },
+        ],
+        // Row 6: Navigation
         vec![
             InlineButton { text: "⚡ Leverage".into(), callback_data: "btn_leverage".into() },
             InlineButton { text: "⏱ Hold".into(), callback_data: "btn_hold".into() },

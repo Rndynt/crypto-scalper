@@ -542,7 +542,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
             max_hold_secs: cfg.risk.max_hold_secs,
             trail_atr_mult: 0.3,
             trail_activate_r: 1.0,
-            breakeven_r: 0.5,
+            breakeven_r: 0.6,
             partial_tp_enabled: true,
             partial_tp_r: 1.0,
         },
