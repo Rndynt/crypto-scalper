@@ -23,6 +23,7 @@ use crate::execution::{
 use crate::learning::LearningPolicy;
 use chrono::Utc;
 use parking_lot::Mutex as PlMutex;
+use parking_lot::RwLock as PlRwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -44,6 +45,8 @@ pub struct ExecutionAgentDeps {
     pub protective_orders_required: bool,
     pub policy: LearningPolicy,
     pub enforce_single_position_per_symbol: bool,
+    /// Shared position config — can be updated dynamically via Telegram /hold command.
+    pub pos_cfg: Arc<PlRwLock<PositionConfig>>,
 }
 
 pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
@@ -56,6 +59,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
         protective_orders_required,
         policy,
         enforce_single_position_per_symbol,
+        pos_cfg,
     } = deps;
 
     let mut rx = bus.subscribe();
@@ -65,14 +69,6 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
     let last_books: SharedMap<BookTop> = Arc::new(PlMutex::new(HashMap::new()));
     let exec_quality = Arc::new(PlMutex::new(ExecutionQuality::default()));
     let decision_prices: SharedMap<f64> = Arc::new(PlMutex::new(HashMap::new()));
-    let pos_cfg = PositionConfig {
-        max_hold_secs: 900,       // 15 min max hold for HFT
-        trail_atr_mult: 0.3,      // Tighter trail at 0.3× ATR
-        trail_activate_r: 1.0,    // Activate trailing at 1R profit
-        breakeven_r: 0.5,         // Move SL to entry at 0.5R profit
-        partial_tp_enabled: true, // Take 50% at 1R profit
-        partial_tp_r: 1.0,        // Trigger at 1R profit
-    };
 
     tokio::spawn(async move {
         info!("execution agent starting");
@@ -93,7 +89,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                 let marks = marks_fb.lock().clone();
                 for (sym, price) in &marks {
                     if *price <= 0.0 { continue; }
-                    let exits = book_fb.check_exits(sym, *price, &pos_cfg_fb);
+                    let exits = book_fb.check_exits(sym, *price, &pos_cfg_fb.read());
                     for (pos, reason) in exits {
                         let pnl = crate::execution::position::pnl_usd(&pos, *price);
                         risk_fb.on_position_closed(pnl);
@@ -139,7 +135,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                     last_marks.lock().insert(symbol.clone(), trade.price);
                     // Mark-price exit checks happen here so we own the
                     // bus emission when a position closes.
-                    let exits = book.check_exits(&symbol, trade.price, &pos_cfg);
+                    let exits = book.check_exits(&symbol, trade.price, &pos_cfg.read());
                     for (pos, reason) in exits {
                         let pnl = crate::execution::position::pnl_usd(&pos, trade.price);
                         risk.on_position_closed(pnl);

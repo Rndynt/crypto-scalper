@@ -18,7 +18,7 @@
 use crate::agents::MessageBus;
 use crate::agents::messages::{AgentEvent, AgentId, BrainOutcome, ControlCommand, SurvivalState};
 use crate::config::ControlCfg;
-use crate::execution::{Exchange, PositionBook, RiskManager};
+use crate::execution::{Exchange, PositionBook, PositionConfig, RiskManager};
 use crate::monitoring::{MetricsState, TradeJournal, telegram::InlineButton};
 use chrono::Utc;
 use parking_lot::{Mutex, RwLock};
@@ -55,6 +55,8 @@ pub struct ControlAgentDeps {
     pub journal: Option<Arc<TradeJournal>>,
     /// Initial equity from config, used for /reset command.
     pub initial_equity: f64,
+    /// Shared position config — /hold command updates this.
+    pub pos_cfg: Arc<parking_lot::RwLock<PositionConfig>>,
 }
 
 /// State tracked by the control agent from bus events.
@@ -85,6 +87,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         survival_state,
         journal,
         initial_equity,
+        pos_cfg,
     } = deps;
 
     let allowed: HashSet<i64> = cfg.allowed_user_ids.iter().copied().collect();
@@ -261,6 +264,7 @@ async fn telegram_loop(
             {"command": "lessons", "description": "🧠 Learning system & active lessons"},
             {"command": "reset", "description": "🔄 Reset equity & clear lessons"},
             {"command": "leverage", "description": "⚡ View/change leverage"},
+            {"command": "hold", "description": "⏱ View/change max hold time"},
             {"command": "risk", "description": "🛡 Risk metrics & limits"},
             {"command": "survival", "description": "🏥 Survival mode details"},
             {"command": "history", "description": "📜 Recent trade history"},
@@ -335,6 +339,11 @@ async fn telegram_loop(
                             "btn_risk" => "/risk",
                             "btn_history" => "/history",
                             "btn_leverage" => "/leverage",
+                            "btn_hold" => "/hold",
+                            "hold_5m" => "/hold 5m",
+                            "hold_15m" => "/hold 15m",
+                            "hold_30m" => "/hold 30m",
+                            "hold_1h" => "/hold 1h",
                             "btn_survival" => "/survival",
                             "btn_brain" => "/brain",
                             "btn_health" => "/health",
@@ -402,6 +411,7 @@ async fn telegram_loop(
                                 &metrics,
                                 &ctrl_state,
                                 &journal,
+                                &pos_cfg,
                             );
                             if !reply.is_empty() {
                                 // Reattach inline keyboard buttons (same as text command path)
@@ -474,7 +484,7 @@ async fn telegram_loop(
                         continue;
                     }
                     let reply =
-                        handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state, &journal);
+                        handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state, &journal, &pos_cfg);
                     if !reply.is_empty() {
                         let cmd_lower = text.trim().to_lowercase();
 
@@ -627,7 +637,7 @@ async fn stdin_loop(
         match lines.next_line().await {
             Ok(Some(line)) => {
                 let reply =
-                    handle_command(&line, &bus, &risk, &book, &metrics, &ctrl_state, &journal);
+                    handle_command(&line, &bus, &risk, &book, &metrics, &ctrl_state, &journal, &pos_cfg);
                 if !reply.is_empty() {
                     // Strip HTML tags for terminal output
                     let plain = strip_html(&reply);
@@ -667,6 +677,7 @@ fn handle_command(
     metrics: &Arc<MetricsState>,
     ctrl_state: &Arc<Mutex<ControlState>>,
     journal: &Option<Arc<TradeJournal>>,
+    pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>,
 ) -> String {
     let cmd = text.trim().to_lowercase();
     match cmd.as_str() {
@@ -687,6 +698,8 @@ fn handle_command(
         "/history" | "history" => cmd_history(journal),
         "/leverage" | "leverage" if !cmd.contains(' ') => cmd_leverage(risk, ""),
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
+        "/hold" | "hold" if !cmd.contains(' ') => cmd_hold(pos_cfg, ""),
+        _ if cmd.starts_with("/hold ") || cmd.starts_with("hold ") => cmd_hold(pos_cfg, &cmd),
         "/config" | "config" => cmd_config(risk),
         "/lessons" | "lessons" => cmd_lessons(),
         "/reset" | "reset" => {
@@ -1744,6 +1757,68 @@ fn cmd_leverage(risk: &Arc<RiskManager>, args: &str) -> String {
     }
 }
 
+fn cmd_hold(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> String {
+    let current = pos_cfg.read().max_hold_secs;
+
+    // Parse new hold time: "/hold 1800" or "hold 30m"
+    let new_secs = args
+        .split_whitespace()
+        .last()
+        .and_then(|s| {
+            // Support "30m" format
+            if let Some(mins) = s.strip_suffix('m') {
+                mins.parse::<i64>().ok().map(|m| m * 60)
+            } else if let Some(hrs) = s.strip_suffix('h') {
+                hrs.parse::<i64>().ok().map(|h| h * 3600)
+            } else {
+                s.parse::<i64>().ok()
+            }
+        });
+
+    if let Some(secs) = new_secs {
+        if secs < 60 || secs > 7200 {
+            return format!(
+                "⚠ Hold time must be 60s–7200s (1m–2h). You entered: <code>{}s</code>\n🤖 ARIA v1.0",
+                secs
+            );
+        }
+        pos_cfg.write().max_hold_secs = secs;
+        let mins = secs / 60;
+        format!(
+            "✅ <b>Max Hold Time Updated</b>\n\
+             ──────────\n\
+             ⏱ Max Hold: <code>{old_m}m</code> → <code>{new_m}m</code> ({new_s}s)\n\
+             \n\
+             💡 Positions open longer than {new_m}m will be time-exited.\n\
+             Set <code>/hold 0</code> to disable time exit.\n\
+             \n\
+             🤖 ARIA v1.0",
+            old_m = current / 60,
+            new_m = mins,
+            new_s = secs,
+        )
+    } else {
+        let mins = current / 60;
+        format!(
+            "⏱ <b>Max Hold Time Settings</b>\n\
+             ──────────\n\
+             📊 Current: <code>{mins}m</code> ({current}s)\n\
+             \n\
+             ⚡ <b>Quick Presets</b>\n\
+             ├ 🟢 <code>/hold 5m</code> — 5 min (ultra HFT)\n\
+             ├ 🟡 <code>/hold 15m</code> — 15 min (default)\n\
+             ├ 🟠 <code>/hold 30m</code> — 30 min (swing scalp)\n\
+             └ 🔴 <code>/hold 1h</code> — 1 hour (position trade)\n\
+             \n\
+             💡 To change: <code>/hold 30m</code> or <code>/hold 1800</code>\n\
+             \n\
+             🤖 ARIA v1.0",
+            current = current,
+            mins = mins,
+        )
+    }
+}
+
 fn cmd_config(risk: &Arc<RiskManager>) -> String {
     let limits = risk.limits();
     format!(
@@ -1792,9 +1867,17 @@ fn config_buttons() -> Vec<Vec<InlineButton>> {
             InlineButton { text: "📍 3 Pos".into(), callback_data: "cfg_maxpos_3".into() },
             InlineButton { text: "📍 5 Pos".into(), callback_data: "cfg_maxpos_5".into() },
         ],
-        // Row 4: Navigation
+        // Row 4: Hold time presets
+        vec![
+            InlineButton { text: "⏱ 5m".into(), callback_data: "hold_5m".into() },
+            InlineButton { text: "⏱ 15m".into(), callback_data: "hold_15m".into() },
+            InlineButton { text: "⏱ 30m".into(), callback_data: "hold_30m".into() },
+            InlineButton { text: "⏱ 1h".into(), callback_data: "hold_1h".into() },
+        ],
+        // Row 5: Navigation
         vec![
             InlineButton { text: "⚡ Leverage".into(), callback_data: "btn_leverage".into() },
+            InlineButton { text: "⏱ Hold".into(), callback_data: "btn_hold".into() },
             InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
             InlineButton { text: "🏠 Help".into(), callback_data: "btn_help".into() },
         ],

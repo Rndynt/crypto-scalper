@@ -237,6 +237,12 @@ pub struct RiskCfg {
     pub min_net_edge_bps: f64,
     pub assumed_daily_volume_usd: f64,
     pub equity_usd: f64,
+    #[serde(default = "default_max_hold_secs")]
+    pub max_hold_secs: i64,
+}
+
+fn default_max_hold_secs() -> i64 {
+    900
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

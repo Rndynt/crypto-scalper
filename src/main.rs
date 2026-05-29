@@ -536,6 +536,18 @@ async fn run_agents(cfg: Config) -> Result<()> {
         policy.clone(),
         Arc::clone(&feeds_cache),
     );
+    // Shared position config — can be updated dynamically via /hold command
+    let pos_cfg = Arc::new(parking_lot::RwLock::new(
+        crypto_scalper::execution::PositionConfig {
+            max_hold_secs: cfg.risk.max_hold_secs,
+            trail_atr_mult: 0.3,
+            trail_activate_r: 1.0,
+            breakeven_r: 0.5,
+            partial_tp_enabled: true,
+            partial_tp_r: 1.0,
+        },
+    ));
+
     let _execution = crypto_scalper::agents::execution::spawn(ExecutionAgentDeps {
         bus: bus.clone(),
         exchange: exchange.clone(),
@@ -545,6 +557,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         protective_orders_required: cfg.mode.run_mode == "live" && !cfg.mode.dry_run,
         policy: policy.clone(),
         enforce_single_position_per_symbol: cfg.mode.single_position_per_symbol,
+        pos_cfg: Arc::clone(&pos_cfg),
     });
     let _monitor = crypto_scalper::agents::monitor::spawn(
         bus.clone(),
@@ -600,6 +613,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         survival_state: Arc::clone(&survival_state),
         journal: Some(Arc::clone(&journal)),
         initial_equity: cfg.risk.equity_usd,
+        pos_cfg: Arc::clone(&pos_cfg),
     });
 
     let _watchdog = crypto_scalper::agents::watchdog::spawn(bus.clone(), WatchdogConfig::default());
