@@ -7,6 +7,7 @@ use crate::agents::MessageBus;
 use crate::agents::messages::{AgentEvent, AgentId, BrainOutcome, ControlCommand, ManagerAction};
 use crate::llm::engine::Decision;
 use crate::monitoring::{MetricsState, TelegramNotifier, TradeJournal, TradeRecord};
+use crate::monitoring::chart;
 use crate::strategy::state::StrategyName;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex as PlMutex;
@@ -185,6 +186,10 @@ pub fn spawn(
     let last_brain: Arc<PlMutex<HashMap<String, BrainOutcome>>> =
         Arc::new(PlMutex::new(HashMap::new()));
     let counters: Arc<PlMutex<StatusCounters>> = Arc::new(PlMutex::new(StatusCounters::default()));
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
 
     // Periodic status — every 60s, emit 4 compact lines instead of one giant blob
     {
@@ -396,7 +401,7 @@ pub fn spawn(
 
                     // ─── Signal Notification (only GO/WAIT to group) ───────
                     if !matches!(brain.decision.decision, Decision::NoGo) {
-                        send_signal_notification(&telegram, &brain).await;
+                        send_signal_notification(&telegram, &brain, &http_client).await;
                     }
                 }
                 AgentEvent::ManagerVerdictEmitted(v) => {
@@ -857,7 +862,11 @@ fn build_open_notification(
 }
 
 /// Send a signal notification when the brain produces an outcome.
-async fn send_signal_notification(telegram: &TelegramNotifier, brain: &BrainOutcome) {
+async fn send_signal_notification(
+    telegram: &TelegramNotifier,
+    brain: &BrainOutcome,
+    http_client: &reqwest::Client,
+) {
     let symbol = &brain.signal.symbol;
     let side_label = if brain.signal.side == crate::data::Side::Long {
         "📈 LONG"
@@ -943,6 +952,46 @@ async fn send_signal_notification(telegram: &TelegramNotifier, brain: &BrainOutc
         fallback = fallback,
     );
     let _ = telegram.send_signal(&msg).await;
+
+    // ─── Generate and send chart image ─────────────────────
+    let chart_result = async {
+        // Fetch last 100 5m candles from Binance
+        let candles = chart::fetch_klines(http_client, &brain.signal.symbol, "5m", 100).await?;
+        let chart_candles: Vec<chart::ChartCandle> = candles.iter().map(|c| chart::ChartCandle {
+            open_time: c.open_time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+        }).collect();
+
+        let img = chart::generate_signal_chart(
+            &brain.signal.symbol,
+            brain.signal.side,
+            brain.signal.entry,
+            brain.signal.stop_loss,
+            brain.signal.take_profit,
+            &chart_candles,
+        )?;
+
+        // Build caption
+        let short = brain.signal.symbol.replace("USDT", "");
+        let side_emoji = if brain.signal.side == crate::data::Side::Long { "📈" } else { "📉" };
+        let caption = format!(
+            "{} {} {} · Entry <code>{:.4}</code> · SL <code>{:.4}</code> · TP <code>{:.4}</code>",
+            side_emoji, short,
+            if brain.signal.side == crate::data::Side::Long { "LONG" } else { "SHORT" },
+            brain.signal.entry, brain.signal.stop_loss, brain.signal.take_profit,
+        );
+        telegram.send_photo(&img, &caption).await?;
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    }
+    .await;
+
+    if let Err(e) = chart_result {
+        warn!("chart generation/send failed: {}", e);
+    }
 }
 
 fn record_brain(metrics: &MetricsState, brain: &BrainOutcome) {

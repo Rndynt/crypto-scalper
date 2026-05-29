@@ -163,4 +163,63 @@ impl TelegramNotifier {
         }
         Ok(())
     }
+
+    /// Send a photo with optional caption to the signal topic (or primary chat).
+    pub async fn send_photo(&self, image_bytes: &[u8], caption: &str) -> Result<()> {
+        let dest = self
+            .signal_topic
+            .clone()
+            .unwrap_or_else(|| TgDestination::Chat(self.chat_id.clone()));
+        self.send_photo_to(&dest, image_bytes, caption).await
+    }
+
+    /// Send a photo to a specific destination using multipart/form-data.
+    pub async fn send_photo_to(
+        &self,
+        dest: &TgDestination,
+        image_bytes: &[u8],
+        caption: &str,
+    ) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let url = format!(
+            "https://api.telegram.org/bot{}/sendPhoto",
+            self.token
+        );
+
+        let chat_id = match dest {
+            TgDestination::Chat(id) => id.clone(),
+            TgDestination::Topic { chat_id, .. } => chat_id.clone(),
+        };
+
+        let thread_id = match dest {
+            TgDestination::Topic { thread_id, .. } => Some(*thread_id),
+            _ => None,
+        };
+
+        // Build multipart form
+        let file_part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
+            .file_name("chart.bmp")
+            .mime_str("image/bmp")
+            .unwrap_or_else(|_| reqwest::multipart::Part::bytes(image_bytes.to_vec()));
+
+        let mut form = reqwest::multipart::Form::new()
+            .part("photo", file_part)
+            .text("chat_id", chat_id)
+            .text("caption", caption.to_string())
+            .text("parse_mode", "HTML");
+
+        if let Some(tid) = thread_id {
+            form = form.text("message_thread_id", tid.to_string());
+        }
+
+        let resp = self.client.post(&url).multipart(form).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            warn!(status = %status, body = %body_text, "telegram send_photo failed");
+        }
+        Ok(())
+    }
 }

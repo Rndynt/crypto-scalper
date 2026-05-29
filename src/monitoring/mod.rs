@@ -1,5 +1,6 @@
 //! Layer 5 — trade journal, Telegram alerts, HTTP metrics dashboard.
 
+pub mod chart;
 pub mod logger;
 pub mod metrics;
 pub mod telegram;
