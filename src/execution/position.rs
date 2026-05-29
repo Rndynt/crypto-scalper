@@ -226,11 +226,8 @@ impl PositionBook {
             }
 
             let r = (p.entry_price - p.stop_loss).abs();
-            if r <= 0.0 {
-                continue;
-            }
 
-            // Time-based exit
+            // Time-based exit (always check, even when r == 0)
             if cfg.max_hold_secs > 0 {
                 let held = (now - p.opened_at).num_seconds();
                 if held > cfg.max_hold_secs {
@@ -240,20 +237,41 @@ impl PositionBook {
                 }
             }
 
+            // Hard SL/TP checks (work even when r == 0 / breakeven)
             match p.side {
                 Side::Long => {
-                    // Hard SL
                     if p.stop_loss > 0.0 && price <= p.stop_loss {
                         out.push((p.clone(), PositionExitReason::StopLoss));
                         to_remove.push(id.clone());
                         continue;
                     }
-                    // Hard TP
                     if p.take_profit > 0.0 && price >= p.take_profit {
                         out.push((p.clone(), PositionExitReason::TakeProfit));
                         to_remove.push(id.clone());
                         continue;
                     }
+                }
+                Side::Short => {
+                    if p.stop_loss > 0.0 && price >= p.stop_loss {
+                        out.push((p.clone(), PositionExitReason::StopLoss));
+                        to_remove.push(id.clone());
+                        continue;
+                    }
+                    if p.take_profit > 0.0 && price <= p.take_profit {
+                        out.push((p.clone(), PositionExitReason::TakeProfit));
+                        to_remove.push(id.clone());
+                        continue;
+                    }
+                }
+            }
+
+            // Skip R-multiple logic when r == 0 (breakeven with no distance)
+            if r <= 0.0 {
+                continue;
+            }
+
+            match p.side {
+                Side::Long => {
 
                     let profit_r = (price - p.entry_price) / r;
 
@@ -311,16 +329,6 @@ impl PositionBook {
                     }
                 }
                 Side::Short => {
-                    if p.stop_loss > 0.0 && price >= p.stop_loss {
-                        out.push((p.clone(), PositionExitReason::StopLoss));
-                        to_remove.push(id.clone());
-                        continue;
-                    }
-                    if p.take_profit > 0.0 && price <= p.take_profit {
-                        out.push((p.clone(), PositionExitReason::TakeProfit));
-                        to_remove.push(id.clone());
-                        continue;
-                    }
 
                     let profit_r = (p.entry_price - price) / r;
 
