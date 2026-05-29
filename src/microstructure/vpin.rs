@@ -7,6 +7,10 @@ pub struct Vpin {
     current_buy: f64,
     current_sell: f64,
     buckets: VecDeque<f64>,
+    /// Rolling history of VPIN values for adaptive thresholding
+    value_history: VecDeque<f64>,
+    /// How many VPIN values to keep for percentile calculation
+    history_window: usize,
 }
 
 impl Vpin {
@@ -17,6 +21,8 @@ impl Vpin {
             current_buy: 0.0,
             current_sell: 0.0,
             buckets: VecDeque::with_capacity(window.max(1)),
+            value_history: VecDeque::with_capacity(500),
+            history_window: 500,
         }
     }
 
@@ -41,7 +47,43 @@ impl Vpin {
         if self.buckets.len() < self.window {
             return None;
         }
-        Some(self.buckets.iter().sum::<f64>() / self.buckets.len() as f64)
+        let raw = self.buckets.iter().sum::<f64>() / self.buckets.len() as f64;
+        // Record in history
+        // Note: we can't mutate in value() since it takes &self
+        // History recording happens in the signal agent instead
+        Some(raw)
+    }
+
+    /// Record a VPIN value into history for percentile calculation.
+    pub fn record_value(&mut self, v: f64) {
+        self.value_history.push_back(v);
+        if self.value_history.len() > self.history_window {
+            self.value_history.pop_front();
+        }
+    }
+
+    /// Get the adaptive threshold (95th percentile of recent VPIN values).
+    /// Returns None if not enough history.
+    pub fn adaptive_threshold(&self) -> Option<f64> {
+        if self.value_history.len() < 50 {
+            return None;
+        }
+        let mut sorted: Vec<f64> = self.value_history.iter().copied().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx = ((sorted.len() as f64) * 0.95) as usize;
+        let idx = idx.min(sorted.len() - 1);
+        Some(sorted[idx])
+    }
+
+    /// Check if VPIN is abnormally high (above 95th percentile).
+    /// Returns (is_abnormal, raw_value, threshold).
+    pub fn is_abnormal(&mut self) -> Option<(bool, f64, f64)> {
+        let raw = self.value()?;
+        self.record_value(raw);
+        match self.adaptive_threshold() {
+            Some(thresh) => Some((raw > thresh, raw, thresh)),
+            None => None, // Not enough history yet — don't flag
+        }
     }
 }
 
@@ -55,5 +97,12 @@ mod tests {
         assert!(vpin.update(10.0, 0.0).is_none());
         let value = vpin.update(5.0, 5.0).unwrap();
         approx::assert_abs_diff_eq!(value, 0.5);
+    }
+
+    #[test]
+    fn adaptive_threshold_requires_history() {
+        let mut vpin = Vpin::new(10.0, 2);
+        // Not enough history
+        assert!(vpin.adaptive_threshold().is_none());
     }
 }

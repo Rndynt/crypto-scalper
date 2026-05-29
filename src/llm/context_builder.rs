@@ -60,6 +60,8 @@ pub struct MarketContext {
     pub ofi: Option<f64>,
     #[serde(default)]
     pub vpin: Option<f64>,
+    #[serde(default)]
+    pub vpin_abnormal: bool,
 }
 
 pub struct ContextBuilder;
@@ -117,6 +119,7 @@ impl ContextBuilder {
             recent_trade_pnl: 0.0,
             ofi: state.last_ofi,
             vpin: state.last_vpin,
+            vpin_abnormal: state.vpin_abnormal,
         }
     }
 }
@@ -190,7 +193,14 @@ impl MarketContext {
             let _ = writeln!(s, "  OFI           : N/A (waiting for data)");
         }
         if let Some(vpin) = self.vpin {
-            let risk = if vpin > 0.5 {
+            let abnormal_flag = if self.vpin_abnormal {
+                " 🚨 ABNORMAL — above 95th percentile"
+            } else {
+                ""
+            };
+            let risk = if self.vpin_abnormal {
+                "🚨 EXTREME"
+            } else if vpin > 0.5 {
                 "⚠️ HIGH"
             } else if vpin > 0.3 {
                 "MODERATE"
@@ -199,7 +209,7 @@ impl MarketContext {
             };
             let _ = writeln!(
                 s,
-                "  VPIN          : {vpin:.3} ({risk} adverse selection risk)"
+                "  VPIN          : {vpin:.3} ({risk} adverse selection risk){abnormal_flag}"
             );
         } else {
             let _ = writeln!(s, "  VPIN          : N/A (warming up, need 50 buckets)");

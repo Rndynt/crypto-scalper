@@ -111,11 +111,20 @@ pub fn spawn(
                         .or_insert_with(|| Vpin::new(vpin_bucket_size_for(&symbol), 50));
                     let vpin_value = vpin_tracker.update(buy_vol, sell_vol);
 
-                    // Store VPIN in state — non-blocking to avoid contention with CandleClosed
+                    // Store VPIN in state — adaptive threshold
                     if let Some(vpin) = vpin_value {
+                        let abnormal = vpin_tracker.is_abnormal()
+                            .map(|(is_ab, raw, thresh)| {
+                                if is_ab {
+                                    warn!(symbol=%symbol, vpin=raw, threshold=thresh, "VPIN ABNORMAL — above 95th percentile");
+                                }
+                                is_ab
+                            })
+                            .unwrap_or(false);
                         if let Ok(mut states_guard) = states.try_lock() {
                             if let Some(state) = states_guard.get_mut(&symbol) {
                                 state.last_vpin = Some(vpin);
+                                state.vpin_abnormal = abnormal;
                             }
                         }
                     }
