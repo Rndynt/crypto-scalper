@@ -217,17 +217,9 @@ pub fn spawn(
                         }
                     }
 
-                    // Live confidence calibration: raise floor when recent
-                    // realized performance degrades. Base floor from config.
-                    let mut live_conf_floor = min_confidence;
-                    if let Some(ref ss) = shared_state {
-                        let overall = ss.get_overall_stats();
-                        if overall.total_trades >= 25 && overall.win_rate < 0.45 {
-                            live_conf_floor = 68;
-                        } else if overall.total_trades >= 12 && overall.win_rate < 0.50 {
-                            live_conf_floor = 65;
-                        }
-                    }
+                    // Confidence floor from config only — no dynamic raising.
+                    // Learning policy handles size reduction, not signal gating.
+                    let live_conf_floor = min_confidence;
                     // REJECT low-confidence GOs with calibrated floor.
                     if llm_out.decision.decision == Decision::Go
                         && llm_out.decision.confidence < live_conf_floor
