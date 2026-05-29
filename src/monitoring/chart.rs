@@ -33,28 +33,40 @@ impl From<&crate::data::Candle> for ChartCandle {
 }
 
 /// Fetch recent klines from Binance Futures public API.
+/// Tries fapi.binance.com first, falls back to data-api.binance.vision.
 pub async fn fetch_klines(
     client: &reqwest::Client,
     symbol: &str,
     interval: &str,
     limit: u32,
 ) -> Result<Vec<ChartCandle>, String> {
-    let url = format!(
+    let primary_url = format!(
         "https://fapi.binance.com/fapi/v1/klines?symbol={}&interval={}&limit={}",
         symbol, interval, limit
     );
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("kline fetch: {}", e))?;
-    if !resp.status().is_success() {
-        return Err(format!("kline status {}", resp.status()));
-    }
-    let raw: Vec<serde_json::Value> = resp
-        .json()
-        .await
-        .map_err(|e| format!("kline parse: {}", e))?;
+    let fallback_url = format!(
+        "https://data-api.binance.vision/fapi/v1/klines?symbol={}&interval={}&limit={}",
+        symbol, interval, limit
+    );
+
+    // Try primary, then fallback
+    let raw: Vec<serde_json::Value> = match client.get(&primary_url).send().await {
+        Ok(resp) if resp.status().is_success() => resp
+            .json()
+            .await
+            .map_err(|e| format!("kline parse: {}", e))?,
+        _ => {
+            debug!("chart: primary kline failed, trying fallback for {}", symbol);
+            client
+                .get(&fallback_url)
+                .send()
+                .await
+                .map_err(|e| format!("kline fallback fetch: {}", e))?
+                .json()
+                .await
+                .map_err(|e| format!("kline fallback parse: {}", e))?
+        }
+    };
     let mut candles = Vec::with_capacity(raw.len());
     for r in &raw {
         let arr = r.as_array().ok_or("kline: not array")?;
