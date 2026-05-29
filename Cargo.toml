@@ -71,8 +71,11 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 # RSS / Atom feed parsing
 feed-rs = "2.0"
 
-# Chart generation
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap", "ttf", "ab_glyph"] }
+# Chart generation — plotters with bitmap backend, PNG encoder, candlestick element, TTF fonts
+plotters = { version = "0.3", default-features = false, features = [
+    "bitmap_backend", "bitmap_encoder", "image", "chrono",
+    "ttf", "candlestick", "line_series",
+] }
 
 [dev-dependencies]
 approx = "0.5"

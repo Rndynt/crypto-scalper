@@ -1,9 +1,11 @@
 //! Generate candlestick chart images for signal notifications.
 //!
-//! Uses `plotters` with an in-memory bitmap backend.
+//! Uses `plotters` with built-in candlestick element and PNG output.
 
 use crate::data::Side;
 use plotters::prelude::*;
+use plotters::element::CandleStick;
+use std::io::Read;
 use tracing::debug;
 
 /// Candle data for chart rendering.
@@ -46,16 +48,13 @@ pub async fn fetch_klines(
         .send()
         .await
         .map_err(|e| format!("kline fetch: {}", e))?;
-
     if !resp.status().is_success() {
         return Err(format!("kline status {}", resp.status()));
     }
-
     let raw: Vec<serde_json::Value> = resp
         .json()
         .await
         .map_err(|e| format!("kline parse: {}", e))?;
-
     let mut candles = Vec::with_capacity(raw.len());
     for r in &raw {
         let arr = r.as_array().ok_or("kline: not array")?;
@@ -77,8 +76,7 @@ pub async fn fetch_klines(
     Ok(candles)
 }
 
-/// Generate a candlestick chart image with entry/TP/SL levels.
-/// Returns raw BMP bytes.
+/// Generate a candlestick chart PNG with entry/TP/SL levels.
 pub fn generate_signal_chart(
     symbol: &str,
     side: Side,
@@ -95,7 +93,6 @@ pub fn generate_signal_chart(
     let h = 520u32;
     let n = candles.len() as i32;
 
-    // Colors
     let bg = RGBColor(18, 18, 30);
     let bull = RGBColor(38, 166, 91);
     let bear = RGBColor(231, 76, 60);
@@ -106,7 +103,6 @@ pub fn generate_signal_chart(
     let tp_c = RGBColor(46, 204, 113);
     let gold = RGBColor(255, 215, 0);
 
-    // Price range
     let mut pmin = candles.iter().map(|c| c.low).fold(f64::MAX, f64::min);
     let mut pmax = candles.iter().map(|c| c.high).fold(f64::MIN, f64::max);
     for &p in &[entry, sl, tp] {
@@ -119,44 +115,40 @@ pub fn generate_signal_chart(
     pmin -= pad;
     pmax += pad;
 
-    let mut buf = vec![0u8; (w * h * 3) as usize];
-
+    let tmp_path = format!("/tmp/chart_{}.png", symbol.replace('/', "_"));
     {
-        let root = BitMapBackend::with_buffer(&mut buf, (w, h)).into_drawing_area();
-        root.fill(&bg).map_err(|e| e.to_string())?;
+        let root = BitMapBackend::new(&tmp_path, (w, h)).into_drawing_area();
+        root.fill(&bg).map_err(fmt_err)?;
 
-        // Title (top 36px)
-        let (title_area, chart_area) = root.split_vertically(36).map_err(|e| e.to_string())?;
+        let (title_area, chart_area) = root.split_vertically(36).map_err(fmt_err)?;
 
         let slabel = if side == Side::Long { "📈 LONG" } else { "📉 SHORT" };
-        let title = format!(
-            "{} {}  ·  Entry {:.2}  SL {:.2}  TP {:.2}",
-            symbol.replace("USDT", ""),
-            slabel,
-            entry,
-            sl,
-            tp
-        );
         title_area
             .draw(&Text::new(
-                title,
+                format!(
+                    "{} {}  ·  Entry {:.2}  SL {:.2}  TP {:.2}",
+                    symbol.replace("USDT", ""),
+                    slabel,
+                    entry,
+                    sl,
+                    tp
+                ),
                 (15, 8),
                 ("sans-serif", 18).into_font().color(&txt),
             ))
-            .map_err(|e| e.to_string())?;
+            .map_err(fmt_err)?;
 
-        // Chart
         let mut chart = ChartBuilder::on(&chart_area)
             .margin_left(60)
             .margin_right(65)
             .margin_top(5)
             .margin_bottom(22)
             .build_cartesian_2d(0i32..n, pmin..pmax)
-            .map_err(|e| e.to_string())?;
+            .map_err(fmt_err)?;
 
         chart
             .configure_mesh()
-            .x_label_formatter(&|x| {
+            .x_label_formatter(&|x: &i32| {
                 let i = *x as usize;
                 if i < candles.len() {
                     candles[i].open_time.format("%H:%M").to_string()
@@ -164,111 +156,101 @@ pub fn generate_signal_chart(
                     String::new()
                 }
             })
-            .y_label_formatter(&|y| format!("{:.2}", y))
+            .y_label_formatter(&|y: &f64| format!("{:.2}", y))
             .x_labels(8)
             .y_labels(8)
             .label_style(("sans-serif", 10).into_font().color(&txt))
             .light_line_style(grid)
             .bold_line_style(grid)
             .draw()
-            .map_err(|e| e.to_string())?;
+            .map_err(fmt_err)?;
 
         // Candlesticks
-        for (i, c) in candles.iter().enumerate() {
-            let x = i as i32;
-            let col = if c.close >= c.open { bull } else { bear };
-            let top = c.open.max(c.close);
-            let bot = c.open.min(c.close);
+        chart
+            .draw_series(candles.iter().enumerate().map(|(i, c)| {
+                CandleStick::new(
+                    i as i32,
+                    c.open,
+                    c.high,
+                    c.low,
+                    c.close,
+                    bull.filled(),
+                    bear.filled(),
+                    3,
+                )
+            }))
+            .map_err(fmt_err)?;
 
-            // Wick
-            chart
-                .draw_series(std::iter::once(PathElement::new(
-                    vec![(x, c.low), (x, c.high)],
-                    &col,
-                )))
-                .map_err(|e| e.to_string())?;
-
-            // Body
-            if (top - bot).abs() > (pmax - pmin) * 0.0005 {
-                chart
-                    .draw_series(std::iter::once(Rectangle::new(
-                        [(x, bot), (x, top)],
-                        col.filled(),
-                    )))
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-
-        // Volume (bottom 12%)
+        // Volume bars
         let vol_max = candles.iter().map(|c| c.volume).fold(0.0f64, f64::max);
         let vol_h = (pmax - pmin) * 0.12;
         if vol_max > 0.0 {
-            for (i, c) in candles.iter().enumerate() {
-                let x = i as i32;
-                let vh = (c.volume / vol_max) * vol_h;
-                let vc = if c.close >= c.open {
-                    bull.mix(0.2)
-                } else {
-                    bear.mix(0.2)
-                };
-                chart
-                    .draw_series(std::iter::once(Rectangle::new(
-                        [(x, pmin), (x, pmin + vh)],
-                        vc.filled(),
-                    )))
-                    .map_err(|e| e.to_string())?;
-            }
+            chart
+                .draw_series(candles.iter().enumerate().map(|(i, c)| {
+                    let vh = (c.volume / vol_max) * vol_h;
+                    let vc = if c.close >= c.open {
+                        bull.mix(0.2)
+                    } else {
+                        bear.mix(0.2)
+                    };
+                    Rectangle::new([(i as i32, pmin), (i as i32, pmin + vh)], vc.filled())
+                }))
+                .map_err(fmt_err)?;
         }
 
         // Entry line
         if entry > 0.0 {
             chart
                 .draw_series(std::iter::once(PathElement::new(
-                    vec![(0, entry), (n, entry)],
+                    vec![(0i32, entry), (n, entry)],
                     ShapeStyle { color: entry_c.to_rgba(), filled: false, stroke_width: 2 },
                 )))
-                .map_err(|e| e.to_string())?;
+                .map_err(fmt_err)?;
             chart
                 .draw_series(std::iter::once(Text::new(
                     format!("ENTRY {:.2}", entry),
                     (1, entry + (pmax - pmin) * 0.018),
                     ("sans-serif", 11).into_font().color(&entry_c),
                 )))
-                .map_err(|e| e.to_string())?;
+                .map_err(fmt_err)?;
         }
 
         // SL line
         if sl > 0.0 {
             chart
                 .draw_series(std::iter::once(PathElement::new(
-                    vec![(0, sl), (n, sl)],
+                    vec![(0i32, sl), (n, sl)],
                     ShapeStyle { color: sl_c.to_rgba(), filled: false, stroke_width: 2 },
                 )))
-                .map_err(|e| e.to_string())?;
+                .map_err(fmt_err)?;
+            let label = format!("SL {:.2}", sl);
+            let lx = n - (label.len() as i32 / 2).max(6);
             chart
                 .draw_series(std::iter::once(Text::new(
-                    format!("SL {:.2}", sl),
-                    (n - 8, sl + (pmax - pmin) * 0.018),
+                    label,
+                    (lx, sl + (pmax - pmin) * 0.018),
                     ("sans-serif", 11).into_font().color(&sl_c),
                 )))
-                .map_err(|e| e.to_string())?;
+                .map_err(fmt_err)?;
         }
 
         // TP line
         if tp > 0.0 {
             chart
                 .draw_series(std::iter::once(PathElement::new(
-                    vec![(0, tp), (n, tp)],
+                    vec![(0i32, tp), (n, tp)],
                     ShapeStyle { color: tp_c.to_rgba(), filled: false, stroke_width: 2 },
                 )))
-                .map_err(|e| e.to_string())?;
+                .map_err(fmt_err)?;
+            let label = format!("TP {:.2}", tp);
+            let lx = n - (label.len() as i32 / 2).max(6);
             chart
                 .draw_series(std::iter::once(Text::new(
-                    format!("TP {:.2}", tp),
-                    (n - 8, tp + (pmax - pmin) * 0.018),
+                    label,
+                    (lx, tp + (pmax - pmin) * 0.018),
                     ("sans-serif", 11).into_font().color(&tp_c),
                 )))
-                .map_err(|e| e.to_string())?;
+                .map_err(fmt_err)?;
         }
 
         // R:R badge
@@ -283,52 +265,24 @@ pub fn generate_signal_chart(
                         (2, pmin + (pmax - pmin) * 0.03),
                         ("sans-serif", 13).into_font().color(&gold),
                     )))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(fmt_err)?;
             }
         }
 
-        root.present().map_err(|e| e.to_string())?;
+        root.present().map_err(fmt_err)?;
     }
 
-    let bmp = encode_bmp(w, h, &buf);
-    debug!("chart: {}x{} BMP {} bytes for {}", w, h, bmp.len(), symbol);
-    Ok(bmp)
+    // Read PNG file
+    let mut file = std::fs::File::open(&tmp_path).map_err(|e| format!("open png: {}", e))?;
+    let mut png_buf = Vec::new();
+    file.read_to_end(&mut png_buf)
+        .map_err(|e| format!("read png: {}", e))?;
+    let _ = std::fs::remove_file(&tmp_path);
+
+    debug!("chart: {}x{} PNG {} bytes for {}", w, h, png_buf.len(), symbol);
+    Ok(png_buf)
 }
 
-fn encode_bmp(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
-    let row = (width * 3) as usize;
-    let pad = (4 - (row % 4)) % 4;
-    let prow = row + pad;
-    let dsize = prow * height as usize;
-    let fsize = 54 + dsize;
-
-    let mut out = Vec::with_capacity(fsize);
-    out.extend_from_slice(b"BM");
-    out.extend_from_slice(&(fsize as u32).to_le_bytes());
-    out.extend_from_slice(&[0u8; 4]);
-    out.extend_from_slice(&54u32.to_le_bytes());
-    out.extend_from_slice(&40u32.to_le_bytes());
-    out.extend_from_slice(&(width as i32).to_le_bytes());
-    out.extend_from_slice(&(height as i32).to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&24u16.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&(dsize as u32).to_le_bytes());
-    out.extend_from_slice(&2835u32.to_le_bytes());
-    out.extend_from_slice(&2835u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-
-    for y in (0..height as usize).rev() {
-        for x in 0..width as usize {
-            let i = (y * width as usize + x) * 3;
-            out.push(rgb[i + 2]);
-            out.push(rgb[i + 1]);
-            out.push(rgb[i]);
-        }
-        for _ in 0..pad {
-            out.push(0);
-        }
-    }
-    out
+fn fmt_err<E: std::fmt::Display>(e: E) -> String {
+    format!("{}", e)
 }

@@ -200,8 +200,8 @@ impl TelegramNotifier {
 
         // Build multipart form
         let file_part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
-            .file_name("chart.bmp")
-            .mime_str("image/bmp")
+            .file_name("chart.png")
+            .mime_str("image/png")
             .unwrap_or_else(|_| reqwest::multipart::Part::bytes(image_bytes.to_vec()));
 
         let mut form = reqwest::multipart::Form::new()
