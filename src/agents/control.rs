@@ -165,6 +165,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let token = telegram_token.clone();
         let chat_id = telegram_chat_id.clone();
         let poll_secs = cfg.poll_secs.max(1);
+        let pos_cfg_t = pos_cfg.clone();
         tokio::spawn(async move {
             telegram_loop(
                 bus_t,
@@ -177,6 +178,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
                 ctrl_state_t,
                 journal_t,
                 poll_secs,
+                pos_cfg_t,
             )
             .await;
         });
@@ -189,8 +191,9 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let metrics_s = metrics.clone();
         let ctrl_state_s = ctrl_state.clone();
         let journal_s = journal.clone();
+        let pos_cfg_s = pos_cfg.clone();
         tokio::spawn(async move {
-            stdin_loop(bus_s, risk_s, book_s, metrics_s, ctrl_state_s, journal_s).await;
+            stdin_loop(bus_s, risk_s, book_s, metrics_s, ctrl_state_s, journal_s, pos_cfg_s).await;
         });
     }
 
@@ -243,6 +246,7 @@ async fn telegram_loop(
     ctrl_state: Arc<Mutex<ControlState>>,
     journal: Option<Arc<TradeJournal>>,
     poll_secs: u64,
+    pos_cfg: Arc<parking_lot::RwLock<PositionConfig>>,
 ) {
     #![allow(clippy::too_many_arguments)]
     let client = Client::builder()
@@ -630,6 +634,7 @@ async fn stdin_loop(
     metrics: Arc<MetricsState>,
     ctrl_state: Arc<Mutex<ControlState>>,
     journal: Option<Arc<TradeJournal>>,
+    pos_cfg: Arc<parking_lot::RwLock<PositionConfig>>,
 ) {
     let mut lines = io::BufReader::new(io::stdin()).lines();
     info!("stdin control ready — type `help`, then press Enter");
