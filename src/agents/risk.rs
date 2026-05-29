@@ -288,9 +288,8 @@ pub fn spawn(
                         "orchestrator size multiplier {:.2}",
                         orchestrator_mult
                     ));
-                    let effective_ta_threshold = (cfg.base_min_ta_threshold as i32
-                        + verdict.ta_threshold_delta as i32)
-                        .clamp(0, 100) as u8;
+                    // Cap TA threshold — learning can only raise by max 5 points (60→65)
+                    let effective_ta_threshold = cfg.base_min_ta_threshold; // always 60, no learning delta
                     let llm_floor = verdict
                         .llm_min_confidence_floor
                         .unwrap_or(cfg.base_min_llm_floor)
