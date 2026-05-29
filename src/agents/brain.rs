@@ -31,6 +31,7 @@ pub fn spawn(
     feeds_cache: Arc<PlRwLock<HashMap<String, ExternalSnapshot>>>,
     shared_state: Option<Arc<crate::shared_state::SharedState>>,
     fail_closed_without_llm: bool,
+    min_confidence: u8,
 ) -> JoinHandle<()> {
     let mut rx = bus.subscribe();
     // Track last LLM call time per symbol for deduplication
@@ -81,18 +82,6 @@ pub fn spawn(
                     }
 
                     let external = feeds_cache.read().get(&symbol).cloned().unwrap_or_default();
-
-                    // CONFLUENCE CHECK — don't call LLM for weak signals
-                    let ta_strong = signal.ta_confidence >= 60;
-
-                    if !ta_strong {
-                        info!(
-                            symbol = %symbol,
-                            ta_confidence = signal.ta_confidence,
-                            "brain: SKIPPED — weak signal (TA too low)"
-                        );
-                        continue;
-                    }
 
                     let mut ctx = {
                         let states = states.lock().await;
@@ -229,8 +218,8 @@ pub fn spawn(
                     }
 
                     // Live confidence calibration: raise floor when recent
-                    // realized performance degrades.
-                    let mut live_conf_floor = 50u8;
+                    // realized performance degrades. Base floor from config.
+                    let mut live_conf_floor = min_confidence;
                     if let Some(ref ss) = shared_state {
                         let overall = ss.get_overall_stats();
                         if overall.total_trades >= 25 && overall.win_rate < 0.45 {

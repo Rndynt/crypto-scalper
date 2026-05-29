@@ -515,6 +515,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         Arc::clone(&feeds_cache),
         Some(Arc::clone(&shared_state)),
         cfg.mode.fail_closed_without_llm,
+        cfg.llm.min_confidence,
     );
     let _manager = crypto_scalper::agents::manager::spawn(
         bus.clone(),
