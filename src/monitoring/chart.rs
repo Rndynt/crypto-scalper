@@ -45,7 +45,7 @@ pub async fn fetch_klines(
         symbol, interval, limit
     );
     let fallback_url = format!(
-        "https://data-api.binance.vision/fapi/v1/klines?symbol={}&interval={}&limit={}",
+        "https://data-api.binance.vision/api/v3/klines?symbol={}&interval={}&limit={}",
         symbol, interval, limit
     );
 
