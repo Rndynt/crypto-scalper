@@ -329,7 +329,7 @@ impl RiskManager {
                 ));
             }
         }
-        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0 * i.size_multiplier;
+        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0;
         let risk_size = risk_amount / risk_per_unit;
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
         let notional_cap = i.equity * i.limits.max_position_notional_pct / 100.0 / entry.max(1e-9);
@@ -360,7 +360,7 @@ impl RiskManager {
     /// regime sizes shrink automatically.
     pub fn calculate_size(&self, entry: f64, stop_loss: f64) -> f64 {
         let i = self.inner.lock();
-        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0 * i.size_multiplier;
+        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0;
         let risk_per_unit = (entry - stop_loss).abs();
         if risk_per_unit <= 0.0 {
             return 0.0;

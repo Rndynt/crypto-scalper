@@ -69,7 +69,7 @@ impl LearningPolicy {
             }
         }
         // Enforce minimum size multiplier — bot ALWAYS trades with at least 20% size
-        verdict.size_multiplier = verdict.size_multiplier.max(0.2);
+        verdict.size_multiplier = verdict.size_multiplier.max(0.5); // min 50% — bot must trade meaningfully
         verdict
     }
 
