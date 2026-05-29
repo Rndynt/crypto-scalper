@@ -222,6 +222,27 @@ impl SharedState {
 
     // === EQUITY METHODS ===
 
+    /// Sync equity from persisted equity.json on disk (paper mode).
+    /// Call after RiskManager::load_equity_from_disk to keep SharedState in sync.
+    pub fn sync_from_persisted(&self) {
+        const EQUITY_FILE: &str = "data/equity.json";
+        if let Ok(data) = std::fs::read_to_string(EQUITY_FILE) {
+            if let Ok(snap) = serde_json::from_str::<serde_json::Value>(&data) {
+                let eq = snap.get("equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let peak = snap.get("peak_equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let rpnl = snap.get("realized_pnl_today").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                if eq > 0.0 {
+                    *self.equity.write() = eq;
+                    *self.peak_equity.write() = peak.max(eq);
+                    *self.realized_pnl_today.write() = rpnl;
+                    let dd = if peak > 0.0 { ((peak - eq) / peak * 100.0).max(0.0) } else { 0.0 };
+                    *self.drawdown_pct.write() = dd;
+                    tracing::info!(equity = eq, peak, rpnl, "SharedState synced from persisted equity");
+                }
+            }
+        }
+    }
+
     pub fn update_equity(&self, realized_pnl: f64) {
         let mut eq = self.equity.write();
         *eq += realized_pnl;

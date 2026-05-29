@@ -420,8 +420,13 @@ async fn run_agents(cfg: Config) -> Result<()> {
         });
     }
 
+    risk.load_equity_from_disk(); // Restore persisted equity (paper mode)
+    let book = Arc::new(PositionBook::new());
+    book.load_from_disk(); // Restore persisted positions (paper mode)
+
     // --- SharedState for cross-agent coordination ---
     let shared_state = SharedState::new(cfg.risk.equity_usd, cfg.risk.max_open_positions as u64);
+    shared_state.sync_from_persisted(); // Sync SharedState with persisted equity
     info!("SharedState initialized — all agents will coordinate through shared context");
 
     reconcile_startup_positions(
