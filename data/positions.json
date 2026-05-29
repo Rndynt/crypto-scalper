@@ -1,0 +1,19 @@
+[
+  {
+    "client_id": "aria-BTCUSDT-L-7124292dbbb6d7d7",
+    "symbol": "BTCUSDT",
+    "side": "Long",
+    "size": 0.027154911984141532,
+    "entry_price": 73662.54772500001,
+    "stop_loss": 73430.5455,
+    "take_profit": 74093.409,
+    "opened_at": "2026-05-29T05:54:00.204366039Z",
+    "trailing_activated": false,
+    "peak_price": 73662.54772500001,
+    "trough_price": 73662.54772500001,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "vwap_scalp"
+  }
+]
