@@ -105,7 +105,7 @@ impl RiskManager {
     }
 
     /// Save current equity to disk.
-    fn save_equity_to_disk(&self) {
+    pub fn save_equity_to_disk(&self) {
         const EQUITY_FILE: &str = "data/equity.json";
         let i = self.inner.lock();
         let snap = serde_json::json!({

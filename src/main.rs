@@ -651,11 +651,31 @@ async fn run_agents(cfg: Config) -> Result<()> {
         });
     }
 
+    // --- Periodic position/equity save (every 30s) ---
+    // Ensures data survives even if container is killed without SIGTERM
+    {
+        let book_periodic = Arc::clone(&book);
+        let risk_periodic = Arc::clone(&risk);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                book_periodic.save_to_disk_on_exit();
+                risk_periodic.save_equity_to_disk();
+            }
+        });
+    }
+
     // --- Wait for shutdown ---
     tokio::signal::ctrl_c()
         .await
         .context("failed to listen for ctrl-c")?;
-    info!("ctrl-c received — broadcasting shutdown to all agents");
+    info!("ctrl-c received — saving positions & equity before exit");
+    // Persist positions and equity to disk before agents drain
+    book.save_to_disk_on_exit();
+    risk.save_equity_to_disk();
+    info!("broadcasting shutdown to all agents");
     bus.publish(AgentEvent::Shutdown);
     // Give agents a moment to drain.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;

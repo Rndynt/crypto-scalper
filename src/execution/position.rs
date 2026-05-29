@@ -147,6 +147,11 @@ impl PositionBook {
         }
     }
 
+    /// Public save for graceful exit (SIGTERM handler).
+    pub fn save_to_disk_on_exit(&self) {
+        self.save_to_disk();
+    }
+
     pub fn open(&self, p: Position) {
         self.inner.lock().insert(p.client_id.clone(), p);
         self.save_to_disk();
