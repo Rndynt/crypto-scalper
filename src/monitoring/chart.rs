@@ -120,7 +120,7 @@ pub fn generate_signal_chart(
         let root = BitMapBackend::new(&tmp_path, (w, h)).into_drawing_area();
         root.fill(&bg).map_err(fmt_err)?;
 
-        let (title_area, chart_area) = root.split_vertically(36).map_err(fmt_err)?;
+        let (title_area, chart_area) = root.split_vertically(36);
 
         let slabel = if side == Side::Long { "📈 LONG" } else { "📉 SHORT" };
         title_area
