@@ -1,0 +1,582 @@
+# REPLIT AGENT — ARIA Crypto Scalper: Bug Fix Task
+
+## Konteks
+Ini adalah Rust codebase untuk autonomous crypto scalper bot bernama ARIA.
+Kerjakan semua fix di bawah **satu per satu secara berurutan**, pastikan tidak ada
+compile error setelah setiap perubahan. Jangan mengubah logika trading, hanya fix
+bug yang disebutkan.
+
+---
+
+## FIX 1 — `src/agents/brain.rs` — Hapus Override NoGo → Go
+
+### Masalah
+Block berikut secara salah membalik keputusan LLM: jika LLM 70% yakin trade adalah
+buruk (NoGo confidence 70), sistem paksa jadi GO. Selain itu log message menyebut
+">=55" padahal kode cek `>= 50`.
+
+### Lokasi
+Cari block ini (sekitar baris 240–253):
+```rust
+// OVERRIDE: if LLM says NoGo but confidence >= 50, force Go
+// (LLM reasoning models sometimes misclassify despite good signals)
+let mut final_decision = llm_out.decision.clone();
+if final_decision.decision == Decision::NoGo
+    && final_decision.confidence >= 50
+{
+    info!(
+        symbol = %symbol,
+        confidence = final_decision.confidence,
+        "brain: OVERRIDE — LLM said NoGo but confidence >= 55, forcing Go"
+    );
+    final_decision.decision = Decision::Go;
+}
+```
+
+### Fix
+Ganti seluruh block override itu dengan hanya:
+```rust
+let final_decision = llm_out.decision.clone();
+```
+
+Hapus 10 baris override tersebut. `final_decision` tetap dipakai oleh kode setelahnya
+(`if final_decision.decision != Decision::Go { ... }`), jadi tidak perlu tambahan kode.
+
+---
+
+## FIX 2 — `src/agents/survival.rs` — Perbaiki Ratchet Logic (Selalu False)
+
+### Masalah
+Kondisi `snap.realized_pnl_today < lock_floor` di mana `lock_floor = realized_pnl_today * 0.5`
+**tidak pernah true** untuk nilai positif (x tidak pernah < x/2). Fitur ratchet mati total.
+
+### Lokasi
+Cari block ini (sekitar baris 421–431):
+```rust
+let mut ratchet_locked = false;
+if realized_pct >= cfg.daily_pnl_ratchet_pct {
+    let lock_floor = snap.realized_pnl_today * 0.5;
+    if snap.realized_pnl_today < lock_floor {
+        ratchet_locked = true;
+        reasons.push(format!(
+            "ratchet locked: daily PnL ${:.2} < lock ${:.2}",
+            snap.realized_pnl_today, lock_floor
+        ));
+    }
+}
+```
+
+### Fix
+Ganti dengan logika yang benar — bandingkan equity saat ini terhadap peak dikurangi
+setengah profit:
+```rust
+let mut ratchet_locked = false;
+if realized_pct >= cfg.daily_pnl_ratchet_pct && g.daily_pnl > 0.0 {
+    // Protect 50% of today's profit: if equity has given back more than half
+    // the day's gain, engage ratchet (reduce to Defensive mode).
+    let protected_amount = g.daily_pnl * 0.5;
+    let equity_floor = g.daily_peak_equity - protected_amount;
+    if snap.equity < equity_floor {
+        ratchet_locked = true;
+        reasons.push(format!(
+            "ratchet: equity ${:.2} < floor ${:.2} (protecting 50% of ${:.2} daily gain)",
+            snap.equity, equity_floor, g.daily_pnl
+        ));
+    }
+}
+```
+
+---
+
+## FIX 3 — `src/agents/survival.rs` — Perbaiki `apply_state()` Frozen Arm
+
+### Masalah
+Arm `SurvivalMode::Frozen` di `apply_state()` memanggil `risk.unfreeze()`, yang justru
+membuka kunci bot ketika seharusnya frozen. Juga `recompute()` tidak pernah return
+`Frozen` (hanya return Healthy/Cautious/Defensive/Dead), menjadikan arm ini dead code
+yang berbahaya.
+
+### Lokasi — bagian 1
+Cari di `apply_state()` (sekitar baris 503–514):
+```rust
+SurvivalMode::Frozen => {
+    // Frozen mode should NOT exist in normal operation anymore.
+    // If somehow entered, treat as Defensive (reduce size, don't freeze).
+    risk.set_size_multiplier(0.3);
+    if risk.is_frozen() {
+        // Only unfreeze if it was a survival auto-freeze, not manual
+        risk.unfreeze();
+    }
+}
+```
+
+### Fix — bagian 1
+Ganti dengan arm yang benar:
+```rust
+SurvivalMode::Frozen => {
+    // Full stop — no new positions allowed.
+    risk.set_size_multiplier(0.0);
+    risk.freeze("survival: Frozen mode active".into());
+}
+```
+
+### Lokasi — bagian 2 (broken test)
+Cari di bagian `#[cfg(test)]` di bawah file yang sama (sekitar baris 596–610):
+```rust
+#[test]
+fn cooldown_forces_frozen_mode() {
+    ...
+    assert!(matches!(s.mode, SurvivalMode::Frozen));
+}
+```
+
+### Fix — bagian 2
+Ganti nama test dan assertion karena `recompute()` memang tidak return `Frozen`
+saat cooldown — return `Defensive`. Update test menjadi:
+```rust
+#[test]
+fn cooldown_forces_defensive_mode() {
+    let cfg = cfg();
+    let inner = inner();
+    on_position_closed(&inner, -10.0, &cfg);
+    on_position_closed(&inner, -10.0, &cfg);
+    on_position_closed(&inner, -10.0, &cfg);
+    let risk = Arc::new(RiskManager::new(limits(), 1000.0));
+    risk.on_position_closed(-30.0);
+    let s = recompute(&inner, &risk, &cfg, 1000.0);
+    // Cooldown active → Defensive (not Frozen — Frozen only via apply_state manually)
+    assert!(matches!(s.mode, SurvivalMode::Defensive | SurvivalMode::Cautious));
+    assert!(s.size_multiplier <= 0.6);
+}
+```
+
+---
+
+## FIX 4 — `src/learning/policy.rs` — Perbaiki Test yang Broken
+
+### Masalah
+Test `lose_streak_blocks` mengassert `!v.allowed`, tapi fungsi `evaluate()` setelah
+refactor tidak pernah meng-set `verdict.allowed = false` (kode lama menggunakan
+`is_block()` yang sudah dihapus). Test akan selalu gagal.
+
+### Lokasi
+Cari test `lose_streak_blocks` (sekitar baris 200–220):
+```rust
+#[test]
+fn lose_streak_blocks() {
+    ...
+    let v = policy.evaluate("ema_ribbon", "TRENDING", "BTCUSDT");
+    assert!(!v.allowed);        // ← INI SELALU FAIL
+    assert_eq!(v.size_multiplier, 0.0);  // ← INI JUGA FAIL (min 0.5 sekarang)
+    assert!(!v.matched_lessons.is_empty());
+    ...
+}
+```
+
+### Fix
+Update assertions sesuai perilaku policy yang baru (reduce size, never block):
+```rust
+#[test]
+fn lose_streak_reduces_size() {
+    // 3 consecutive losses on same (strategy, symbol) triggers LoseStreak.
+    let trades = vec![
+        t("ema_ribbon", "BTCUSDT", "TRENDING", -1.0),
+        t("ema_ribbon", "BTCUSDT", "TRENDING", -1.0),
+        t("ema_ribbon", "BTCUSDT", "TRENDING", -1.0),
+    ];
+    let mem = PerformanceMemory::build(&trades);
+    let extractor = LessonExtractor::new(LessonConfig::default());
+    let lessons = extractor.extract(&mem);
+    let policy = LearningPolicy::default();
+    policy.update(mem, lessons);
+
+    let v = policy.evaluate("ema_ribbon", "TRENDING", "BTCUSDT");
+    // Policy no longer blocks, only reduces size (min 0.5 enforced)
+    assert!(v.allowed);
+    assert!(v.size_multiplier < 1.0);   // size dikurangi
+    assert!(v.size_multiplier >= 0.5);  // tapi tidak pernah di bawah minimum
+    assert!(!v.matched_lessons.is_empty());
+
+    // Different symbol still at full size.
+    let v2 = policy.evaluate("ema_ribbon", "TRENDING", "ETHUSDT");
+    assert!(v2.allowed);
+    assert!((v2.size_multiplier - 1.0).abs() < 0.01); // no lesson matched
+}
+```
+
+---
+
+## FIX 5 — `src/agents/execution.rs` — Ganti DefaultHasher dengan Hasher Deterministik
+
+### Masalah
+`std::collections::hash_map::DefaultHasher` menggunakan random seed per-process
+sejak Rust 1.36. Setiap restart bot menghasilkan hash berbeda untuk input sama,
+sehingga client_id tidak benar-benar idempotent antar restart. Bot yang crash dan
+restart bisa membuka posisi duplikat.
+
+### Langkah 1 — Tambah dependency ke `Cargo.toml`
+Buka `Cargo.toml`, cari blok `[dependencies]`, tambahkan:
+```toml
+rustc-hash = "1.1"
+```
+
+### Langkah 2 — Update `src/agents/execution.rs`
+Cari fungsi `idempotent_client_id` (sekitar baris 710–737):
+```rust
+fn idempotent_client_id(
+    symbol: &str,
+    strategy: &str,
+    side: &Side,
+    entry: f64,
+    size: f64,
+) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let bucket = Utc::now().timestamp() / 60; // 1-minute bucket
+    let side = match side {
+        Side::Long => "L",
+        Side::Short => "S",
+    };
+    let mut h = DefaultHasher::new();
+    (
+        symbol,
+        strategy,
+        side,
+        (entry * 1e6) as i64,
+        (size * 1e6) as i64,
+        bucket,
+    )
+        .hash(&mut h);
+    format!("aria-{}-{}-{:x}", symbol, side, h.finish())
+}
+```
+
+Ganti dengan:
+```rust
+fn idempotent_client_id(
+    symbol: &str,
+    strategy: &str,
+    side: &Side,
+    entry: f64,
+    size: f64,
+) -> String {
+    use rustc_hash::FxHasher;
+    use std::hash::{Hash, Hasher};
+    let bucket = Utc::now().timestamp() / 60; // 1-minute bucket
+    let side_str = match side {
+        Side::Long => "L",
+        Side::Short => "S",
+    };
+    // FxHasher is deterministic across processes (no random seed).
+    let mut h = FxHasher::default();
+    (
+        symbol,
+        strategy,
+        side_str,
+        (entry * 1e6) as i64,
+        (size * 1e6) as i64,
+        bucket,
+    )
+        .hash(&mut h);
+    // Binance newClientOrderId max 36 chars, alphanumeric + hyphen only
+    format!("aria-{}-{}-{:x}", symbol, side_str, h.finish())
+        .chars()
+        .take(36)
+        .collect()
+}
+```
+
+Tambahkan import di atas file jika belum ada:
+```rust
+use rustc_hash::FxHasher;
+```
+(atau biarkan di dalam fungsi saja, keduanya valid)
+
+---
+
+## FIX 6 — `src/agents/survival.rs` — Ganti `Vec::remove(0)` dengan VecDeque
+
+### Masalah
+`pnl_history: Vec<f64>` menggunakan `remove(0)` yang O(n) — setiap trade
+menyebabkan shift seluruh array 200 elemen. `VecDeque` sudah diimport di file
+yang sama tapi tidak dipakai untuk ini.
+
+### Fix — ubah tipe field di struct `SurvivalInner`
+Cari:
+```rust
+pnl_history: Vec<f64>,
+```
+Ganti dengan:
+```rust
+pnl_history: VecDeque<f64>,
+```
+
+### Fix — ubah inisialisasi default
+Cari di `Default` impl atau inisialisasi `SurvivalInner`:
+```rust
+pnl_history: Vec<f64>,  // atau pnl_history: vec![]
+```
+Pastikan field sudah bernilai `VecDeque::new()` (biasanya sudah karena `#[derive(Default)]`).
+
+### Fix — ubah operasi push dan remove di `on_position_closed()`
+Cari:
+```rust
+g.pnl_history.push(pnl);
+if g.pnl_history.len() > 200 {
+    g.pnl_history.remove(0);
+}
+```
+Ganti dengan:
+```rust
+g.pnl_history.push_back(pnl);
+if g.pnl_history.len() > 200 {
+    g.pnl_history.pop_front(); // O(1)
+}
+```
+
+### Fix — konversi ke slice saat memanggil drawdown_confidence_intervals
+Cari di `recompute()`:
+```rust
+if let Some(mc) = drawdown_confidence_intervals(&g.pnl_history, 100) {
+```
+Ganti dengan:
+```rust
+let pnl_slice: Vec<f64> = g.pnl_history.iter().copied().collect();
+if let Some(mc) = drawdown_confidence_intervals(&pnl_slice, 100) {
+```
+
+---
+
+## FIX 7 — `src/agents/brain.rs` — Validasi SL/TP Setelah LLM Adjustment
+
+### Masalah
+LLM bisa mengubah SL/TP ke level yang salah (SL di atas entry untuk Long, TP di
+bawah entry, atau R:R buruk). Perubahan ini terjadi setelah `risk.validate_signal()`
+dipanggil, sehingga bypass semua risk gate.
+
+### Lokasi
+Cari (sekitar baris 160–175):
+```rust
+let final_sl = llm_out.decision.sl_adjustment.unwrap_or(signal.stop_loss);
+let final_tp = llm_out.decision.tp_adjustment.unwrap_or(signal.take_profit);
+let final_entry = llm_out.decision.entry_price.unwrap_or(signal.entry);
+```
+
+### Fix
+Tambahkan validasi geometri setelah baris tersebut:
+```rust
+let raw_sl = llm_out.decision.sl_adjustment.unwrap_or(signal.stop_loss);
+let raw_tp = llm_out.decision.tp_adjustment.unwrap_or(signal.take_profit);
+let final_entry = llm_out.decision.entry_price.unwrap_or(signal.entry);
+
+// Validate LLM-adjusted SL/TP geometry — reject if wrong side of entry
+let geometry_ok = match signal.side {
+    crate::data::Side::Long => raw_sl < final_entry && raw_tp > final_entry,
+    crate::data::Side::Short => raw_sl > final_entry && raw_tp < final_entry,
+};
+if !geometry_ok {
+    info!(
+        symbol = %symbol,
+        sl = raw_sl, tp = raw_tp, entry = final_entry,
+        side = %signal.side.as_str(),
+        "brain: REJECTED — LLM-adjusted SL/TP geometry invalid"
+    );
+    continue;
+}
+
+// Validate minimum R:R after LLM adjustment
+let risk_dist = (final_entry - raw_sl).abs();
+let reward_dist = (raw_tp - final_entry).abs();
+let rr = if risk_dist > 0.0 { reward_dist / risk_dist } else { 0.0 };
+if rr < 0.8 {
+    info!(
+        symbol = %symbol,
+        rr = %format!("{:.2}", rr),
+        "brain: REJECTED — LLM-adjusted SL/TP gives R:R < 0.8"
+    );
+    continue;
+}
+
+let final_sl = raw_sl;
+let final_tp = raw_tp;
+```
+
+---
+
+## FIX 8 — `src/agents/brain.rs` — Hapus Dead Code `_proposal`
+
+### Masalah
+`_proposal` dibangun lengkap tapi tidak pernah digunakan (underscore prefix = intentionally
+unused). Ini membuang CPU dan membingungkan pembaca kode.
+
+### Lokasi
+Cari seluruh block (sekitar baris 166–178):
+```rust
+let _proposal = ManagerProposal {
+    symbol: symbol.clone(),
+    side: signal.side,
+    strategy: signal.strategy.as_str().to_string(),
+    regime: regime.as_str().to_string(),
+    entry: final_entry,
+    stop_loss: final_sl,
+    take_profit: final_tp,
+    size: adjusted_size,
+    ta_confidence: signal.ta_confidence,
+    llm_confidence: llm_out.decision.confidence,
+};
+```
+
+### Fix
+Hapus seluruh block `let _proposal = ...` tersebut.
+
+---
+
+## FIX 9 — `src/agents/control.rs` — `/reset` Equity Hardcoded
+
+### Masalah
+`cmd_reset()` hardcode `risk.set_equity(300.0)` dan pesan Telegram juga
+hardcode `"$300.00"`. Ini tidak mengambil nilai dari config.
+
+### Lokasi
+Cari di fungsi `cmd_reset()` (sekitar baris 732–748):
+```rust
+fn cmd_reset(risk: &Arc<RiskManager>, book: &Arc<PositionBook>, bus: &MessageBus) -> String {
+    ...
+    risk.set_equity(300.0);
+    ...
+    "🔄 ... Equity reset: <code>$300.00</code> ..."
+}
+```
+
+### Fix — Tambah parameter `initial_equity: f64` ke fungsi dan semua pemanggilnya
+
+Ubah signature fungsi:
+```rust
+fn cmd_reset(
+    risk: &Arc<RiskManager>,
+    book: &Arc<PositionBook>,
+    bus: &MessageBus,
+    initial_equity: f64,
+) -> String {
+```
+
+Ubah baris hardcode:
+```rust
+risk.set_equity(initial_equity);
+```
+
+Ubah format string di return value:
+```rust
+format!(
+    "🔄 <b>RESET COMPLETE</b>\n──────────\n \
+     ├ Closed positions: <code>{pos_count}</code>\n \
+     ├ Equity reset: <code>${initial_equity:.2}</code>\n \
+     ├ Learning state: <b>cleared</b>\n \
+     ├ Trade history: preserved in DB\n \
+     └ Fresh start ready\n \
+     🤖 ARIA v1.0"
+)
+```
+
+Lalu cari semua tempat di file yang sama yang memanggil `cmd_reset(risk, book, bus)`,
+update jadi `cmd_reset(risk, book, bus, initial_equity)`.
+
+Pastikan `initial_equity` tersedia di scope — tambahkan field ke `ControlAgentDeps`
+dan `ControlState` jika diperlukan:
+
+Di `src/agents/control.rs`, tambahkan field ke `ControlAgentDeps`:
+```rust
+pub struct ControlAgentDeps {
+    // ... field yang sudah ada ...
+    /// Initial equity from config, used for /reset command.
+    pub initial_equity: f64,
+}
+```
+
+Di `src/main.rs`, saat spawn control agent, tambahkan:
+```rust
+initial_equity: cfg.risk.equity_usd,
+```
+
+---
+
+## FIX 10 — `src/agents/risk.rs` — Tambahkan Comment Penjelasan `verdict.allowed`
+
+### Masalah Kecil
+`verdict.allowed` selalu `true` setelah refactor (policy tidak pernah set false),
+tapi `risk.rs` masih cek `if !verdict.allowed { ... continue; }`. Kode berfungsi
+(tidak block apa-apa), tapi membingungkan.
+
+### Fix
+Tambahkan comment klarifikasi di atas cek tersebut di `src/agents/risk.rs`:
+```rust
+// NOTE: As of current policy design, verdict.allowed is always true
+// (policy reduces size instead of blocking). This gate is kept as a
+// safety net for future policy changes that may reintroduce hard blocks.
+if !verdict.allowed {
+```
+
+---
+
+## FIX 11 — `src/agents/survival.rs` — Update Docstring yang Menyesatkan
+
+### Masalah
+Docstring di atas modul masih menyebut "mode = Frozen" saat cooldown, padahal
+kode sekarang return `Defensive`:
+
+```rust
+//!    10 daily losses / 24-h. While a cooldown is active, mode = Frozen.
+```
+
+### Fix
+Ganti baris tersebut:
+```rust
+//!    10 daily losses / 24-h. While a cooldown is active, mode = Defensive.
+```
+
+Dan cari comment lain di dalam file yang menyebut "Frozen" untuk cooldown:
+```rust
+// Daily-loss-count cooldown — reduce size, NOT freeze (owner must approve freeze)
+```
+Ini sudah benar, biarkan.
+
+---
+
+## VERIFIKASI AKHIR
+
+Setelah semua fix selesai, jalankan:
+
+```bash
+cargo check 2>&1
+```
+
+Pastikan tidak ada compile error. Jika ada error terkait tipe `VecDeque` vs `Vec`
+di fungsi `drawdown_confidence_intervals`, periksa signature fungsi tersebut di
+`src/backtest/monte_carlo.rs` dan sesuaikan konversi slice.
+
+Jika ada error terkait `FxHasher` tidak ditemukan, pastikan `rustc-hash = "1.1"`
+sudah ada di `[dependencies]` di `Cargo.toml` dan jalankan `cargo check` lagi
+(akan auto-download).
+
+Jika ada error terkait `initial_equity` tidak ada di scope saat memanggil
+`cmd_reset`, trace dari `handle_command()` ke `spawn()` di `control.rs` dan
+pastikan nilainya tersedia via closure capture dari `ControlAgentDeps`.
+
+---
+
+## RINGKASAN SEMUA FIX
+
+| # | File | Bug | Impact |
+|---|---|---|---|
+| 1 | brain.rs | NoGo dipaksa jadi Go | Trade sinyal jelek |
+| 2 | survival.rs | Ratchet selalu false | Profit protection mati |
+| 3 | survival.rs | Frozen arm unfreeze | Circuit breaker bypass |
+| 4 | survival.rs | Test Frozen broken | CI gagal |
+| 5 | policy.rs | Test allowed=false broken | CI gagal |
+| 6 | execution.rs | DefaultHasher non-deterministic | Duplikat posisi restart |
+| 7 | survival.rs | Vec::remove(0) O(n) | Performa |
+| 8 | brain.rs | LLM SL/TP bypass validation | Risk gate bypass |
+| 9 | brain.rs | `_proposal` dead code | Code quality |
+| 10 | control.rs | /reset equity hardcoded $300 | Reset ke nilai salah |
+| 11 | risk.rs | Comment clarity | Maintainability |
+| 12 | survival.rs | Docstring salah | Maintainability |

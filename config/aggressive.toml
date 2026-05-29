@@ -21,18 +21,18 @@ enabled             = false       # re-enable after 50+ trades
 
 [llm]
 provider      = "openai"
-model = "Freecombo"
-api_base = "http://69.197.164.221:20128/v1/chat/completions"
+model = "mimo-v2.5-pro"
+api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
 timeout_secs  = 120
 min_confidence       = 35
 fallback_ta_threshold = 50
 max_tokens    = 4096
 
 [manager]
-enabled               = false
+enabled               = true
 provider              = "openai"
-api_base = "http://69.197.164.221:20128/v1/chat/completions"
-model = "Freecombo"
+api_base = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
+model = "mimo-v2.5-pro"
 timeout_secs          = 120
 max_tokens            = 400
 fast_approve_min_conf = 50
@@ -41,7 +41,7 @@ fail_open_on_error    = true
 [risk]
 equity_usd                = 300.0     # reset equity
 risk_per_trade_pct        = 1.0       # 1% per trade = $10 risk — safe
-max_open_positions        = 3
+max_open_positions        = 5
 max_daily_loss_pct        = 5.0
 max_drawdown_pct          = 10.0
 max_leverage              = 100       # 100x — change dynamically via /leverage
@@ -98,4 +98,5 @@ kalman_measurement_noise = 0.5
 kalman_min_velocity_bps  = 2.0
 
 [monitoring]
-db_path = "trades.db"
+db_path      = "trades.db"
+metrics_bind = "0.0.0.0:8080"

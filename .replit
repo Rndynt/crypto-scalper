@@ -31,10 +31,14 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "ARIA_CONFIG_OVERLAY=config/replit.toml ARIA_MANAGER_ENABLED=false ./target/debug/aria"
+args = "ARIA_CONFIG_OVERLAY=config/aggressive.toml ARIA_MANAGER_ENABLED=false ./target/debug/aria"
 waitForPort = 8080
 
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "ARIA_CONFIG_OVERLAY=config/replit.toml ./target/release/aria"]
 build = ["cargo", "build", "--release"]
+
+[userenv]
+
+[userenv.shared]

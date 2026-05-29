@@ -15,5 +15,39 @@
     "partial_taken": false,
     "breakeven_activated": false,
     "strategy": "vwap_scalp"
+  },
+  {
+    "client_id": "aria-SOLUSDT-L-ce9c3ced35103cce",
+    "symbol": "SOLUSDT",
+    "side": "Long",
+    "size": 24.39619419370578,
+    "entry_price": 81.99229700000001,
+    "stop_loss": 81.73406,
+    "take_profit": 82.47188,
+    "opened_at": "2026-05-29T05:56:00.190122752Z",
+    "trailing_activated": false,
+    "peak_price": 81.99229700000001,
+    "trough_price": 81.99229700000001,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "vwap_scalp"
+  },
+  {
+    "client_id": "aria-ETHUSDT-L-dbb90c1abd25ce1c",
+    "symbol": "ETHUSDT",
+    "side": "Long",
+    "size": 0.9940357852882704,
+    "entry_price": 2012.3018000000002,
+    "stop_loss": 2005.964,
+    "take_profit": 2024.072,
+    "opened_at": "2026-05-29T05:56:00.373316126Z",
+    "trailing_activated": false,
+    "peak_price": 2012.3018000000002,
+    "trough_price": 2012.3018000000002,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "vwap_scalp"
   }
 ]
