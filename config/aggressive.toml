@@ -50,6 +50,7 @@ min_reward_risk           = 1.0       # scalping-friendly: allow 1:1 setups
 min_net_edge_bps          = 0.0
 max_position_notional_pct = 200.0
 assumed_daily_volume_usd  = 1_000_000_000.0
+min_margin_usd            = 6.0       # fixed $6 margin per trade (consistent size)
 max_hold_secs             = 900       # 15 min default, change via /hold
 
 [schedule]

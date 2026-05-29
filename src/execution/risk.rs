@@ -35,6 +35,8 @@ pub struct RiskLimits {
     pub max_position_notional_pct: f64,
     pub min_net_edge_bps: f64,
     pub assumed_daily_volume_usd: f64,
+    /// Minimum margin USD per trade. Floor for position sizing.
+    pub min_margin_usd: f64,
 }
 
 #[derive(Debug)]
@@ -329,11 +331,16 @@ impl RiskManager {
                 ));
             }
         }
-        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0;
-        let risk_size = risk_amount / risk_per_unit;
+        let risk_amount = i.limits.min_margin_usd;
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
-        let notional_cap = i.equity * i.limits.max_position_notional_pct / 100.0 / entry.max(1e-9);
-        let size = risk_size.min(leverage_cap).min(notional_cap).max(0.0);
+        let size = if risk_amount > 0.0 {
+            let notional = risk_amount * i.limits.max_leverage as f64;
+            (notional / entry.max(1e-9)).min(leverage_cap).max(0.0)
+        } else {
+            let risk_pct = i.equity * i.limits.risk_per_trade_pct / 100.0;
+            let risk_size = risk_pct / risk_per_unit;
+            risk_size.min(leverage_cap).max(0.0)
+        };
         // For HFT scalping: skip the net edge gate entirely when
         // min_net_edge_bps <= 0.  The reward/risk check above already
         // ensures positive expected value.  The TCM round-trip cost
@@ -354,21 +361,20 @@ impl RiskManager {
         Ok(())
     }
 
-    /// Calculate qty so that (entry - sl).abs() * qty == equity * risk%.
-    /// The result is multiplied by the SurvivalAgent-controlled
-    /// `size_multiplier`, so when the bot is in a low-survive-score
-    /// regime sizes shrink automatically.
-    pub fn calculate_size(&self, entry: f64, stop_loss: f64) -> f64 {
+    /// Calculate qty from fixed margin target.
+    /// size = (min_margin_usd × max_leverage) / entry
+    /// Gives consistent margin regardless of SL distance.
+    pub fn calculate_size(&self, entry: f64, _stop_loss: f64) -> f64 {
         let i = self.inner.lock();
-        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0;
-        let risk_per_unit = (entry - stop_loss).abs();
-        if risk_per_unit <= 0.0 {
+        let margin = i.limits.min_margin_usd;
+        if margin <= 0.0 || entry <= 0.0 {
             return 0.0;
         }
-        let raw = risk_amount / risk_per_unit;
+        let notional = margin * i.limits.max_leverage as f64;
+        let qty = notional / entry.max(1e-9);
+        // Respect leverage cap
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
-        let notional_cap = i.equity * i.limits.max_position_notional_pct / 100.0 / entry.max(1e-9);
-        raw.min(leverage_cap).min(notional_cap).max(0.0)
+        qty.min(leverage_cap).max(0.0)
     }
 
     /// Calculate position size with LLM conviction scaling.
@@ -447,6 +453,7 @@ mod tests {
             max_position_notional_pct: 100.0,
             min_net_edge_bps: 1.0,
             assumed_daily_volume_usd: 1_000_000_000.0,
+            min_margin_usd: 6.0,
         }
     }
 
@@ -454,8 +461,8 @@ mod tests {
     fn size_calculation() {
         let r = RiskManager::new(default_limits(), 10_000.0);
         let size = r.calculate_size(100.0, 99.0);
-        // 1% of 10000 = 100 USD risk; risk per unit = 1 → size = 100
-        approx::assert_abs_diff_eq!(size, 100.0, epsilon = 1e-6);
+        // fixed margin: 6.0 * 5 leverage / 100 entry = 0.3
+        approx::assert_abs_diff_eq!(size, 0.3, epsilon = 1e-6);
     }
 
     #[test]
@@ -521,12 +528,15 @@ mod tests {
     }
 
     #[test]
-    fn size_respects_notional_cap() {
+    fn size_respects_leverage_cap() {
         let mut limits = default_limits();
-        limits.max_position_notional_pct = 10.0;
+        limits.max_leverage = 1; // only 1x
+        limits.min_margin_usd = 6.0;
         let r = RiskManager::new(limits, 1000.0);
         let size = r.calculate_size(100.0, 99.0);
-        approx::assert_abs_diff_eq!(size, 1.0, epsilon = 1e-6);
+        // leverage_cap = 1000 * 1 / 100 = 10, margin-based = 6 * 1 / 100 = 0.06
+        // min(0.06, 10) = 0.06
+        approx::assert_abs_diff_eq!(size, 0.06, epsilon = 1e-6);
     }
 
     #[test]

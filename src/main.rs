@@ -257,6 +257,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
             max_position_notional_pct: cfg.risk.max_position_notional_pct,
             min_net_edge_bps: cfg.risk.min_net_edge_bps,
             assumed_daily_volume_usd: cfg.risk.assumed_daily_volume_usd,
+            min_margin_usd: cfg.risk.min_margin_usd,
         },
         cfg.risk.equity_usd,
     ));

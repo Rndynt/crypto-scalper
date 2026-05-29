@@ -534,6 +534,7 @@ mod tests {
             max_position_notional_pct: 100.0,
             min_net_edge_bps: 1.0,
             assumed_daily_volume_usd: 1_000_000_000.0,
+            min_margin_usd: 6.0,
         }
     }
 
