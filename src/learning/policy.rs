@@ -60,18 +60,16 @@ impl LearningPolicy {
                 continue;
             }
             verdict.matched_lessons.push(l.reason.clone());
-            if l.is_block() {
-                verdict.allowed = false;
-                verdict.size_multiplier = 0.0;
-            } else {
-                verdict.size_multiplier *= l.size_multiplier;
-                verdict.ta_threshold_delta += l.ta_threshold_delta;
-                if let Some(f) = l.llm_min_confidence_floor {
-                    verdict.llm_min_confidence_floor =
-                        Some(verdict.llm_min_confidence_floor.unwrap_or(0).max(f));
-                }
+            // NEVER block — always reduce size. is_block() removed.
+            verdict.size_multiplier *= l.size_multiplier;
+            verdict.ta_threshold_delta += l.ta_threshold_delta;
+            if let Some(f) = l.llm_min_confidence_floor {
+                verdict.llm_min_confidence_floor =
+                    Some(verdict.llm_min_confidence_floor.unwrap_or(0).max(f));
             }
         }
+        // Enforce minimum size multiplier — bot ALWAYS trades with at least 20% size
+        verdict.size_multiplier = verdict.size_multiplier.max(0.2);
         verdict
     }
 
