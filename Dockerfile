@@ -10,7 +10,7 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libssl3 libfontconfig1 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/aria /usr/local/bin/aria
 
