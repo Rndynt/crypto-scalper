@@ -98,6 +98,7 @@ impl Strategy for OrderFlow {
                 "OFI={:.3} book_imb={:.3} vpin={:.3} atr={:.2}",
                 ofi, book_imbalance, vpin, atr
             ),
+            atr: s.last_atr,
         })
     }
 }

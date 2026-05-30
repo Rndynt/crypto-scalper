@@ -113,6 +113,7 @@ impl Strategy for MicrostructureReversion {
                 vpin,
                 vwap
             ),
+            atr: s.last_atr,
         })
     }
 }

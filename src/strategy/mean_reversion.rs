@@ -75,6 +75,7 @@ impl Strategy for MeanReversion {
             take_profit: tp,
             ta_confidence: confidence,
             reason,
+            atr: s.last_atr,
         })
     }
 }

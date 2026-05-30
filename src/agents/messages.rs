@@ -298,6 +298,8 @@ pub struct ManagerProposal {
     pub size: f64,
     pub ta_confidence: u8,
     pub llm_confidence: u8,
+    /// ATR at signal time — used for trailing stop calibration.
+    pub atr: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

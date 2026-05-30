@@ -17,7 +17,7 @@ impl Strategy for VwapScalp {
     fn evaluate(&self, s: &SymbolState, c: &Candle) -> Option<PreSignal> {
         let vwap = s.last_vwap?;
         let slope = s.last_vwap_slope.unwrap_or(0.0);
-        let _atr = s.last_atr?;
+        // ATR used for SL/TP below
 
         let dist_pct = (c.close - vwap) / vwap.max(1e-9) * 100.0;
 
@@ -34,10 +34,14 @@ impl Strategy for VwapScalp {
             return None;
         };
 
-        // Fixed % SL/TP for 100x leverage HFT: 1.5% SL, 3.0% TP (R:R = 1:2)
+        // ATR-based SL/TP — correct for variable volatility.
+        // SL = 1× ATR, TP = 2× ATR (1:2 R:R minimum).
+        // At 100x leverage, 0.3% ATR SL = 30% margin risk per trade — acceptable.
+        // Fallback: 0.35% SL / 0.70% TP if ATR not ready.
+        let atr = s.last_atr.unwrap_or(c.close * 0.0035);
         let (sl, tp) = match side {
-            Side::Long => (c.close * 0.985, c.close * 1.030),
-            Side::Short => (c.close * 1.015, c.close * 0.970),
+            Side::Long  => (c.close - atr, c.close + atr * 2.0),
+            Side::Short => (c.close + atr, c.close - atr * 2.0),
         };
 
         let mut score: f64 = 62.0; // Above the 60 threshold
@@ -66,6 +70,7 @@ impl Strategy for VwapScalp {
             take_profit: tp,
             ta_confidence: score.clamp(0.0, 100.0) as u8,
             reason: format!("VWAP {vwap:.4} slope {slope:.5} dist {dist_pct:.2}%"),
+            atr: s.last_atr,
         })
     }
 }

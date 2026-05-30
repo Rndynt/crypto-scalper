@@ -125,6 +125,7 @@ impl Strategy for KalmanTrendStrategy {
                 ofi,
                 vpin
             ),
+            atr: s.last_atr,
         })
     }
 }

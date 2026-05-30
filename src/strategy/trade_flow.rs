@@ -104,6 +104,7 @@ impl Strategy for TradeFlow {
                 ofi,
                 atr
             ),
+            atr: s.last_atr,
         })
     }
 }

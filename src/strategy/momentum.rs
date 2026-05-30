@@ -89,6 +89,7 @@ impl Strategy for Momentum {
             take_profit: tp,
             ta_confidence: score.clamp(0.0, 100.0) as u8,
             reason,
+            atr: s.last_atr,
         })
     }
 }

@@ -245,6 +245,7 @@ fn build_proposal(brain: &BrainOutcome) -> ManagerProposal {
         size: brain.risk.size,
         ta_confidence: signal.ta_confidence,
         llm_confidence: brain.decision.confidence,
+        atr: signal.atr,
     }
 }
 

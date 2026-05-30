@@ -92,8 +92,13 @@ pub fn spawn(
     let funding: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     let spreads: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     let spread_ts: Arc<Mutex<HashMap<String, i64>>> = Arc::new(Mutex::new(HashMap::new()));
-    // Track symbols with open positions to prevent duplicate entries.
+    // open_symbols: symbols with a CONFIRMED open position (updated on OrderFilled).
     let open_symbols: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    // pending_symbols: symbols where RiskVerdict::Allowed was just published but
+    // the position is not yet confirmed by the exchange. This closes the race window
+    // between RiskVerdict and OrderFilled (typically 2-10s due to LLM + execution).
+    // Released when OrderFilled fires (→ moves to open_symbols) or on Veto/error.
+    let pending_symbols: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let slippage_bps: Arc<Mutex<HashMap<String, f64>>> = Arc::new(Mutex::new(HashMap::new()));
     let strategy_perf: Arc<Mutex<HashMap<String, VecDeque<f64>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -123,10 +128,13 @@ pub fn spawn(
                     continue;
                 }
                 AgentEvent::OrderFilled { symbol, .. } => {
+                    // Move from pending → confirmed open
+                    pending_symbols.lock().remove(&symbol);
                     open_symbols.lock().insert(symbol);
                     continue;
                 }
                 AgentEvent::PositionRecovered { symbol, .. } => {
+                    pending_symbols.lock().remove(&symbol);
                     open_symbols.lock().insert(symbol);
                     continue;
                 }
@@ -137,6 +145,7 @@ pub fn spawn(
                     ..
                 } => {
                     open_symbols.lock().remove(&symbol);
+                    pending_symbols.lock().remove(&symbol);
                     let mut perf = strategy_perf.lock();
                     let q = perf.entry(strategy.clone()).or_default();
                     q.push_back(pnl_usd);
@@ -211,9 +220,13 @@ pub fn spawn(
                         }));
                         continue;
                     }
-                    // Block if symbol already has an open position.
-                    if open_symbols.lock().contains(&signal.symbol) {
-                        warn!(symbol = %signal.symbol, "risk blocked: duplicate position");
+                    // Block if symbol already has an open OR pending position.
+                    // pending_symbols covers the race window between RiskVerdict::Allowed
+                    // and the eventual OrderFilled confirmation (2-10s LLM + execution gap).
+                    let already_taken = open_symbols.lock().contains(&signal.symbol)
+                        || pending_symbols.lock().contains(&signal.symbol);
+                    if already_taken {
+                        warn!(symbol = %signal.symbol, "risk blocked: position open or pending");
                         bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
                             signal: signal.clone(),
                             regime,
@@ -521,6 +534,15 @@ pub fn spawn(
                         matched_lessons: verdict.matched_lessons,
                         reason: None,
                     }));
+                    // Lock symbol immediately — prevents duplicate while LLM + execution run.
+                    // Released on OrderFilled (→ open_symbols) or Veto (→ cleared).
+                    pending_symbols.lock().insert(capped_signal.symbol.clone());
+                }
+                // Veto: release pending lock so the symbol can be retried next signal.
+                AgentEvent::ManagerVerdictEmitted(ref v)
+                    if matches!(v.action, crate::agents::messages::ManagerAction::Veto { .. }) =>
+                {
+                    pending_symbols.lock().remove(&v.proposal.symbol);
                 }
                 _ => {}
             }

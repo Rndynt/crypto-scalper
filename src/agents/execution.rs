@@ -538,7 +538,8 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 trailing_activated: false,
                                 peak_price: fill_price,
                                 trough_price: fill_price,
-                                atr_at_entry: (req.stop_loss - fill_price).abs().max(0.0001), // Approximate ATR from SL distance
+                                atr_at_entry: v.proposal.atr
+                                    .unwrap_or_else(|| (req.stop_loss - fill_price).abs().max(0.0001)),
                                 partial_taken: false,
                                 breakeven_activated: false,
                                 strategy: v.proposal.strategy.clone(),
