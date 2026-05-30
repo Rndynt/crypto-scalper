@@ -335,15 +335,17 @@ impl QuantEngine {
             reasons.push(format!("vol-mult={:.2}", vol_mult));
         }
 
-        // 3. VaR check — skip during cold-start (no trade history)
-        //    to avoid the bootstrap paradox: can't trade → can't build history.
-        let var_rejected = if outcomes_total >= self.cfg.kelly_min_trades {
+        // 3. VaR check — SOFT GATE: reduce size instead of hard reject.
+        //    Bot must keep trading. VaR exceeded → 0.3x size, not block.
+        //    Skip during cold-start to avoid bootstrap paradox.
+        let var_exceeded = if outcomes_total >= self.cfg.kelly_min_trades {
             self.var_check(symbol, entry, stop_loss, equity, base_risk_pct)
         } else {
             false
         };
-        if var_rejected {
-            reasons.push("VaR cap exceeded".into());
+        if var_exceeded {
+            size_mult *= 0.3;
+            reasons.push("VaR-derated: -70%".into());
         }
 
         // 4. IC-based confidence adjustment
@@ -383,7 +385,7 @@ impl QuantEngine {
             size_multiplier: size_mult.clamp(0.1, 3.0),
             kelly_fraction: kelly,
             vol_multiplier: vol_mult,
-            var_rejected,
+            var_rejected: false, // VaR is now soft gate, never hard reject
             ic_adjustment: ic_adj,
             kalman_direction: kalman_dir,
             reason: reasons.join(" | "),
