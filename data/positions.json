@@ -15,5 +15,39 @@
     "partial_taken": false,
     "breakeven_activated": false,
     "strategy": "ema_ribbon"
+  },
+  {
+    "client_id": "aria-BTCUSDT-L-6add6b437d212252",
+    "symbol": "BTCUSDT",
+    "side": "Long",
+    "size": 0.020409662750732704,
+    "entry_price": 73505.62419000002,
+    "stop_loss": 73427.95879909153,
+    "take_profit": 73627.88240181695,
+    "opened_at": "2026-05-30T07:36:31.272506595Z",
+    "trailing_activated": false,
+    "peak_price": 73505.62419000002,
+    "trough_price": 73505.62419000002,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "vwap_scalp"
+  },
+  {
+    "client_id": "aria-ETHUSDT-S-6d611b5cd506331a",
+    "symbol": "ETHUSDT",
+    "side": "Short",
+    "size": 0.7445129396348908,
+    "entry_price": 2014.437789,
+    "stop_loss": 2018.2790277685522,
+    "take_profit": 2005.8924305786197,
+    "opened_at": "2026-05-30T07:36:44.696770047Z",
+    "trailing_activated": false,
+    "peak_price": 2014.437789,
+    "trough_price": 2014.437789,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "ema_ribbon"
   }
 ]
