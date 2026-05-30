@@ -31,7 +31,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cargo build 2>&1 && ARIA_CONFIG_OVERLAY=config/replit.toml ./target/debug/aria"
+args = "cargo build 2>&1 && ARIA_CONFIG_OVERLAY=config/aggressive.toml ./target/debug/aria"
 waitForPort = 8080
 
 [deployment]
