@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct SignalAgentConfig {
     pub active: Vec<StrategyName>,
@@ -78,6 +78,11 @@ pub fn spawn(
         let mut feeds_by_symbol: HashMap<String, TimedExternalSnapshot> = HashMap::new();
         let mut higher_timeframes: HashMap<String, BTreeMap<i64, HigherTimeframeSnapshot>> =
             HashMap::new();
+        // Symbols that currently have an open position.
+        // When a symbol is in this set, skip signal screening — the position
+        // is already being managed by the execution agent (SL/TP/trailing/time exit).
+        // Resume screening only after PositionClosed.
+        let mut open_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             let ev = match rx.recv().await {
                 Ok(ev) => ev,
@@ -185,6 +190,16 @@ pub fn spawn(
                             best_strategy: None,
                             best_confidence: None,
                         }));
+                        continue;
+                    }
+                    // If symbol already has an open position, skip screening entirely.
+                    // The execution agent manages the trade (SL/TP/trailing/time-exit).
+                    // We resume screening only after PositionClosed fires.
+                    if open_symbols.contains(&symbol) {
+                        debug!(
+                            symbol = %symbol,
+                            "signal: holding position — skipping screening"
+                        );
                         continue;
                     }
                     let htf = higher_timeframes.get(&symbol).cloned().unwrap_or_default();
@@ -363,6 +378,29 @@ pub fn spawn(
                         state.last_vwap_slope = None;
                     }
                     tracing::info!("signal: VWAP reset for new session");
+                }
+                // Track open positions — pause screening for a symbol while it
+                // has an active trade, resume only after close.
+                AgentEvent::OrderFilled { symbol, side, .. } => {
+                    info!(
+                        symbol = %symbol,
+                        side = ?side,
+                        "signal: position opened — pausing screening for {}",
+                        symbol
+                    );
+                    open_symbols.insert(symbol);
+                }
+                AgentEvent::PositionRecovered { symbol, .. } => {
+                    // Positions recovered from disk on restart — treat as open.
+                    open_symbols.insert(symbol);
+                }
+                AgentEvent::PositionClosed { symbol, .. } => {
+                    info!(
+                        symbol = %symbol,
+                        "signal: position closed — resuming screening for {}",
+                        symbol
+                    );
+                    open_symbols.remove(&symbol);
                 }
                 AgentEvent::Shutdown => break,
                 _ => {}
