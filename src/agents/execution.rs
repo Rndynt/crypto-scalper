@@ -401,6 +401,16 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                     // Apply last-mile lesson-derived size multiplier so
                     // derate/boost policies also influence final execution.
                     req.size *= exec_policy.size_multiplier.clamp(0.0, 2.0);
+                    // Enforce min_margin_usd floor — learning multipliers can
+                    // shrink size below usable levels after double-application.
+                    {
+                        let limits = risk.limits();
+                        let notional = req.size * req.price.unwrap_or(0.0);
+                        let margin = notional / limits.max_leverage.max(1) as f64;
+                        if margin < limits.min_margin_usd && req.size > 0.0 {
+                            req.size = limits.min_margin_usd * limits.max_leverage.max(1) as f64 / req.price.unwrap_or(1.0).max(1e-9);
+                        }
+                    }
                     if req.size <= 0.0 {
                         info!(
                             symbol = %v.proposal.symbol,
