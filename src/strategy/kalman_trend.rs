@@ -29,7 +29,9 @@ impl Strategy for KalmanTrendStrategy {
         let atr = s.last_atr.filter(|&a| a > 0.0 && a < c.close * 0.01)?;
 
         // Gate: VPIN safety check
-        if vpin > 0.48 {
+        if vpin > 0.78 {
+        // Raised from 0.48 — crypto VPIN is persistently high (>0.7),
+        // hard gate at 0.48 blocks all signals. 0.78 = 95th+ percentile only.
             return None;
         }
 

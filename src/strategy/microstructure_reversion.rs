@@ -63,7 +63,8 @@ impl Strategy for MicrostructureReversion {
         }
 
         // VPIN: allow slightly higher since this is counter-trend
-        if vpin > 0.50 {
+        if vpin > 0.80 {
+        // Raised from 0.50 — crypto VPIN is persistently high.
             return None;
         }
 

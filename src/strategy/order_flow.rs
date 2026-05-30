@@ -29,7 +29,8 @@ impl Strategy for OrderFlow {
 
         // Gate 1: VPIN must be low — high VPIN = adverse selection = informed trader
         // is on the OTHER side of your trade. Very dangerous.
-        if vpin > 0.45 {
+        if vpin > 0.75 {
+        // Raised from 0.45 — crypto VPIN is persistently high.
             return None;
         }
 

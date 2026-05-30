@@ -31,7 +31,8 @@ impl Strategy for TradeFlow {
         // VPIN < 0.35: safe, flow is mostly uninformed
         // VPIN 0.35-0.50: caution
         // VPIN > 0.50: informed traders active, STAY OUT
-        if vpin > 0.42 {
+        if vpin > 0.72 {
+        // Raised from 0.42 — crypto VPIN is persistently high.
             return None;
         }
 
