@@ -481,6 +481,16 @@ async fn run_agents(cfg: Config) -> Result<()> {
         kalman_min_velocity_bps: cfg.quant.kalman_min_velocity_bps,
     }));
 
+    // Determine the screening (15m) timeframe — the highest configured timeframe,
+    // or 900s (15m) as a fallback. If only one timeframe is configured, the
+    // screening layer is effectively disabled (bias stays Unknown).
+    let screening_timeframe_secs = timeframes
+        .iter()
+        .filter(|tf| tf.seconds != entry_timeframe.seconds)
+        .map(|tf| tf.seconds)
+        .max()
+        .unwrap_or(900);
+
     let _signal = crypto_scalper::agents::signal::spawn(
         bus.clone(),
         Arc::clone(&states),
@@ -491,6 +501,9 @@ async fn run_agents(cfg: Config) -> Result<()> {
             quant_engine: Some(Arc::clone(&quant_engine)),
             paper_scout_enabled: cfg.mode.run_mode == "paper" && cfg.strategy.paper_scout_enabled,
             entry_timeframe_secs: entry_timeframe.seconds,
+            screening_timeframe_secs,
+            rest_base_url: cfg.exchange.rest_base_url.clone(),
+            symbols: cfg.pairs.symbols.clone(),
         },
         Arc::clone(&shared_state),
     );

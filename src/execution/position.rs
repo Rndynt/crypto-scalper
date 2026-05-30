@@ -2,9 +2,15 @@
 //!
 //! Enhanced for HFT quant:
 //! - ATR-based trailing stop (activates at 1R, trails at 0.5× ATR)
-//! - Time-based exit (close positions open > max_hold_candles)
+//! - Time-based exit (close positions open > max_hold_secs)
 //! - Partial take-profit (close 50% at first TP, rest trails)
 //! - Breakeven stop (move SL to entry after 0.5R profit)
+//!
+//! `check_exits` now returns `Vec<PositionAction>` so the execution agent
+//! can distinguish between a full close, a partial reduce, and an SL move.
+//! Partial TP no longer fires `PositionClosed` — it fires `PositionReduced`.
+//! SL moves (breakeven, trailing) are returned as `MoveSL` so the execution
+//! agent can cancel the old broker SL order and replace it at the new level.
 
 use crate::data::Side;
 use chrono::{DateTime, Utc};
@@ -96,13 +102,21 @@ impl Default for PositionConfig {
 }
 
 /// Action the execution agent should take for a position.
+///
+/// **P0-4 fix**: `check_exits` now returns `Vec<PositionAction>`.
+/// - `Close`   → full position close; emit `PositionClosed`
+/// - `Reduce`  → partial close (PartialTP); emit `PositionReduced` only
+/// - `MoveSL`  → SL moved (breakeven/trailing); cancel+replace broker order
+/// - `None`    → nothing to do (should not appear in the returned vector)
 #[derive(Debug, Clone)]
 pub enum PositionAction {
     /// Close the entire position.
     Close(Position, PositionExitReason),
-    /// Close partial (size, reason).
+    /// Partial close: (position snapshot, reduce_size, reason).
+    /// `position.size` is already the reduced partial size to trade out of.
+    /// The `reduce_size` field equals `position.size`.
     Reduce(Position, f64, PositionExitReason),
-    /// Update SL (new_stop_loss).
+    /// Update SL on the broker — new_stop_loss is the target price.
     MoveSL(Position, f64),
     /// No action needed.
     None,
@@ -206,17 +220,24 @@ impl PositionBook {
     }
 
     /// Enhanced exit check with ATR trailing, breakeven, partial TP,
-    /// and time-based exits.  Returns a list of actions for the
-    /// execution agent to process.
+    /// and time-based exits.
+    ///
+    /// Returns a list of `PositionAction`s for the execution agent:
+    /// - `Close`   → full position close (SL/TP/trailing/time-exit hit)
+    /// - `Reduce`  → partial TP: close half, remainder stays open at breakeven SL
+    /// - `MoveSL`  → breakeven or trailing SL moved; broker order must be updated
+    ///
+    /// **P0-4**: `PartialTP` is now returned as `Reduce`, not `Close`.
+    /// **P0-5**: Breakeven and trailing SL moves are returned as `MoveSL` so the
+    ///           execution agent can cancel the stale broker SL order and replace it.
     pub fn check_exits(
         &self,
         symbol: &str,
         price: f64,
         cfg: &PositionConfig,
-    ) -> Vec<(Position, PositionExitReason)> {
-        let mut out = Vec::new();
-        let mut to_remove = Vec::new();
-        let mut sl_updates: Vec<(String, f64)> = Vec::new();
+    ) -> Vec<PositionAction> {
+        let mut out: Vec<PositionAction> = Vec::new();
+        let mut to_remove: Vec<String> = Vec::new();
         let mut book = self.inner.lock();
         let now = Utc::now();
 
@@ -231,7 +252,7 @@ impl PositionBook {
             if cfg.max_hold_secs > 0 {
                 let held = (now - p.opened_at).num_seconds();
                 if held > cfg.max_hold_secs {
-                    out.push((p.clone(), PositionExitReason::TimeExit));
+                    out.push(PositionAction::Close(p.clone(), PositionExitReason::TimeExit));
                     to_remove.push(id.clone());
                     continue;
                 }
@@ -241,24 +262,24 @@ impl PositionBook {
             match p.side {
                 Side::Long => {
                     if p.stop_loss > 0.0 && price <= p.stop_loss {
-                        out.push((p.clone(), PositionExitReason::StopLoss));
+                        out.push(PositionAction::Close(p.clone(), PositionExitReason::StopLoss));
                         to_remove.push(id.clone());
                         continue;
                     }
                     if p.take_profit > 0.0 && price >= p.take_profit {
-                        out.push((p.clone(), PositionExitReason::TakeProfit));
+                        out.push(PositionAction::Close(p.clone(), PositionExitReason::TakeProfit));
                         to_remove.push(id.clone());
                         continue;
                     }
                 }
                 Side::Short => {
                     if p.stop_loss > 0.0 && price >= p.stop_loss {
-                        out.push((p.clone(), PositionExitReason::StopLoss));
+                        out.push(PositionAction::Close(p.clone(), PositionExitReason::StopLoss));
                         to_remove.push(id.clone());
                         continue;
                     }
                     if p.take_profit > 0.0 && price <= p.take_profit {
-                        out.push((p.clone(), PositionExitReason::TakeProfit));
+                        out.push(PositionAction::Close(p.clone(), PositionExitReason::TakeProfit));
                         to_remove.push(id.clone());
                         continue;
                     }
@@ -272,36 +293,49 @@ impl PositionBook {
 
             match p.side {
                 Side::Long => {
-
                     let profit_r = (price - p.entry_price) / r;
 
-                    // Partial TP: close 50% at 1R profit, move SL to breakeven
+                    // Partial TP: close 50% at 1R profit, move SL to breakeven.
+                    // P0-4: return Reduce (not Close) so PositionReduced fires instead of PositionClosed.
                     if cfg.partial_tp_enabled && !p.partial_taken && profit_r >= cfg.partial_tp_r {
                         p.partial_taken = true;
                         let reduce_size = p.size * 0.5;
-                        // Move SL to breakeven after partial
-                        p.stop_loss = p.entry_price;
-                        sl_updates.push((id.clone(), p.entry_price));
-                        out.push((
-                            Position {
-                                size: reduce_size,
-                                ..p.clone()
-                            },
+                        let new_sl = p.entry_price;
+                        let reduce_pos = Position {
+                            size: reduce_size,
+                            ..p.clone()
+                        };
+                        // Reduce remaining size in book
+                        p.size -= reduce_size;
+                        // Move SL to breakeven in book
+                        let old_sl = p.stop_loss;
+                        p.stop_loss = new_sl;
+
+                        // Emit the partial close action
+                        out.push(PositionAction::Reduce(
+                            reduce_pos,
+                            reduce_size,
                             PositionExitReason::PartialTP,
                         ));
-                        // Reduce remaining size
-                        p.size -= reduce_size;
+                        // Emit the SL move so execution agent can update the broker order
+                        if (new_sl - old_sl).abs() > f64::EPSILON {
+                            out.push(PositionAction::MoveSL(p.clone(), new_sl));
+                        }
+
                         if p.size <= 0.0 {
                             to_remove.push(id.clone());
                             continue;
                         }
                     }
 
-                    // Breakeven: move SL to entry after 0.5R profit (if partial not taken)
+                    // Breakeven: move SL to entry after 0.5R profit (if partial not taken).
                     if !p.breakeven_activated && !p.partial_taken && profit_r >= cfg.breakeven_r {
                         p.breakeven_activated = true;
-                        p.stop_loss = p.entry_price;
-                        sl_updates.push((id.clone(), p.entry_price));
+                        let new_sl = p.entry_price;
+                        if new_sl > p.stop_loss {
+                            p.stop_loss = new_sl;
+                            out.push(PositionAction::MoveSL(p.clone(), new_sl));
+                        }
                     }
 
                     // Trailing stop: activate at 1R profit, trail at 0.5× ATR
@@ -312,40 +346,46 @@ impl PositionBook {
                         let trail_dist = if p.atr_at_entry > 0.0 {
                             p.atr_at_entry * cfg.trail_atr_mult
                         } else {
-                            // Fallback: 50% of profit
                             (price - p.entry_price) * 0.5
                         };
                         let trail_stop = price - trail_dist;
                         if trail_stop > p.stop_loss {
                             p.stop_loss = trail_stop;
-                            sl_updates.push((id.clone(), trail_stop));
+                            out.push(PositionAction::MoveSL(p.clone(), trail_stop));
                         }
                         // Check if trailing stop hit
                         if price <= p.stop_loss {
-                            out.push((p.clone(), PositionExitReason::Trailing));
+                            out.push(PositionAction::Close(p.clone(), PositionExitReason::Trailing));
                             to_remove.push(id.clone());
                             continue;
                         }
                     }
                 }
                 Side::Short => {
-
                     let profit_r = (p.entry_price - price) / r;
 
-                    // Partial TP: close 50% at 1R profit, move SL to breakeven
+                    // Partial TP: close 50% at 1R profit, move SL to breakeven.
                     if cfg.partial_tp_enabled && !p.partial_taken && profit_r >= cfg.partial_tp_r {
                         p.partial_taken = true;
                         let reduce_size = p.size * 0.5;
-                        p.stop_loss = p.entry_price;
-                        sl_updates.push((id.clone(), p.entry_price));
-                        out.push((
-                            Position {
-                                size: reduce_size,
-                                ..p.clone()
-                            },
+                        let new_sl = p.entry_price;
+                        let reduce_pos = Position {
+                            size: reduce_size,
+                            ..p.clone()
+                        };
+                        p.size -= reduce_size;
+                        let old_sl = p.stop_loss;
+                        p.stop_loss = new_sl;
+
+                        out.push(PositionAction::Reduce(
+                            reduce_pos,
+                            reduce_size,
                             PositionExitReason::PartialTP,
                         ));
-                        p.size -= reduce_size;
+                        if (new_sl - old_sl).abs() > f64::EPSILON {
+                            out.push(PositionAction::MoveSL(p.clone(), new_sl));
+                        }
+
                         if p.size <= 0.0 {
                             to_remove.push(id.clone());
                             continue;
@@ -354,8 +394,11 @@ impl PositionBook {
 
                     if !p.breakeven_activated && !p.partial_taken && profit_r >= cfg.breakeven_r {
                         p.breakeven_activated = true;
-                        p.stop_loss = p.entry_price;
-                        sl_updates.push((id.clone(), p.entry_price));
+                        let new_sl = p.entry_price;
+                        if new_sl < p.stop_loss {
+                            p.stop_loss = new_sl;
+                            out.push(PositionAction::MoveSL(p.clone(), new_sl));
+                        }
                     }
 
                     if !p.trailing_activated && profit_r >= cfg.trail_activate_r {
@@ -370,10 +413,10 @@ impl PositionBook {
                         let trail_stop = price + trail_dist;
                         if trail_stop < p.stop_loss {
                             p.stop_loss = trail_stop;
-                            sl_updates.push((id.clone(), trail_stop));
+                            out.push(PositionAction::MoveSL(p.clone(), trail_stop));
                         }
                         if price >= p.stop_loss {
-                            out.push((p.clone(), PositionExitReason::Trailing));
+                            out.push(PositionAction::Close(p.clone(), PositionExitReason::Trailing));
                             to_remove.push(id.clone());
                             continue;
                         }

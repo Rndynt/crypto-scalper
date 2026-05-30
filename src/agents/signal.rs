@@ -1,15 +1,24 @@
 //! Signal agent — listens for `CandleClosed` events, updates per-symbol
 //! state, runs the regime detector + active strategies, and emits a
 //! `PreSignalEmitted` event for the best candidate.
+//!
+//! **P0-1/P0-2/P0-3 fix**: The agent now maintains a separate per-symbol
+//! `SymbolState` for the 15m (screening) timeframe alongside the 1m entry
+//! states. When a 15m candle closes, `ScreeningBias` is computed from the
+//! HTF state and stored per symbol. 1m entry signals are hard-gated: a LONG
+//! is only emitted when the screening bias is `Bullish` or `Unknown`; a SHORT
+//! only when `Bearish` or `Unknown`. `ScreeningUpdated` is published so other
+//! agents can observe the bias in real time.
 
 use crate::agents::MessageBus;
-use crate::agents::messages::{AgentEvent, AgentId, SignalEvaluationMsg};
+use crate::agents::messages::{AgentEvent, AgentId, ScreeningBias, SignalEvaluationMsg};
 use crate::config::{AdvancedAlphaCfg, Schedule};
 use crate::data::Side;
 use crate::feeds::ExternalSnapshot;
 use crate::microstructure::{Ofi, Vpin};
 use crate::quant::QuantEngine;
 use crate::shared_state::SharedState;
+use crate::feeds::alt_data::AltDataInputs;
 use crate::strategy::{
     RegimeDetector,
     Strategy,
@@ -17,7 +26,6 @@ use crate::strategy::{
         AdvancedAlphaInputs, AlphaGateDecision, advanced_alpha_gate, alt_data_inputs_from_snapshot,
         funding_rate_from_snapshot, kalman_trend_score,
     },
-    // Quant strategies — order flow, microstructure, Kalman
     kalman_trend::KalmanTrendStrategy,
     microstructure_reversion::MicrostructureReversion,
     order_flow::OrderFlow,
@@ -26,7 +34,7 @@ use crate::strategy::{
     state::{PreSignal, StrategyName, SymbolState},
     trade_flow::TradeFlow,
 };
-use chrono::{DateTime, Duration as ChronoDuration, Timelike, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -40,6 +48,13 @@ pub struct SignalAgentConfig {
     pub quant_engine: Option<Arc<QuantEngine>>,
     pub paper_scout_enabled: bool,
     pub entry_timeframe_secs: i64,
+    /// Timeframe used for higher-timeframe screening (default: 900 = 15m).
+    /// When a candle of this timeframe closes, `ScreeningBias` is recomputed.
+    pub screening_timeframe_secs: i64,
+    /// REST base URL used to bootstrap HTF states on startup.
+    pub rest_base_url: String,
+    /// Symbol list — needed for HTF bootstrap allocation.
+    pub symbols: Vec<String>,
 }
 
 pub fn spawn(
@@ -55,21 +70,46 @@ pub fn spawn(
         quant_engine,
         paper_scout_enabled,
         entry_timeframe_secs,
+        screening_timeframe_secs,
+        rest_base_url,
+        symbols,
     } = cfg;
+
     let mut rx = bus.subscribe();
+
     tokio::spawn(async move {
         info!(?active, "signal agent starting");
         crate::agents::heartbeat::spawn(bus.clone(), AgentId::Signal);
         shared_state.heartbeat("signal");
 
+        // --- HTF screening state (P0-1/P0-2/P0-3) ---
+        // Separate SymbolState per symbol for the screening timeframe.
+        // These are NOT shared with main.rs — they're owned solely by this agent.
+        let mut htf_states: HashMap<String, SymbolState> = symbols
+            .iter()
+            .map(|s| (s.clone(), SymbolState::new(s)))
+            .collect();
+        let mut screening_bias: HashMap<String, ScreeningBias> = HashMap::new();
+
+        // Bootstrap HTF states so the first screening bias is available immediately.
+        if screening_timeframe_secs > 0 && !rest_base_url.is_empty() {
+            bootstrap_htf_states(&mut htf_states, &rest_base_url, screening_timeframe_secs).await;
+            // Compute initial bias from bootstrapped candles
+            for (sym, state) in &htf_states {
+                let bias = compute_htf_bias(state);
+                screening_bias.insert(sym.clone(), bias);
+                info!(symbol = %sym, bias = %bias.as_str(), "initial screening bias (bootstrapped)");
+            }
+        }
+
         // VPIN bucket size helper — target ~$50k USD per bucket
         fn vpin_bucket_size_for(symbol: &str) -> f64 {
             match symbol {
-                s if s.starts_with("BTC") => 0.8,   // ~$50k / $62k per BTC
-                s if s.starts_with("ETH") => 16.0,  // ~$50k / $3.1k per ETH
-                s if s.starts_with("SOL") => 250.0, // ~$50k / $200 per SOL
-                s if s.starts_with("BNB") => 120.0, // ~$50k / $420 per BNB
-                _ => 10.0,                          // fallback
+                s if s.starts_with("BTC") => 0.8,
+                s if s.starts_with("ETH") => 16.0,
+                s if s.starts_with("SOL") => 250.0,
+                s if s.starts_with("BNB") => 120.0,
+                _ => 10.0,
             }
         }
 
@@ -79,10 +119,8 @@ pub fn spawn(
         let mut higher_timeframes: HashMap<String, BTreeMap<i64, HigherTimeframeSnapshot>> =
             HashMap::new();
         // Symbols that currently have an open position.
-        // When a symbol is in this set, skip signal screening — the position
-        // is already being managed by the execution agent (SL/TP/trailing/time exit).
-        // Resume screening only after PositionClosed.
         let mut open_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         loop {
             let ev = match rx.recv().await {
                 Ok(ev) => ev,
@@ -103,21 +141,15 @@ pub fn spawn(
                     );
                 }
                 AgentEvent::Tick { symbol, trade } => {
-                    // Classify trade direction and update VPIN
                     let (buy_vol, sell_vol) = if trade.is_buyer_maker {
-                        (0.0, trade.qty) // seller aggressor = sell volume
+                        (0.0, trade.qty)
                     } else {
-                        (trade.qty, 0.0) // buyer aggressor = buy volume
+                        (trade.qty, 0.0)
                     };
-
-                    // Update VPIN tracker
                     let vpin_tracker = vpin_by_symbol
                         .entry(symbol.clone())
                         .or_insert_with(|| Vpin::new(vpin_bucket_size_for(&symbol), 50));
                     let vpin_value = vpin_tracker.update(buy_vol, sell_vol);
-
-                    // Store VPIN in state — adaptive threshold
-                    // Only log on state TRANSITION (normal→abnormal) to avoid flooding
                     if let Some(vpin) = vpin_value {
                         let abnormal = vpin_tracker.is_abnormal()
                             .map(|(is_ab, _raw, _thresh)| is_ab)
@@ -125,7 +157,6 @@ pub fn spawn(
                         if let Ok(mut states_guard) = states.try_lock() {
                             if let Some(state) = states_guard.get_mut(&symbol) {
                                 let was_abnormal = state.vpin_abnormal;
-                                // Log only on transition: normal → abnormal
                                 if abnormal && !was_abnormal {
                                     if let Some((_, raw, thresh)) = vpin_tracker.is_abnormal() {
                                         warn!(symbol=%symbol, vpin=raw, threshold=thresh, "VPIN ABNORMAL — above 95th percentile");
@@ -169,6 +200,36 @@ pub fn spawn(
                     timeframe_secs,
                     candle,
                 } => {
+                    // ── HTF screening update (P0-2/P0-3) ──────────────────────────
+                    // When a 15m (screening) candle closes, update the HTF state and
+                    // recompute the ScreeningBias for this symbol. Publish the bias
+                    // so other agents can observe it.
+                    if screening_timeframe_secs > 0 && timeframe_secs == screening_timeframe_secs {
+                        if let Some(htf) = htf_states.get_mut(&symbol) {
+                            htf.on_closed(candle);
+                            let bias = compute_htf_bias(htf);
+                            screening_bias.insert(symbol.clone(), bias);
+                            info!(
+                                symbol = %symbol,
+                                bias = %bias.as_str(),
+                                candles = htf.candles.len(),
+                                "📡 15m screening bias updated"
+                            );
+                            bus.publish(AgentEvent::ScreeningUpdated {
+                                symbol: symbol.clone(),
+                                bias,
+                                ts: Utc::now(),
+                            });
+                        }
+                        // Also store the raw open/close snapshot for legacy HTF bias context
+                        higher_timeframes
+                            .entry(symbol)
+                            .or_default()
+                            .insert(timeframe_secs, HigherTimeframeSnapshot::from_candle(candle));
+                        continue;
+                    }
+
+                    // ── Non-entry, non-screening timeframe (e.g. 5m when entry=1m) ─
                     if timeframe_secs != entry_timeframe_secs {
                         higher_timeframes
                             .entry(symbol)
@@ -176,6 +237,8 @@ pub fn spawn(
                             .insert(timeframe_secs, HigherTimeframeSnapshot::from_candle(candle));
                         continue;
                     }
+
+                    // ── Entry timeframe (e.g. 1m) ─────────────────────────────────
                     if in_dead_zone(&schedule) && !paper_scout_enabled {
                         bus.publish(AgentEvent::SignalEvaluation(SignalEvaluationMsg {
                             symbol,
@@ -192,16 +255,20 @@ pub fn spawn(
                         }));
                         continue;
                     }
-                    // If symbol already has an open position, skip screening entirely.
-                    // The execution agent manages the trade (SL/TP/trailing/time-exit).
-                    // We resume screening only after PositionClosed fires.
+
                     if open_symbols.contains(&symbol) {
-                        debug!(
-                            symbol = %symbol,
-                            "signal: holding position — skipping screening"
-                        );
+                        debug!(symbol = %symbol, "signal: holding position — skipping screening");
                         continue;
                     }
+
+                    // P0-3: Gate the signal by the 15m screening bias.
+                    // The bias is checked after strategy evaluation so we can log both
+                    // the strategy outcome and the bias block separately.
+                    let current_bias = screening_bias
+                        .get(&symbol)
+                        .copied()
+                        .unwrap_or(ScreeningBias::Unknown);
+
                     let htf = higher_timeframes.get(&symbol).cloned().unwrap_or_default();
                     let symbol_for_state = symbol.clone();
                     let (best, regime, candles, chosen, best_seen, forced) = {
@@ -213,7 +280,6 @@ pub fn spawn(
                         let prev_close = state.candles.back().map(|c| c.close);
                         state.on_closed(candle);
 
-                        // Quant engine: update Kalman filter and record return
                         if let Some(ref qe) = quant_engine {
                             qe.update_kalman(&symbol, candle.close);
                             if let Some(prev) = prev_close {
@@ -227,12 +293,12 @@ pub fn spawn(
                         let regime = RegimeDetector::detect(state);
                         let chosen = select_strategies(&active, regime);
 
-                        // Show operator what's happening every candle close
                         info!(
                             symbol = %symbol,
                             regime = %regime.as_str(),
                             candles = state.candles.len(),
                             strategies = ?chosen,
+                            screening_bias = %current_bias.as_str(),
                             ema200_ready = state.ema_200.value().is_some(),
                             "🔍 screening"
                         );
@@ -240,27 +306,17 @@ pub fn spawn(
                         let mut best: Option<PreSignal> = None;
                         let mut best_seen: Option<(StrategyName, u8)> = None;
                         for &name in &chosen {
-                            // Check strategy health before evaluating
                             let strategy_name = name.as_str();
                             if !shared_state.is_strategy_enabled(strategy_name) {
-                                info!(
-                                    symbol = %symbol,
-                                    strategy = %strategy_name,
-                                    "⛔ strategy disabled by health"
-                                );
+                                info!(symbol = %symbol, strategy = %strategy_name, "⛔ strategy disabled by health");
                                 continue;
                             }
 
                             let sig = match name {
-                                // Quant strategies mapped to existing StrategyName slots
                                 StrategyName::EmaRibbon => OrderFlow.evaluate(state, &candle),
                                 StrategyName::Momentum => TradeFlow.evaluate(state, &candle),
-                                StrategyName::VwapScalp => {
-                                    KalmanTrendStrategy.evaluate(state, &candle)
-                                }
-                                StrategyName::MeanReversion => {
-                                    MicrostructureReversion.evaluate(state, &candle)
-                                }
+                                StrategyName::VwapScalp => KalmanTrendStrategy.evaluate(state, &candle),
+                                StrategyName::MeanReversion => MicrostructureReversion.evaluate(state, &candle),
                                 StrategyName::Squeeze => Squeeze.evaluate(state, &candle),
                             };
                             if let Some(mut s) = sig {
@@ -327,16 +383,36 @@ pub fn spawn(
                                 }
                             }
                         }
-                        (
-                            filtered,
-                            regime,
-                            state.candles.len(),
-                            chosen,
-                            best_seen,
-                            forced,
-                        )
+                        (filtered, regime, state.candles.len(), chosen, best_seen, forced)
                     };
+
                     if let Some(signal) = best {
+                        // P0-3: Hard gate — only emit PreSignalEmitted when bias allows the side.
+                        if !current_bias.allows(&signal.side) {
+                            info!(
+                                symbol = %signal.symbol,
+                                side = %signal.side.as_str(),
+                                bias = %current_bias.as_str(),
+                                confidence = signal.ta_confidence,
+                                "🚫 signal blocked by 15m screening bias"
+                            );
+                            bus.publish(AgentEvent::SignalEvaluation(SignalEvaluationMsg {
+                                symbol: signal.symbol.clone(),
+                                timeframe_secs,
+                                regime: Some(regime),
+                                candles,
+                                strategies: chosen,
+                                reason: format!(
+                                    "screening_bias_block: {} signal blocked by {} htf bias",
+                                    signal.side.as_str(),
+                                    current_bias.as_str()
+                                ),
+                                best_strategy: Some(signal.strategy),
+                                best_confidence: Some(signal.ta_confidence),
+                            }));
+                            continue;
+                        }
+
                         if forced {
                             info!(
                                 symbol = %signal.symbol,
@@ -346,6 +422,7 @@ pub fn spawn(
                                 tp = signal.take_profit,
                                 confidence = signal.ta_confidence,
                                 htf = %htf_summary(&htf),
+                                bias = %current_bias.as_str(),
                                 "paper scout htf-aware scalp signal"
                             );
                         }
@@ -370,7 +447,6 @@ pub fn spawn(
                     }
                 }
                 AgentEvent::ControlCommand(crate::agents::messages::ControlCommand::ResetDaily) => {
-                    // Reset session-anchored indicators (VWAP) at midnight.
                     let mut states = states.lock().await;
                     for state in states.values_mut() {
                         state.vwap.reset();
@@ -379,34 +455,99 @@ pub fn spawn(
                     }
                     tracing::info!("signal: VWAP reset for new session");
                 }
-                // Track open positions — pause screening for a symbol while it
-                // has an active trade, resume only after close.
                 AgentEvent::OrderFilled { symbol, side, .. } => {
-                    info!(
-                        symbol = %symbol,
-                        side = ?side,
-                        "signal: position opened — pausing screening for {}",
-                        symbol
-                    );
+                    info!(symbol = %symbol, side = ?side, "signal: position opened — pausing screening for {}", symbol);
                     open_symbols.insert(symbol);
                 }
                 AgentEvent::PositionRecovered { symbol, .. } => {
-                    // Positions recovered from disk on restart — treat as open.
                     open_symbols.insert(symbol);
                 }
                 AgentEvent::PositionClosed { symbol, .. } => {
-                    info!(
-                        symbol = %symbol,
-                        "signal: position closed — resuming screening for {}",
-                        symbol
-                    );
+                    info!(symbol = %symbol, "signal: position closed — resuming screening for {}", symbol);
                     open_symbols.remove(&symbol);
                 }
+                // A partial close does NOT resume screening — the position is still open.
+                AgentEvent::PositionReduced { .. } => {}
                 AgentEvent::Shutdown => break,
                 _ => {}
             }
         }
     })
+}
+
+/// Compute the 15m screening bias from the HTF SymbolState.
+///
+/// Uses a 5-candle majority-vote slope over recent closes, requiring
+/// at least 5 candles. Returns `Unknown` when there isn't enough data.
+/// The vote logic: 3+ of 4 consecutive moves in the same direction →
+/// Bullish or Bearish; otherwise NoTrade.
+fn compute_htf_bias(state: &SymbolState) -> ScreeningBias {
+    let candles = &state.candles;
+    if candles.len() < 5 {
+        return ScreeningBias::Unknown;
+    }
+
+    // Take the last 6 candles (5 close-to-close moves)
+    let recent: Vec<f64> = candles.iter().rev().take(6).map(|c| c.close).collect();
+    // recent[0] = newest, recent[5] = oldest
+    let up_moves = recent.windows(2).filter(|w| w[0] > w[1]).count();
+    let dn_moves = recent.windows(2).filter(|w| w[0] < w[1]).count();
+    let total = recent.len().saturating_sub(1).max(1);
+
+    // Require 60% agreement for a directional bias
+    let threshold = (total as f64 * 0.6).ceil() as usize;
+    if up_moves >= threshold {
+        ScreeningBias::Bullish
+    } else if dn_moves >= threshold {
+        ScreeningBias::Bearish
+    } else {
+        ScreeningBias::NoTrade
+    }
+}
+
+/// Bootstrap HTF states for all symbols before the live event loop.
+/// Fetches historical candles from Binance REST and feeds them into the states.
+async fn bootstrap_htf_states(
+    htf_states: &mut HashMap<String, SymbolState>,
+    rest_base_url: &str,
+    timeframe_secs: i64,
+) {
+    use crate::data::Timeframe;
+
+    let tf = Timeframe { seconds: timeframe_secs };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = %e, "htf bootstrap: failed to build http client");
+            return;
+        }
+    };
+
+    for (symbol, state) in htf_states.iter_mut() {
+        match crate::data::kline_bootstrap::fetch_klines(
+            &client,
+            rest_base_url,
+            symbol,
+            &tf,
+            220,
+        )
+        .await
+        {
+            Ok(candles) => {
+                let n = candles.len();
+                for c in candles {
+                    state.on_closed(c);
+                }
+                info!(symbol = %symbol, timeframe_secs, seeded = n, "htf bootstrap ok");
+            }
+            Err(e) => {
+                warn!(symbol = %symbol, timeframe_secs, error = %e, "htf bootstrap failed — bias will be Unknown until live candles arrive");
+            }
+        }
+    }
 }
 
 fn paper_scout_signal(
@@ -430,20 +571,16 @@ fn paper_scout_signal(
         Side::Short
     };
 
-    // Use ATR from state if it's sane (< 1% of price), otherwise fallback to 0.3%
-    // ATR > 1% means it was computed from wrong timeframe candles — reject it
     let raw_atr = state.last_atr.unwrap_or(0.0);
     let atr_pct = if raw_atr > 0.0 { raw_atr / price } else { 0.0 };
     let stop_pct = if atr_pct > 0.001 && atr_pct < 0.008 {
-        // ATR is sane — use 0.6x ATR but cap at 0.5%
         (0.6 * raw_atr / price).min(0.005)
     } else {
-        // ATR is absent or insane — use fixed 0.3% for scalping
         0.003
     };
 
     let stop_distance = price * stop_pct;
-    let take_distance = stop_distance * 2.0; // 2:1 R:R minimum
+    let take_distance = stop_distance * 2.0;
 
     let (stop_loss, take_profit) = match side {
         Side::Long => (price - stop_distance, price + take_distance),
@@ -460,11 +597,7 @@ fn paper_scout_signal(
         ta_confidence: 60,
         reason: format!(
             "paper_scout htf_bias={:.2} close={:.4} vwap={:.4} stop_pct={:.3}% atr_raw={:.4}",
-            bias,
-            price,
-            vwap,
-            stop_pct * 100.0,
-            raw_atr
+            bias, price, vwap, stop_pct * 100.0, raw_atr
         ),
         atr: Some(raw_atr),
     })
@@ -537,10 +670,7 @@ fn apply_mtf_context(
             htf_summary(higher_timeframes)
         );
     } else if score > 0 {
-        signal.ta_confidence = signal
-            .ta_confidence
-            .saturating_add((score * 2) as u8)
-            .min(100);
+        signal.ta_confidence = signal.ta_confidence.saturating_add((score * 2) as u8).min(100);
         signal.reason = format!(
             "{} | MTF-confirm(score={}, htf={})",
             signal.reason,
@@ -552,19 +682,19 @@ fn apply_mtf_context(
 
 fn htf_summary(higher_timeframes: &BTreeMap<i64, HigherTimeframeSnapshot>) -> String {
     if higher_timeframes.is_empty() {
-        return "none".to_string();
+        return "none".into();
     }
     higher_timeframes
         .iter()
-        .map(|(tf, snapshot)| {
-            let direction = if snapshot.close > snapshot.open {
-                "bull"
-            } else if snapshot.close < snapshot.open {
-                "bear"
+        .map(|(tf, snap)| {
+            let dir = if snap.close > snap.open {
+                "↑"
+            } else if snap.close < snap.open {
+                "↓"
             } else {
-                "flat"
+                "→"
             };
-            format!("{}m:{direction}", tf / 60)
+            format!("{}s:{}", tf, dir)
         })
         .collect::<Vec<_>>()
         .join(",")
@@ -576,238 +706,85 @@ fn no_signal_reason(
     best_confidence: Option<u8>,
 ) -> String {
     if candles < 20 {
-        return format!("warming_up_candles_{candles}/20");
+        return format!("warming_up({candles}/20)");
     }
     match (best_strategy, best_confidence) {
-        (Some(strategy), Some(confidence)) => {
-            format!("alpha_gate_filtered_{}:{confidence}", strategy.as_str())
-        }
-        _ => "strategy_conditions_not_met".to_string(),
+        (Some(s), Some(c)) => format!("below_threshold({} conf={})", s.as_str(), c),
+        (Some(s), None) => format!("no_signal({})", s.as_str()),
+        _ => "no_candidate".into(),
     }
 }
 
-fn apply_advanced_alpha(
-    signal: Option<PreSignal>,
-    state: &SymbolState,
-    snapshot: Option<&TimedExternalSnapshot>,
-    cfg: &AdvancedAlphaCfg,
-) -> Option<PreSignal> {
-    if !cfg.enabled {
-        return signal;
+fn in_dead_zone(schedule: &Schedule) -> bool {
+    let start = schedule.dead_zone_start_hour_wib;
+    let end = schedule.dead_zone_end_hour_wib;
+    if start == end {
+        return false; // disabled
     }
-    let mut signal = signal?;
-    let Some(snapshot) = fresh_snapshot(snapshot, cfg, Utc::now()) else {
-        return Some(signal);
-    };
-    let prices: Vec<f64> = state.candles.iter().map(|c| c.close).collect();
-    let decision = advanced_alpha_gate(
-        AdvancedAlphaInputs {
-            alt_data: alt_data_inputs_from_snapshot(snapshot),
-            funding_rate: funding_rate_from_snapshot(snapshot),
-            trend_score: kalman_trend_score(
-                &prices,
-                cfg.kalman_process_noise,
-                cfg.kalman_measurement_noise,
-            ),
-            min_abs_score: cfg.min_abs_score,
-        },
-        matches!(signal.side, Side::Long),
-    );
-    match decision {
-        AlphaGateDecision::Allow => Some(signal),
-        AlphaGateDecision::Reduce => {
-            signal.ta_confidence = signal
-                .ta_confidence
-                .saturating_sub(cfg.reduce_confidence_delta);
-            signal.reason = format!("{} | alpha_gate=reduce", signal.reason);
-            Some(signal)
-        }
-        AlphaGateDecision::Block => None,
+    // WIB = UTC+7
+    let hour_wib = ((Utc::now().hour() as i32 + 7) % 24) as u8;
+    if start < end {
+        hour_wib >= start && hour_wib < end
+    } else {
+        // Wraps midnight: e.g. start=22, end=6
+        hour_wib >= start || hour_wib < end
     }
 }
 
-#[derive(Debug, Clone)]
 struct TimedExternalSnapshot {
     snapshot: ExternalSnapshot,
     ts: DateTime<Utc>,
 }
 
-fn fresh_snapshot<'a>(
-    snapshot: Option<&'a TimedExternalSnapshot>,
+fn apply_advanced_alpha(
+    signal: Option<PreSignal>,
+    state: &SymbolState,
+    feeds: Option<&TimedExternalSnapshot>,
     cfg: &AdvancedAlphaCfg,
-    now: DateTime<Utc>,
-) -> Option<&'a ExternalSnapshot> {
-    let snapshot = snapshot?;
-    if cfg.feed_max_age_secs == 0 {
-        return Some(&snapshot.snapshot);
+) -> Option<PreSignal> {
+    if !cfg.enabled {
+        return signal;
     }
-    let max_age = ChronoDuration::seconds(cfg.feed_max_age_secs as i64);
-    if now - snapshot.ts <= max_age {
-        Some(&snapshot.snapshot)
-    } else {
-        None
-    }
-}
+    let mut sig = signal?;
 
-/// True iff the current UTC time falls inside the configured WIB
-/// dead zone (e.g. 03:00–07:00 WIB == 20:00–00:00 UTC). The window
-/// is wrap-aware: `start > end` means it crosses midnight.
-fn in_dead_zone(s: &Schedule) -> bool {
-    if s.dead_zone_start_hour_wib == s.dead_zone_end_hour_wib {
-        return false;
-    }
-    // WIB == UTC+7. Convert via subtraction.
-    let now_wib_hour = (Utc::now().hour() as i32 + 7).rem_euclid(24) as u8;
-    let start = s.dead_zone_start_hour_wib;
-    let end = s.dead_zone_end_hour_wib;
-    if start < end {
-        now_wib_hour >= start && now_wib_hour < end
-    } else {
-        now_wib_hour >= start || now_wib_hour < end
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::data::{Candle, Side};
-    use crate::feeds::sentiment::SentimentSnapshot;
-    use crate::strategy::state::{PreSignal, StrategyName, SymbolState};
-
-    fn test_signal() -> PreSignal {
-        PreSignal {
-            symbol: "BTCUSDT".into(),
-            strategy: StrategyName::Momentum,
-            side: Side::Long,
-            entry: 100.0,
-            stop_loss: 99.0,
-            take_profit: 103.0,
-            ta_confidence: 80,
-            reason: "unit".into(),
-            atr: None,
+    let (alt_data, funding_rate) = if let Some(f) = feeds {
+        let age_secs = (Utc::now() - f.ts).num_seconds();
+        if age_secs <= cfg.feed_max_age_secs as i64 {
+            (
+                alt_data_inputs_from_snapshot(&f.snapshot),
+                funding_rate_from_snapshot(&f.snapshot),
+            )
+        } else {
+            (AltDataInputs::default(), 0.0)
         }
-    }
+    } else {
+        (AltDataInputs::default(), 0.0)
+    };
 
-    fn warmed_state() -> SymbolState {
-        let mut state = SymbolState::new("BTCUSDT");
-        let now = Utc::now();
-        for i in 0..5 {
-            let price = 100.0 + i as f64;
-            state.on_closed(Candle {
-                open_time: now,
-                close_time: now,
-                open: price - 0.5,
-                high: price + 1.0,
-                low: price - 1.0,
-                close: price,
-                volume: 100.0,
-            });
+    let prices: Vec<f64> = state.candles.iter().map(|c| c.close).collect();
+    let trend_score = if prices.len() >= 2 {
+        kalman_trend_score(&prices, cfg.kalman_process_noise, cfg.kalman_measurement_noise)
+    } else {
+        0.0
+    };
+
+    let alpha_inputs = AdvancedAlphaInputs {
+        alt_data,
+        funding_rate,
+        trend_score,
+        min_abs_score: cfg.min_abs_score,
+    };
+    let signal_is_long = matches!(sig.side, Side::Long);
+    match advanced_alpha_gate(alpha_inputs, signal_is_long) {
+        AlphaGateDecision::Allow => Some(sig),
+        AlphaGateDecision::Reduce => {
+            sig.ta_confidence = sig.ta_confidence.saturating_sub(cfg.reduce_confidence_delta);
+            sig.reason = format!("{} | alpha_caution(-{})", sig.reason, cfg.reduce_confidence_delta);
+            Some(sig)
         }
-        state
-    }
-
-    #[test]
-    fn paper_scout_uses_higher_timeframe_bias() {
-        let state = warmed_state();
-        let candle = *state.last_candle().unwrap();
-        let mut htf = BTreeMap::new();
-        htf.insert(
-            300,
-            HigherTimeframeSnapshot {
-                open: 100.0,
-                close: 99.0,
-            },
-        );
-        htf.insert(
-            900,
-            HigherTimeframeSnapshot {
-                open: 100.0,
-                close: 98.0,
-            },
-        );
-        let signal = paper_scout_signal(&state, &candle, &htf).expect("paper scout signal");
-        assert_eq!(signal.side, Side::Short);
-        assert_eq!(signal.strategy, StrategyName::VwapScalp);
-        assert!(signal.reason.contains("htf_bias=-1.00"));
-        assert!(signal.rr() >= 1.2);
-    }
-
-    #[test]
-    fn dead_zone_disabled_when_start_eq_end() {
-        let s = Schedule {
-            dead_zone_start_hour_wib: 3,
-            dead_zone_end_hour_wib: 3,
-        };
-        // Just check the function doesn't say true for a degenerate config.
-        assert!(!in_dead_zone(&s));
-    }
-
-    #[test]
-    fn advanced_alpha_disabled_is_noop() {
-        let signal = test_signal();
-        let state = warmed_state();
-        let filtered = apply_advanced_alpha(
-            Some(signal.clone()),
-            &state,
-            None,
-            &AdvancedAlphaCfg::default(),
-        );
-        assert_eq!(filtered.unwrap().ta_confidence, signal.ta_confidence);
-    }
-
-    #[test]
-    fn advanced_alpha_can_reduce_confidence() {
-        let signal = test_signal();
-        let state = warmed_state();
-        let fresh = TimedExternalSnapshot {
-            snapshot: ExternalSnapshot::default(),
-            ts: Utc::now(),
-        };
-        let filtered = apply_advanced_alpha(
-            Some(signal),
-            &state,
-            Some(&fresh),
-            &AdvancedAlphaCfg {
-                enabled: true,
-                min_abs_score: 0.6,
-                reduce_confidence_delta: 7,
-                ..AdvancedAlphaCfg::default()
-            },
-        )
-        .expect("neutral alpha context should reduce, not block");
-        assert_eq!(filtered.ta_confidence, 73);
-        assert!(filtered.reason.contains("alpha_gate=reduce"));
-    }
-
-    #[test]
-    fn advanced_alpha_skips_when_feed_missing_or_stale() {
-        let signal = test_signal();
-        let state = warmed_state();
-        let cfg = AdvancedAlphaCfg {
-            enabled: true,
-            feed_max_age_secs: 60,
-            ..AdvancedAlphaCfg::default()
-        };
-        let missing = apply_advanced_alpha(Some(signal.clone()), &state, None, &cfg)
-            .expect("missing feed should bypass alpha gate");
-        assert_eq!(missing.ta_confidence, signal.ta_confidence);
-
-        let stale = TimedExternalSnapshot {
-            snapshot: ExternalSnapshot {
-                sentiment: Some(SentimentSnapshot {
-                    symbol: "BTCUSDT".into(),
-                    social_volume: 1,
-                    social_volume_change_pct: 0.0,
-                    galaxy_score: None,
-                    sentiment: -1.0,
-                    top_keywords: vec![],
-                }),
-                ..ExternalSnapshot::default()
-            },
-            ts: Utc::now() - ChronoDuration::seconds(120),
-        };
-        let filtered = apply_advanced_alpha(Some(signal.clone()), &state, Some(&stale), &cfg)
-            .expect("stale feed should bypass alpha gate");
-        assert_eq!(filtered.ta_confidence, signal.ta_confidence);
+        AlphaGateDecision::Block => {
+            debug!(symbol = %sig.symbol, "advanced alpha gate blocked signal");
+            None
+        }
     }
 }

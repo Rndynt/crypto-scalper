@@ -17,8 +17,8 @@ use crate::data::Side;
 use crate::execution::limit_order::plan_limit_order;
 use crate::execution::quality::{ExecutionQuality, TradeQualityRecord};
 use crate::execution::{
-    Exchange, OrderRequest, Position, PositionBook, PositionConfig, PositionExitReason,
-    RiskManager, orders::OrderType,
+    Exchange, OrderRequest, Position, PositionAction, PositionBook, PositionConfig,
+    PositionExitReason, RiskManager, orders::OrderType,
 };
 use crate::learning::LearningPolicy;
 use chrono::Utc;
@@ -90,30 +90,95 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                 for (sym, price) in &marks {
                     if *price <= 0.0 { continue; }
                     let exits = book_fb.check_exits(sym, *price, &pos_cfg_fb.read());
-                    for (pos, reason) in exits {
-                        let pnl = crate::execution::position::pnl_usd(&pos, *price);
-                        risk_fb.on_position_closed(pnl);
-                        let _ = exchange_fb.cancel_all(&pos.symbol).await;
-                        let pnl_pct = if pos.entry_price > 0.0 {
-                            (*price - pos.entry_price) / pos.entry_price * 100.0
-                        } else { 0.0 };
-                        info!(
-                            symbol = %pos.symbol, side = %pos.side.as_str(), reason = %reason.as_str(),
-                            entry = %format!("{:.4}", pos.entry_price), exit = %format!("{:.4}", *price),
-                            pnl_usd = %format!("{:+.4}", pnl), pnl_pct = %format!("{:+.4}%", pnl_pct),
-                            "execution(fallback): position closed"
-                        );
-                        bus_fb.publish(AgentEvent::PositionClosed {
-                            client_id: pos.client_id.clone(),
-                            symbol: pos.symbol.clone(),
-                            side: pos.side,
-                            size: pos.size,
-                            entry_price: pos.entry_price,
-                            exit_price: *price,
-                            pnl_usd: pnl,
-                            reason,
-                            strategy: pos.strategy.clone(),
-                        });
+                    for action in exits {
+                        match action {
+                            // P0-4: Full close → emit PositionClosed, call risk.on_position_closed
+                            PositionAction::Close(pos, reason) => {
+                                let pnl = crate::execution::position::pnl_usd(&pos, *price);
+                                risk_fb.on_position_closed(pnl);
+                                let _ = exchange_fb.cancel_all(&pos.symbol).await;
+                                let pnl_pct = if pos.entry_price > 0.0 {
+                                    (*price - pos.entry_price) / pos.entry_price * 100.0
+                                } else { 0.0 };
+                                info!(
+                                    symbol = %pos.symbol, side = %pos.side.as_str(), reason = %reason.as_str(),
+                                    entry = %format!("{:.4}", pos.entry_price), exit = %format!("{:.4}", *price),
+                                    pnl_usd = %format!("{:+.4}", pnl), pnl_pct = %format!("{:+.4}%", pnl_pct),
+                                    "execution(fallback): position closed"
+                                );
+                                bus_fb.publish(AgentEvent::PositionClosed {
+                                    client_id: pos.client_id.clone(),
+                                    symbol: pos.symbol.clone(),
+                                    side: pos.side,
+                                    size: pos.size,
+                                    entry_price: pos.entry_price,
+                                    exit_price: *price,
+                                    pnl_usd: pnl,
+                                    reason,
+                                    strategy: pos.strategy.clone(),
+                                });
+                            }
+                            // P0-4: Partial TP → Reduce, NOT Close. Emit PositionReduced.
+                            PositionAction::Reduce(pos, reduce_size, reason) => {
+                                let pnl = crate::execution::position::pnl_usd(&pos, *price);
+                                let close_side = match pos.side {
+                                    Side::Long => Side::Short,
+                                    Side::Short => Side::Long,
+                                };
+                                let partial_req = OrderRequest {
+                                    client_id: format!("aria-partial-{}-{}", pos.symbol, Utc::now().timestamp_millis()),
+                                    symbol: pos.symbol.clone(),
+                                    side: close_side,
+                                    size: reduce_size,
+                                    price: None, stop_price: None,
+                                    stop_loss: 0.0, take_profit: 0.0,
+                                    order_type: OrderType::Market,
+                                    reduce_only: true,
+                                };
+                                if let Err(e) = exchange_fb.place_order(&partial_req).await {
+                                    warn!(symbol = %pos.symbol, error = %e, "fallback: partial-tp order failed");
+                                }
+                                let remaining = book_fb.get(&pos.client_id).map(|p| p.size).unwrap_or(0.0);
+                                info!(symbol = %pos.symbol, reduce_size, remaining, pnl_usd = %format!("{:+.4}", pnl), "execution(fallback): partial TP");
+                                bus_fb.publish(AgentEvent::PositionReduced {
+                                    client_id: pos.client_id.clone(),
+                                    symbol: pos.symbol.clone(),
+                                    side: pos.side,
+                                    reduced_size: reduce_size,
+                                    remaining_size: remaining,
+                                    entry_price: pos.entry_price,
+                                    exit_price: *price,
+                                    pnl_usd: pnl,
+                                    reason,
+                                    strategy: pos.strategy.clone(),
+                                });
+                            }
+                            // P0-5: SL moved — cancel old broker SL order + place new one.
+                            PositionAction::MoveSL(pos, new_sl) => {
+                                let sl_cid = format!("{}-sl", pos.client_id);
+                                let _ = exchange_fb.cancel_order(&pos.symbol, &sl_cid).await;
+                                let close_side = match pos.side {
+                                    Side::Long => Side::Short,
+                                    Side::Short => Side::Long,
+                                };
+                                let new_sl_req = OrderRequest {
+                                    client_id: sl_cid,
+                                    symbol: pos.symbol.clone(),
+                                    side: close_side,
+                                    size: pos.size,
+                                    price: None,
+                                    stop_price: Some(new_sl),
+                                    stop_loss: new_sl,
+                                    take_profit: pos.take_profit,
+                                    order_type: OrderType::StopLoss,
+                                    reduce_only: true,
+                                };
+                                if let Err(e) = exchange_fb.place_order(&new_sl_req).await {
+                                    tracing::debug!(symbol = %pos.symbol, new_sl, error = %e, "replace SL (fallback, non-fatal)");
+                                }
+                            }
+                            PositionAction::None => {}
+                        }
                     }
                 }
             }
@@ -136,39 +201,112 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                     // Mark-price exit checks happen here so we own the
                     // bus emission when a position closes.
                     let exits = book.check_exits(&symbol, trade.price, &pos_cfg.read());
-                    for (pos, reason) in exits {
-                        let pnl = crate::execution::position::pnl_usd(&pos, trade.price);
-                        risk.on_position_closed(pnl);
-                        let _ = exchange.cancel_all(&pos.symbol).await;
-                        let pnl_pct = if pos.entry_price > 0.0 {
-                            (trade.price - pos.entry_price) / pos.entry_price * 100.0
-                        } else {
-                            0.0
-                        };
-                        info!(
-                            symbol  = %pos.symbol,
-                            side    = %pos.side.as_str(),
-                            reason  = %reason.as_str(),
-                            entry   = %format!("{:.4}", pos.entry_price),
-                            exit    = %format!("{:.4}", trade.price),
-                            sl      = %format!("{:.4}", pos.stop_loss),
-                            tp      = %format!("{:.4}", pos.take_profit),
-                            size    = %format!("{:.6}", pos.size),
-                            pnl_usd = %format!("{:+.4}", pnl),
-                            pnl_pct = %format!("{:+.4}%", pnl_pct),
-                            "execution: position closed"
-                        );
-                        bus_for_close.publish(AgentEvent::PositionClosed {
-                            client_id: pos.client_id.clone(),
-                            symbol: pos.symbol.clone(),
-                            side: pos.side,
-                            size: pos.size,
-                            entry_price: pos.entry_price,
-                            exit_price: trade.price,
-                            pnl_usd: pnl,
-                            reason,
-                            strategy: pos.strategy.clone(),
-                        });
+                    for action in exits {
+                        match action {
+                            // P0-4: Full close → emit PositionClosed, call risk.on_position_closed
+                            PositionAction::Close(pos, reason) => {
+                                let pnl = crate::execution::position::pnl_usd(&pos, trade.price);
+                                risk.on_position_closed(pnl);
+                                let _ = exchange.cancel_all(&pos.symbol).await;
+                                let pnl_pct = if pos.entry_price > 0.0 {
+                                    (trade.price - pos.entry_price) / pos.entry_price * 100.0
+                                } else {
+                                    0.0
+                                };
+                                info!(
+                                    symbol  = %pos.symbol,
+                                    side    = %pos.side.as_str(),
+                                    reason  = %reason.as_str(),
+                                    entry   = %format!("{:.4}", pos.entry_price),
+                                    exit    = %format!("{:.4}", trade.price),
+                                    sl      = %format!("{:.4}", pos.stop_loss),
+                                    tp      = %format!("{:.4}", pos.take_profit),
+                                    size    = %format!("{:.6}", pos.size),
+                                    pnl_usd = %format!("{:+.4}", pnl),
+                                    pnl_pct = %format!("{:+.4}%", pnl_pct),
+                                    "execution: position closed"
+                                );
+                                bus_for_close.publish(AgentEvent::PositionClosed {
+                                    client_id: pos.client_id.clone(),
+                                    symbol: pos.symbol.clone(),
+                                    side: pos.side,
+                                    size: pos.size,
+                                    entry_price: pos.entry_price,
+                                    exit_price: trade.price,
+                                    pnl_usd: pnl,
+                                    reason,
+                                    strategy: pos.strategy.clone(),
+                                });
+                            }
+                            // P0-4: Partial TP → Reduce. Emit PositionReduced (NOT PositionClosed).
+                            // risk.on_position_closed is NOT called — position is still open.
+                            PositionAction::Reduce(pos, reduce_size, reason) => {
+                                let pnl = crate::execution::position::pnl_usd(&pos, trade.price);
+                                let close_side = match pos.side {
+                                    Side::Long => Side::Short,
+                                    Side::Short => Side::Long,
+                                };
+                                let partial_req = OrderRequest {
+                                    client_id: format!("aria-partial-{}-{}", pos.symbol, Utc::now().timestamp_millis()),
+                                    symbol: pos.symbol.clone(),
+                                    side: close_side,
+                                    size: reduce_size,
+                                    price: None, stop_price: None,
+                                    stop_loss: 0.0, take_profit: 0.0,
+                                    order_type: OrderType::Market,
+                                    reduce_only: true,
+                                };
+                                if let Err(e) = exchange.place_order(&partial_req).await {
+                                    warn!(symbol = %pos.symbol, error = %e, "partial-tp order failed");
+                                }
+                                let remaining = book.get(&pos.client_id).map(|p| p.size).unwrap_or(0.0);
+                                info!(
+                                    symbol = %pos.symbol,
+                                    side   = %pos.side.as_str(),
+                                    reduce_size,
+                                    remaining,
+                                    pnl_usd = %format!("{:+.4}", pnl),
+                                    "execution: partial TP — position reduced"
+                                );
+                                bus_for_close.publish(AgentEvent::PositionReduced {
+                                    client_id: pos.client_id.clone(),
+                                    symbol: pos.symbol.clone(),
+                                    side: pos.side,
+                                    reduced_size: reduce_size,
+                                    remaining_size: remaining,
+                                    entry_price: pos.entry_price,
+                                    exit_price: trade.price,
+                                    pnl_usd: pnl,
+                                    reason,
+                                    strategy: pos.strategy.clone(),
+                                });
+                            }
+                            // P0-5: SL moved (breakeven/trailing) — cancel old broker order + place new.
+                            PositionAction::MoveSL(pos, new_sl) => {
+                                let sl_cid = format!("{}-sl", pos.client_id);
+                                let _ = exchange.cancel_order(&pos.symbol, &sl_cid).await;
+                                let close_side = match pos.side {
+                                    Side::Long => Side::Short,
+                                    Side::Short => Side::Long,
+                                };
+                                let new_sl_req = OrderRequest {
+                                    client_id: sl_cid,
+                                    symbol: pos.symbol.clone(),
+                                    side: close_side,
+                                    size: pos.size,
+                                    price: None,
+                                    stop_price: Some(new_sl),
+                                    stop_loss: new_sl,
+                                    take_profit: pos.take_profit,
+                                    order_type: OrderType::StopLoss,
+                                    reduce_only: true,
+                                };
+                                if let Err(e) = exchange.place_order(&new_sl_req).await {
+                                    tracing::debug!(symbol = %pos.symbol, new_sl, error = %e, "replace SL (non-fatal)");
+                                }
+                            }
+                            PositionAction::None => {}
+                        }
                     }
                 }
                 AgentEvent::BookTicker {
@@ -484,6 +622,11 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     symbol = %req.symbol,
                                     "execution: fill_price is zero — discarding ghost position"
                                 );
+                                // P0-7: Release pending_symbols so the symbol can be traded again.
+                                bus.publish(AgentEvent::ExecutionFailed {
+                                    symbol: req.symbol.clone(),
+                                    reason: "fill_price_zero".to_string(),
+                                });
                                 continue;
                             }
                             risk.on_position_opened();
@@ -571,7 +714,14 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 ack,
                             });
                         }
-                        Err(e) => warn!(error = %e, "execution: place_order failed"),
+                        Err(e) => {
+                            warn!(symbol = %req.symbol, error = %e, "execution: place_order failed");
+                            // P0-7: Release pending_symbols so this symbol can re-enter.
+                            bus.publish(AgentEvent::ExecutionFailed {
+                                symbol: req.symbol.clone(),
+                                reason: format!("place_order: {e}"),
+                            });
+                        }
                     }
                 }
                 AgentEvent::Shutdown => break,

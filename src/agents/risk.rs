@@ -547,6 +547,13 @@ pub fn spawn(
                 {
                     pending_symbols.lock().remove(&v.proposal.symbol);
                 }
+                // P0-7: Execution failed to place/fill an order — release the pending lock.
+                // Without this, a failed order permanently blocks the symbol from re-entry.
+                AgentEvent::ExecutionFailed { symbol, .. } => {
+                    if pending_symbols.lock().remove(&symbol) {
+                        info!(symbol = %symbol, "risk: released pending lock after execution failure");
+                    }
+                }
                 _ => {}
             }
         }

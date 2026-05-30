@@ -84,6 +84,12 @@ pub enum AgentEvent {
         signal: Box<PreSignal>,
         regime: Regime,
     },
+    /// `SignalAgent` updated the 15m screening bias for a symbol.
+    ScreeningUpdated {
+        symbol: String,
+        bias: ScreeningBias,
+        ts: DateTime<Utc>,
+    },
     /// `RiskAgent` evaluated a pre-signal.
     RiskVerdict(RiskVerdictMsg),
     /// `BrainAgent` analysed a vetted signal.
@@ -103,6 +109,13 @@ pub enum AgentEvent {
         size: f64,
         ack: OrderAck,
     },
+    /// `ExecutionAgent` failed to place or confirm an order for this symbol.
+    /// The `RiskAgent` listens for this to release `pending_symbols` so the
+    /// symbol is not permanently locked after an execution error.
+    ExecutionFailed {
+        symbol: String,
+        reason: String,
+    },
     /// Execution quality feedback event (implementation shortfall in bps).
     SlippageObserved {
         symbol: String,
@@ -118,12 +131,28 @@ pub enum AgentEvent {
         strategy: String,
     },
     OrchestratorUpdated(OrchestratorSnapshot),
-    /// Position closed (by SL, TP or trailing stop).
+    /// Position fully closed (by SL, TP, trailing stop, time-exit, or manual).
     PositionClosed {
         client_id: String,
         symbol: String,
         side: Side,
         size: f64,
+        entry_price: f64,
+        exit_price: f64,
+        pnl_usd: f64,
+        reason: PositionExitReason,
+        strategy: String,
+    },
+    /// Position partially closed (partial TP taken). The position remains open
+    /// at reduced size. Never triggers `risk.on_position_closed` or learning.
+    PositionReduced {
+        client_id: String,
+        symbol: String,
+        side: Side,
+        /// The size of the partial close (not the remaining size).
+        reduced_size: f64,
+        /// Remaining open size after the partial close.
+        remaining_size: f64,
         entry_price: f64,
         exit_price: f64,
         pnl_usd: f64,
@@ -149,6 +178,42 @@ pub enum AgentEvent {
     ControlCommand(ControlCommand),
     /// Graceful shutdown notice.
     Shutdown,
+}
+
+/// 15-minute screening bias — controls which direction 1m signals are
+/// allowed through. Computed from HTF state indicators in `SignalAgent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreeningBias {
+    /// HTF trend is up — only LONG entries are permitted.
+    Bullish,
+    /// HTF trend is down — only SHORT entries are permitted.
+    Bearish,
+    /// HTF is ranging/flat — no new entries until bias clarifies.
+    NoTrade,
+    /// Not enough HTF candles to compute bias — both directions allowed.
+    Unknown,
+}
+
+impl ScreeningBias {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bullish => "bullish",
+            Self::Bearish => "bearish",
+            Self::NoTrade => "no_trade",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Returns true when the given side is permitted by the current bias.
+    pub fn allows(&self, side: &crate::data::Side) -> bool {
+        match (self, side) {
+            (Self::Bullish, crate::data::Side::Long) => true,
+            (Self::Bearish, crate::data::Side::Short) => true,
+            (Self::Unknown, _) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
