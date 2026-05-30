@@ -29,11 +29,8 @@ impl Strategy for KalmanTrendStrategy {
         let atr = s.last_atr.filter(|&a| a > 0.0 && a < c.close * 0.01)?;
 
         // Gate: VPIN safety check
-        if vpin > 0.78 {
-        // Raised from 0.48 — crypto VPIN is persistently high (>0.7),
-        // hard gate at 0.48 blocks all signals. 0.78 = 95th+ percentile only.
-            return None;
-        }
+        // VPIN soft gate: high VPIN reduces confidence instead of blocking
+        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
 
         // Use price velocity from recent candles as Kalman proxy
         // (real Kalman is updated separately in quant engine via update_kalman)
@@ -120,7 +117,7 @@ impl Strategy for KalmanTrendStrategy {
             entry: c.close,
             stop_loss: sl,
             take_profit: tp,
-            ta_confidence: confidence.clamp(0.0, 100.0) as u8,
+            ta_confidence: (confidence - vpin_penalty as f64).max(0.0).min(100.0) as u8,
             reason: format!(
                 "Kalman vel={:.4}% acc={:.4}% OFI={:.3} vpin={:.3}",
                 velocity * 100.0,

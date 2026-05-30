@@ -63,10 +63,8 @@ impl Strategy for MicrostructureReversion {
         }
 
         // VPIN: allow slightly higher since this is counter-trend
-        if vpin > 0.80 {
-        // Raised from 0.50 — crypto VPIN is persistently high.
-            return None;
-        }
+        // VPIN soft gate
+        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
 
         let side = if long_zone { Side::Long } else { Side::Short };
 
@@ -107,7 +105,7 @@ impl Strategy for MicrostructureReversion {
             entry: c.close,
             stop_loss: sl,
             take_profit: tp,
-            ta_confidence: confidence.clamp(0.0, 100.0) as u8,
+            ta_confidence: (confidence - vpin_penalty as f64).max(0.0).min(100.0) as u8,
             reason: format!(
                 "VWAP_dev={:.3}% OFI={:.3} vpin={:.3} reversion_target={:.4}",
                 deviation * 100.0,

@@ -29,10 +29,8 @@ impl Strategy for OrderFlow {
 
         // Gate 1: VPIN must be low — high VPIN = adverse selection = informed trader
         // is on the OTHER side of your trade. Very dangerous.
-        if vpin > 0.75 {
-        // Raised from 0.45 — crypto VPIN is persistently high.
-            return None;
-        }
+        // VPIN soft gate
+        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
 
         // Gate 2: Order book imbalance from top-of-book
         let book_imbalance = s.order_book.bid_ask_ratio(5);
@@ -95,7 +93,7 @@ impl Strategy for OrderFlow {
             entry: c.close,
             stop_loss: sl,
             take_profit: tp,
-            ta_confidence: confidence.clamp(0.0, 100.0) as u8,
+            ta_confidence: (confidence - vpin_penalty as f64).max(0.0).min(100.0) as u8,
             reason: format!(
                 "OFI={:.3} book_imb={:.3} vpin={:.3} atr={:.2}",
                 ofi, book_imbalance, vpin, atr

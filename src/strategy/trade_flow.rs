@@ -31,10 +31,8 @@ impl Strategy for TradeFlow {
         // VPIN < 0.35: safe, flow is mostly uninformed
         // VPIN 0.35-0.50: caution
         // VPIN > 0.50: informed traders active, STAY OUT
-        if vpin > 0.72 {
-        // Raised from 0.42 — crypto VPIN is persistently high.
-            return None;
-        }
+        // VPIN soft gate
+        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
 
         // Price velocity: compare last 3 closes for micro-momentum
         let closes: Vec<f64> = s.candles.iter().rev().take(4).map(|c| c.close).collect();
@@ -98,7 +96,7 @@ impl Strategy for TradeFlow {
             entry: c.close,
             stop_loss: sl,
             take_profit: tp,
-            ta_confidence: confidence.clamp(0.0, 100.0) as u8,
+            ta_confidence: (confidence - vpin_penalty as f64).max(0.0).min(100.0) as u8,
             reason: format!(
                 "VPIN={:.3} velocity={:.4}% OFI={:.3} atr={:.4}",
                 vpin,
