@@ -1,1 +1,53 @@
-[]
+[
+  {
+    "client_id": "aria-BTCUSDT-L-962625a912fbb49d",
+    "symbol": "BTCUSDT",
+    "side": "Long",
+    "size": 0.02028550270462711,
+    "entry_price": 73581.23553,
+    "stop_loss": 73349.48939999999,
+    "take_profit": 74011.6212,
+    "opened_at": "2026-05-30T12:08:17.573373719Z",
+    "trailing_activated": false,
+    "peak_price": 73581.23553,
+    "trough_price": 73581.23553,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "vwap_scalp"
+  },
+  {
+    "client_id": "aria-SOLUSDT-L-79e92b642bf8b3d2",
+    "symbol": "SOLUSDT",
+    "side": "Long",
+    "size": 18.14478408607851,
+    "entry_price": 82.2623375,
+    "stop_loss": 82.00325,
+    "take_profit": 82.7435,
+    "opened_at": "2026-05-30T12:08:39.126152651Z",
+    "trailing_activated": false,
+    "peak_price": 82.2623375,
+    "trough_price": 82.2623375,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "vwap_scalp"
+  },
+  {
+    "client_id": "aria-ETHUSDT-S-54265852b59256ed",
+    "symbol": "ETHUSDT",
+    "side": "Short",
+    "size": 0.7399810052855275,
+    "entry_price": 2016.517477,
+    "stop_loss": 2018.7174552930787,
+    "take_profit": 2010.1774341979503,
+    "opened_at": "2026-05-30T12:08:27.498976371Z",
+    "trailing_activated": false,
+    "peak_price": 2016.517477,
+    "trough_price": 2016.517477,
+    "atr_at_entry": 0.0,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "strategy": "mean_reversion"
+  }
+]

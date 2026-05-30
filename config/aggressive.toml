@@ -6,7 +6,7 @@
 run_mode                  = "paper"
 dry_run                   = true
 fail_closed_without_llm   = false
-single_position_per_symbol = false
+single_position_per_symbol = true
 
 [exchange]
 name            = "binance"
@@ -22,13 +22,13 @@ position_mode   = "dual-side"
 
 [pairs]
 symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-timeframes = ["1m", "5m", "15m"]
+timeframes = ["5m", "15m"]
 
 [strategy]
 mode                = "adaptive"
 active              = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
-min_ta_confidence   = 45
-paper_scout_enabled = true
+min_ta_confidence   = 50
+paper_scout_enabled = false
 
 [advanced_alpha]
 enabled                  = false
@@ -46,8 +46,8 @@ api_base        = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
 http_referer    = "https://github.com/whaledecoder/crypto-scalper"
 http_app_title  = "ARIA Crypto Scalper"
 timeout_secs    = 120
-min_confidence  = 35
-fallback_ta_threshold = 50
+min_confidence  = 45
+fallback_ta_threshold = 55
 max_tokens      = 4096
 
 [manager]
@@ -70,12 +70,12 @@ max_daily_loss_pct        = 5.0
 max_drawdown_pct          = 10.0
 max_leverage              = 100
 max_spread_pct            = 0.1
-min_reward_risk           = 1.0
+min_reward_risk           = 1.5
 min_net_edge_bps          = 0.0
 max_position_notional_pct = 200.0
 assumed_daily_volume_usd  = 1_000_000_000.0
 min_margin_usd            = 6.0
-max_hold_secs             = 900
+max_hold_secs             = 3600
 
 [schedule]
 dead_zone_start_hour_wib = 0

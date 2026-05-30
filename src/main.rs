@@ -267,6 +267,15 @@ async fn run_agents(cfg: Config) -> Result<()> {
     risk.load_equity_from_disk(); // Restore persisted equity (paper mode)
     let book = Arc::new(PositionBook::new());
     book.load_from_disk(); // Restore persisted positions (paper mode)
+    // Sync risk manager open_positions counter with loaded positions so that
+    // /status shows the correct count instead of a stale value from the prior session.
+    {
+        let loaded = book.snapshot().len() as u32;
+        if loaded > 0 {
+            risk.set_open_positions(loaded);
+            tracing::info!(loaded, "startup: synced risk open_positions from persisted book");
+        }
+    }
     let journal = Arc::new(TradeJournal::open(&cfg.monitoring.db_path)?);
     // Build optional signal topic destination from env or config.
     let signal_topic = {
