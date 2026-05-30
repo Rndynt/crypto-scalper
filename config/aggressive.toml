@@ -46,7 +46,7 @@ api_base        = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
 http_referer    = "https://github.com/whaledecoder/crypto-scalper"
 http_app_title  = "ARIA Crypto Scalper"
 timeout_secs    = 120
-min_confidence              = 50     # raised from 35
+min_confidence              = 40     # raised from 35
 fallback_ta_threshold = 50
 max_tokens      = 4096
 

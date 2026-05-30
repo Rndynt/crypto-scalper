@@ -38,14 +38,14 @@ impl Strategy for OrderFlow {
         // book_imbalance < 1.0 = more asks (bearish pressure)
 
         // Gate 3: OFI must be significant — weak signal = noise
-        let ofi_strong = ofi.abs() > 0.3;
+        let ofi_strong = ofi.abs() > 0.15  # relaxed from 0.3;
         if !ofi_strong {
             return None;
         }
 
         // Signal: OFI and book imbalance must agree on direction
         let long_signal = ofi > 0.3 && book_imbalance > 1.15; // buyers dominating
-        let short_signal = ofi < -0.3 && book_imbalance < 0.87; // sellers dominating
+        let short_signal = ofi < -0.15 && book_imbalance < 0.90; // sellers dominating
 
         if !long_signal && !short_signal {
             return None;
