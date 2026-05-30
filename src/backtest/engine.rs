@@ -26,7 +26,6 @@ pub struct SimTrade {
     pub pnl_pct: f64,
     pub bars_held: u32,
     pub reason: String,
-    atr: None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +115,6 @@ impl BacktestEngine {
                     pnl_pct,
                     bars_held: bars + 1,
                     reason: exit_reason,
-                    atr: None,
                 });
                 open = None;
             }
