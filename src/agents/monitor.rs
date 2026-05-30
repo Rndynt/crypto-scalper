@@ -400,8 +400,15 @@ pub fn spawn(
                     } // guard dropped here, before .await
 
                     // ─── Signal Notification (only GO/WAIT to group) ───────
+                    // Spawn to background — never block the event loop with a
+                    // Telegram HTTP call (can take 100-500 ms, causing lag).
                     if !matches!(brain.decision.decision, Decision::NoGo) {
-                        send_signal_notification(&telegram, &brain, &http_client).await;
+                        let tg = telegram.clone();
+                        let b = brain.clone();
+                        let hc = http_client.clone();
+                        tokio::spawn(async move {
+                            send_signal_notification(&tg, &b, &hc).await;
+                        });
                     }
                 }
                 AgentEvent::ManagerVerdictEmitted(v) => {
@@ -540,7 +547,9 @@ pub fn spawn(
                         brain.as_ref(),
                         max_leverage,
                     );
-                    let _ = telegram.send(&msg).await;
+                    // Spawn — don't block the event loop
+                    let tg = telegram.clone();
+                    tokio::spawn(async move { let _ = tg.send(&msg).await; });
                 }
                 AgentEvent::PositionClosed {
                     client_id,
@@ -684,9 +693,14 @@ pub fn spawn(
                         losses = total_losses,
                         total = trade_no,
                     );
-                    let _ = telegram.send(&msg).await;
-                    // Also send to group topic
-                    let _ = telegram.send_signal(&msg).await;
+                    // Spawn both sends — don't block the event loop
+                    let tg = telegram.clone();
+                    let msg_clone = msg.clone();
+                    tokio::spawn(async move {
+                        let _ = tg.send(&msg_clone).await;
+                        // Also send to group topic
+                        let _ = tg.send_signal(&msg_clone).await;
+                    });
                 }
                 AgentEvent::PolicyRefreshed { lessons_count, .. } => {
                     metrics.update(|m| m.active_lessons = lessons_count as u64);

@@ -213,7 +213,9 @@ async fn run_backtest(cfg: &Config) -> Result<()> {
 /// brain, manager, execution, monitor, and the periodic learning
 /// refresh agent. Exits cleanly on Ctrl-C by broadcasting `Shutdown`.
 async fn run_agents(cfg: Config) -> Result<()> {
-    let bus = MessageBus::new(4096);
+    // Capacity 65536: at 300 events/sec (3 symbols × 100 ticks/s) this gives
+    // ~3.5 minutes of buffer before lagging — vs 13 seconds at 4096.
+    let bus = MessageBus::new(65536);
 
     // --- Exchange ---
     let exchange: Arc<dyn Exchange> = if cfg.mode.run_mode == "live" && !cfg.mode.dry_run {

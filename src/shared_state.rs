@@ -131,9 +131,10 @@ pub struct SharedState {
     pub unrealized_pnl: RwLock<f64>,
 
     // === SURVIVAL ===
+    // Note: SurvivalAgent (agents/survival.rs) is the authoritative source for survival
+    // decisions. These fields are display-only, updated by SurvivalAgent events.
     pub survival_mode: RwLock<SurvivalMode>,
     pub survival_score: RwLock<f64>,
-    pub death_line: RwLock<f64>,
     pub drawdown_pct: RwLock<f64>,
 
     // === STRATEGY HEALTH ===
@@ -159,6 +160,9 @@ pub struct SharedState {
     pub recent_lessons: RwLock<Vec<String>>,
 }
 
+/// Local survival mode for SharedState display only.
+/// The authoritative survival decisions come from SurvivalAgent (agents/survival.rs).
+/// This enum uses simple Normal/Defensive/Critical/Dead labels for Telegram status display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SurvivalMode {
     Normal,
@@ -198,7 +202,6 @@ impl SharedState {
 
             survival_mode: RwLock::new(SurvivalMode::Normal),
             survival_score: RwLock::new(100.0),
-            death_line: RwLock::new(initial_equity * 0.7),
             drawdown_pct: RwLock::new(0.0),
 
             strategy_health: RwLock::new(HashMap::new()),
@@ -271,53 +274,12 @@ impl SharedState {
         *eq + *upnl
     }
 
-    // === SURVIVAL METHODS ===
+    // === POSITION TRACKING ===
 
-    pub fn check_survival(&self) {
-        let equity = *self.equity.read();
-        let death_line = *self.death_line.read();
-        let dd = *self.drawdown_pct.read();
-        let initial = *self.initial_equity.read();
-
-        let mut mode = self.survival_mode.write();
-        let mut score = self.survival_score.write();
-
-        // Death line check
-        if equity <= death_line {
-            *mode = SurvivalMode::Dead;
-            *score = 0.0;
-            return;
-        }
-
-        // Drawdown check
-        if dd >= 10.0 {
-            *mode = SurvivalMode::Critical;
-            *score = 20.0;
-        } else if dd >= 7.0 {
-            *mode = SurvivalMode::Defensive;
-            *score = 50.0;
-        } else if dd >= 5.0 {
-            *mode = SurvivalMode::Defensive;
-            *score = 70.0;
-        } else {
-            *mode = SurvivalMode::Normal;
-            *score = 100.0 - dd * 3.0;
-        }
-
-        // Loss streak check
-        let rpnl = *self.realized_pnl_today.read();
-        if rpnl < -initial * 0.03 {
-            // 3% daily loss
-            if *mode == SurvivalMode::Normal {
-                *mode = SurvivalMode::Defensive;
-                *score = (*score).min(60.0);
-            }
-        }
-    }
-
-    pub fn should_trade(&self) -> bool {
-        let mode = self.survival_mode.read();
-        *mode != SurvivalMode::Dead
+    pub fn can_open_position(&self) -> bool {
+        let open = *self.open_positions.read();
+        let max = *self.max_open_positions.read();
+        open < max
     }
 
     // === STRATEGY HEALTH METHODS ===
@@ -434,12 +396,6 @@ impl SharedState {
     }
 
     // === POSITION TRACKING ===
-
-    pub fn can_open_position(&self) -> bool {
-        let open = *self.open_positions.read();
-        let max = *self.max_open_positions.read();
-        open < max && self.should_trade()
-    }
 
     pub fn on_position_opened(&self) {
         let mut open = self.open_positions.write();
