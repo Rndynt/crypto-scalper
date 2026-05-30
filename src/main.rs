@@ -585,6 +585,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
         300,
         Some(Arc::clone(&quant_engine)),
         Arc::clone(&shared_state),
+        Some(Arc::clone(&llm)),
     );
 
     let _survival = crypto_scalper::agents::survival::spawn(SurvivalAgentDeps {

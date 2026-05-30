@@ -88,6 +88,17 @@ impl LearningPolicy {
     pub fn historical_summary(&self, strategy: &str, regime: &str, symbol: &str) -> String {
         let g = self.inner.read();
         let mut out = String::new();
+
+        // ── 1. LLM-generated qualitative insights (most important — shown first) ──
+        if !g.memory.llm_insights.is_empty() {
+            out.push_str("=== LEARNING INSIGHTS (read carefully before deciding) ===\n");
+            for (i, insight) in g.memory.llm_insights.iter().enumerate() {
+                out.push_str(&format!("{}. {}\n", i + 1, insight));
+            }
+            out.push_str("=== END LEARNING INSIGHTS ===\n\n");
+        }
+
+        // ── 2. Quantitative stats ──
         if let Some(s) = g.by_overall() {
             out.push_str(&format!(
                 "Overall: {} trades · WR {:.1}% · PF {:.2} · net ${:+.2}\n",
@@ -98,13 +109,21 @@ impl LearningPolicy {
             ));
         }
         if let Some(s) = g.memory.by_strategy.get(strategy) {
+            let alert = if s.win_rate() < 0.40 && s.trades >= 5 {
+                " ⚠️ LOW WIN RATE — be VERY selective"
+            } else if s.recent_streak <= -3 {
+                " ⚠️ LOSS STREAK — require strong confluence"
+            } else {
+                ""
+            };
             out.push_str(&format!(
-                "Strategy {strategy}: {} trades · WR {:.1}% · PF {:.2} · streak {} · last5 {}\n",
+                "Strategy {strategy}: {} trades · WR {:.1}% · PF {:.2} · streak {} · last5 {}{}\n",
                 s.trades,
                 s.win_rate() * 100.0,
                 s.profit_factor(),
                 s.recent_streak,
-                fmt_outcomes(s)
+                fmt_outcomes(s),
+                alert,
             ));
         }
         if let Some(s) = g
@@ -112,10 +131,16 @@ impl LearningPolicy {
             .by_strategy_regime
             .get(&(strategy.into(), regime.into()))
         {
+            let alert = if s.win_rate() < 0.35 && s.trades >= 3 {
+                " ⚠️ FAILING IN THIS REGIME"
+            } else {
+                ""
+            };
             out.push_str(&format!(
-                "Regime {regime} for {strategy}: {} trades · WR {:.1}%\n",
+                "Regime {regime} for {strategy}: {} trades · WR {:.1}%{}\n",
                 s.trades,
                 s.win_rate() * 100.0,
+                alert,
             ));
         }
         if let Some(s) = g
@@ -130,7 +155,8 @@ impl LearningPolicy {
                 s.recent_streak,
             ));
         }
-        // Always close with active lessons.
+
+        // ── 3. Active mechanical lessons ──
         let active = g
             .lessons
             .iter()
@@ -143,6 +169,7 @@ impl LearningPolicy {
             out.push_str(&active);
             out.push('\n');
         }
+
         if out.is_empty() {
             out.push_str("No prior trades — running on TA + LLM only.\n");
         }

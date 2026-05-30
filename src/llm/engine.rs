@@ -299,6 +299,78 @@ impl LlmEngine {
         Ok(sanitize_prices(d, current_price))
     }
 
+    /// Freeform LLM call — used by the learning agent for qualitative analysis.
+    /// Returns the raw text response (caller parses it).
+    pub async fn analyze_text(&self, system_prompt: &str, user_content: &str) -> anyhow::Result<String> {
+        if self.cfg.api_key.is_empty() {
+            return Err(anyhow::anyhow!("LLM api key empty"));
+        }
+        let result = timeout(
+            Duration::from_secs(60),
+            self.call_text_api(system_prompt, user_content),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("LLM text call timed out after 60s"))??;
+        Ok(result)
+    }
+
+    async fn call_text_api(&self, system_prompt: &str, user_content: &str) -> anyhow::Result<String> {
+        match self.cfg.provider {
+            LlmProvider::Anthropic => {
+                let body = serde_json::json!({
+                    "model": self.cfg.model,
+                    "max_tokens": 1024,
+                    "system": system_prompt,
+                    "messages": [{ "role": "user", "content": user_content }]
+                });
+                let resp: serde_json::Value = self.client
+                    .post(&self.cfg.api_base)
+                    .header("x-api-key", &self.cfg.api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+                    .send().await?
+                    .json().await?;
+                let text = resp.get("content").and_then(|c| c.get(0))
+                    .and_then(|b| b.get("text")).and_then(|t| t.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("empty anthropic response: {resp}"))?;
+                Ok(text.to_string())
+            }
+            LlmProvider::OpenAiCompatible => {
+                let body = serde_json::json!({
+                    "model": self.cfg.model,
+                    "max_completion_tokens": 1024,
+                    "temperature": 0.1,
+                    "stream": false,
+                    "messages": [
+                        { "role": "system", "content": system_prompt },
+                        { "role": "user",   "content": user_content }
+                    ]
+                });
+                let mut req = self.client
+                    .post(&self.cfg.api_base)
+                    .header("api-key", &self.cfg.api_key)
+                    .json(&body);
+                if let Some(ref r) = self.cfg.http_referer { req = req.header("HTTP-Referer", r); }
+                if let Some(ref t) = self.cfg.http_app_title { req = req.header("X-Title", t); }
+
+                let raw_bytes = req.send().await?.bytes().await?;
+                let raw_str = String::from_utf8_lossy(&raw_bytes);
+                let resp: serde_json::Value = serde_json::from_str(&raw_str)
+                    .map_err(|e| anyhow::anyhow!("json parse: {e} | raw={raw_str}"))?;
+                if let Some(err) = resp.get("error") {
+                    return Err(anyhow::anyhow!("API error: {err}"));
+                }
+                let message = resp.get("choices").and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message"));
+                let text = message.and_then(|m| m.get("content")).and_then(|t| t.as_str())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| message.and_then(|m| m.get("reasoning_content")).and_then(|t| t.as_str()))
+                    .ok_or_else(|| anyhow::anyhow!("empty openai response: {resp}"))?;
+                Ok(text.to_string())
+            }
+        }
+    }
+
     fn fallback_decision(ctx: &MarketContext, threshold: u8) -> TradeDecision {
         let go = ctx.ta_confidence >= threshold;
         TradeDecision {

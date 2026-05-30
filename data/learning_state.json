@@ -1,9 +1,9 @@
 {
   "lessons_count": 0,
-  "last_refresh_ts": "2026-05-30T07:35:53.933213743+00:00",
-  "overall_trades": 0,
-  "overall_wins": 0,
-  "overall_losses": 0,
-  "overall_net_pnl": 0.0,
+  "last_refresh_ts": "2026-05-30T08:04:38.401838556+00:00",
+  "overall_trades": 3,
+  "overall_wins": 1,
+  "overall_losses": 2,
+  "overall_net_pnl": -1.4712462351743234,
   "lessons": []
 }

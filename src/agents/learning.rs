@@ -14,11 +14,13 @@ use crate::learning::{
     LearningPolicy, PerformanceMemory,
     lessons::{LessonConfig, LessonExtractor},
 };
-use crate::monitoring::{TradeJournal, logger::LearningStateSnapshot};
+use crate::llm::engine::LlmEngine;
+use crate::llm::prompts::LEARNING_ANALYSIS_PROMPT;
+use crate::monitoring::{TradeJournal, logger::{ClosedTrade, LearningStateSnapshot}};
 use crate::quant::QuantEngine;
 use crate::shared_state::SharedState;
 use chrono::Utc;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -80,6 +82,101 @@ mod tests {
     }
 }
 
+/// Call the LLM to extract qualitative insights from recent trade history.
+/// Returns a list of actionable insight strings, or empty vec on failure/insufficient data.
+async fn run_llm_analysis(llm: &LlmEngine, trades: &[ClosedTrade]) -> Vec<String> {
+    if trades.len() < 5 {
+        return Vec::new();
+    }
+    let sample = &trades[..trades.len().min(30)];
+
+    // Build trade summary text
+    let mut summary = format!(
+        "Analyzing {} recent closed trades (newest first):\n\n",
+        sample.len()
+    );
+    for t in sample {
+        let outcome = if t.pnl_usd > 0.0 { "WIN " } else { "LOSS" };
+        summary.push_str(&format!(
+            "[{outcome}] {sym} | {strat} | {dir} | {regime} | PnL: ${pnl:+.2} | TA: {ta} | LLM: {llm_c}\n",
+            sym    = t.symbol,
+            strat  = t.strategy,
+            dir    = t.direction,
+            regime = t.regime,
+            pnl    = t.pnl_usd,
+            ta     = t.ta_confidence.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+            llm_c  = t.llm_confidence.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+        ));
+    }
+
+    // Strategy breakdown
+    let mut strat_map: HashMap<String, (u32, u32, f64)> = HashMap::new();
+    for t in sample {
+        let e = strat_map.entry(t.strategy.clone()).or_default();
+        if t.pnl_usd > 0.0 { e.0 += 1; }
+        e.1 += 1;
+        e.2 += t.pnl_usd;
+    }
+    summary.push_str("\nStrategy breakdown:\n");
+    for (strat, (wins, total, pnl)) in &strat_map {
+        summary.push_str(&format!(
+            "  {strat}: {wins}/{total} wins ({:.0}% WR), net ${pnl:.2}\n",
+            *wins as f64 / *total as f64 * 100.0
+        ));
+    }
+
+    // Direction breakdown
+    let long_wins  = sample.iter().filter(|t| t.direction == "LONG"  && t.pnl_usd > 0.0).count();
+    let long_total = sample.iter().filter(|t| t.direction == "LONG").count();
+    let short_wins  = sample.iter().filter(|t| t.direction == "SHORT" && t.pnl_usd > 0.0).count();
+    let short_total = sample.iter().filter(|t| t.direction == "SHORT").count();
+    summary.push_str(&format!(
+        "\nDirection: LONG {long_wins}/{long_total} wins · SHORT {short_wins}/{short_total} wins\n"
+    ));
+
+    // Regime breakdown
+    let mut regime_map: HashMap<String, (u32, u32)> = HashMap::new();
+    for t in sample {
+        let e = regime_map.entry(t.regime.clone()).or_default();
+        if t.pnl_usd > 0.0 { e.0 += 1; }
+        e.1 += 1;
+    }
+    summary.push_str("Regime: ");
+    for (regime, (wins, total)) in &regime_map {
+        summary.push_str(&format!("{regime} {wins}/{total} · "));
+    }
+    summary.push('\n');
+
+    match llm.analyze_text(LEARNING_ANALYSIS_PROMPT, &summary).await {
+        Ok(text) => {
+            // Strip markdown code fences if present
+            let clean = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+            match serde_json::from_str::<serde_json::Value>(clean) {
+                Ok(v) => {
+                    if let Some(arr) = v.get("insights").and_then(|i| i.as_array()) {
+                        let insights: Vec<String> = arr.iter()
+                            .filter_map(|i| i.as_str())
+                            .map(|s| s.to_string())
+                            .collect();
+                        info!(count = insights.len(), "learning: LLM analysis produced insights");
+                        return insights;
+                    }
+                    warn!("learning: LLM response missing 'insights' key: {clean}");
+                    Vec::new()
+                }
+                Err(e) => {
+                    warn!(error = %e, raw = %clean, "learning: failed to parse LLM insight JSON");
+                    Vec::new()
+                }
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "learning: LLM analysis call failed");
+            Vec::new()
+        }
+    }
+}
+
 pub fn spawn(
     bus: MessageBus,
     journal: Arc<TradeJournal>,
@@ -88,6 +185,7 @@ pub fn spawn(
     refresh_secs: u64,
     quant_engine: Option<Arc<QuantEngine>>,
     shared_state: Arc<SharedState>,
+    llm: Option<Arc<LlmEngine>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!(refresh_secs, "learning agent starting");
@@ -254,7 +352,7 @@ pub fn spawn(
                         shared_state.record_strategy_trade(&trade.strategy, trade.pnl_usd);
                     }
 
-                    let mem = PerformanceMemory::build(&trades);
+                    let mut mem = PerformanceMemory::build(&trades);
                     let lessons = extractor.extract(&mem);
                     let trades_count = mem.overall.trades;
                     let wins = mem.overall.wins;
@@ -262,9 +360,22 @@ pub fn spawn(
                     let net_pnl = mem.overall.net_pnl_usd;
                     let lessons_count = lessons.len();
 
+                    // Run LLM qualitative analysis when we have enough trades.
+                    // Do this before policy.update() so insights go into the snapshot.
+                    if let Some(ref llm_arc) = llm {
+                        let insights = run_llm_analysis(llm_arc.as_ref(), &trades).await;
+                        if !insights.is_empty() {
+                            for insight in &insights {
+                                info!(insight = %insight, "learning: LLM insight");
+                            }
+                            mem.llm_insights = insights;
+                        }
+                    }
+
                     info!(
                         trades = trades_count,
                         lessons = lessons_count,
+                        llm_insights = mem.llm_insights.len(),
                         strategy_summary = %shared_state.get_strategy_summary(),
                         "learning agent: policy refreshed"
                     );
