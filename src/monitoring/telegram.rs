@@ -184,10 +184,7 @@ impl TelegramNotifier {
         if !self.enabled {
             return None;
         }
-        let url = format!(
-            "https://api.telegram.org/bot{}/sendPhoto",
-            self.token
-        );
+        let url = format!("https://api.telegram.org/bot{}/sendPhoto", self.token);
 
         let chat_id = match dest {
             TgDestination::Chat(id) => id.clone(),
@@ -293,10 +290,7 @@ impl TelegramNotifier {
         if !self.enabled {
             return Ok(());
         }
-        let url = format!(
-            "https://api.telegram.org/bot{}/sendPhoto",
-            self.token
-        );
+        let url = format!("https://api.telegram.org/bot{}/sendPhoto", self.token);
 
         let chat_id = match dest {
             TgDestination::Chat(id) => id.clone(),

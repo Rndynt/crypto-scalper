@@ -7,33 +7,61 @@ use crate::indicators::{
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+/// Strategy slot identifier.
+///
+/// Canonical names (used in config and logs):
+///   order_flow, trade_flow, kalman_trend, microstructure_reversion, squeeze,
+///   screened_vwap_scalp
+///
+/// Backward-compatible aliases (still accepted by parse):
+///   ema_ribbon → order_flow
+///   momentum → trade_flow
+///   vwap_scalp → kalman_trend
+///   mean_reversion → microstructure_reversion
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum StrategyName {
-    MeanReversion,
-    Momentum,
-    VwapScalp,
+    /// OFI + bid-ask imbalance + VPIN gate (was EmaRibbon)
     EmaRibbon,
+    /// VPIN toxicity + price velocity + OFI (was Momentum)
+    Momentum,
+    /// Kalman velocity + acceleration + OFI (was VwapScalp)
+    VwapScalp,
+    /// VWAP deviation + OFI reversal (was MeanReversion)
+    MeanReversion,
+    /// Bollinger/Keltner squeeze breakout
     Squeeze,
+    /// 15m-screened VWAP pullback scalp (new)
+    ScreenedVwapScalp,
 }
 
 impl StrategyName {
+    /// Returns the canonical config/log name for this strategy slot.
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::MeanReversion => "mean_reversion",
-            Self::Momentum => "momentum",
-            Self::VwapScalp => "vwap_scalp",
-            Self::EmaRibbon => "ema_ribbon",
+            Self::EmaRibbon => "order_flow",
+            Self::Momentum => "trade_flow",
+            Self::VwapScalp => "kalman_trend",
+            Self::MeanReversion => "microstructure_reversion",
             Self::Squeeze => "squeeze",
+            Self::ScreenedVwapScalp => "screened_vwap_scalp",
         }
     }
 
+    /// Parse a strategy name from config. Accepts both canonical and legacy aliases.
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "mean_reversion" => Some(Self::MeanReversion),
+            // Canonical names
+            "order_flow" => Some(Self::EmaRibbon),
+            "trade_flow" => Some(Self::Momentum),
+            "kalman_trend" => Some(Self::VwapScalp),
+            "microstructure_reversion" => Some(Self::MeanReversion),
+            "squeeze" => Some(Self::Squeeze),
+            "screened_vwap_scalp" => Some(Self::ScreenedVwapScalp),
+            // Backward-compatible legacy aliases
+            "ema_ribbon" => Some(Self::EmaRibbon),
             "momentum" => Some(Self::Momentum),
             "vwap_scalp" => Some(Self::VwapScalp),
-            "ema_ribbon" => Some(Self::EmaRibbon),
-            "squeeze" => Some(Self::Squeeze),
+            "mean_reversion" => Some(Self::MeanReversion),
             _ => None,
         }
     }

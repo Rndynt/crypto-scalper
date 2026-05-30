@@ -3,9 +3,7 @@
 //! summary injected), calls the LLM, and emits `BrainOutcomeReady`.
 
 use crate::agents::MessageBus;
-use crate::agents::messages::{
-    AgentEvent, AgentId, BrainOutcome, FeedsSnapshotMsg, RiskOutcome,
-};
+use crate::agents::messages::{AgentEvent, AgentId, BrainOutcome, FeedsSnapshotMsg, RiskOutcome};
 use crate::feeds::ExternalSnapshot;
 use crate::learning::LearningPolicy;
 use crate::llm::ContextBuilder;
@@ -155,7 +153,9 @@ pub fn spawn(
                     // Validate LLM-adjusted SL/TP geometry — reject if wrong side of entry
                     let geometry_ok = match signal.side {
                         crate::data::Side::Long => final_sl < final_entry && final_tp > final_entry,
-                        crate::data::Side::Short => final_sl > final_entry && final_tp < final_entry,
+                        crate::data::Side::Short => {
+                            final_sl > final_entry && final_tp < final_entry
+                        }
                     };
                     if !geometry_ok {
                         info!(
@@ -170,7 +170,11 @@ pub fn spawn(
                     // Validate minimum R:R after LLM adjustment
                     let risk_dist = (final_entry - final_sl).abs();
                     let reward_dist = (final_tp - final_entry).abs();
-                    let rr = if risk_dist > 0.0 { reward_dist / risk_dist } else { 0.0 };
+                    let rr = if risk_dist > 0.0 {
+                        reward_dist / risk_dist
+                    } else {
+                        0.0
+                    };
                     if rr < 0.8 {
                         info!(
                             symbol = %symbol,

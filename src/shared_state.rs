@@ -233,15 +233,30 @@ impl SharedState {
         if let Ok(data) = std::fs::read_to_string(EQUITY_FILE) {
             if let Ok(snap) = serde_json::from_str::<serde_json::Value>(&data) {
                 let eq = snap.get("equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let peak = snap.get("peak_equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let rpnl = snap.get("realized_pnl_today").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let peak = snap
+                    .get("peak_equity")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let rpnl = snap
+                    .get("realized_pnl_today")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
                 if eq > 0.0 {
                     *self.equity.write() = eq;
                     *self.peak_equity.write() = peak.max(eq);
                     *self.realized_pnl_today.write() = rpnl;
-                    let dd = if peak > 0.0 { ((peak - eq) / peak * 100.0).max(0.0) } else { 0.0 };
+                    let dd = if peak > 0.0 {
+                        ((peak - eq) / peak * 100.0).max(0.0)
+                    } else {
+                        0.0
+                    };
                     *self.drawdown_pct.write() = dd;
-                    tracing::info!(equity = eq, peak, rpnl, "SharedState synced from persisted equity");
+                    tracing::info!(
+                        equity = eq,
+                        peak,
+                        rpnl,
+                        "SharedState synced from persisted equity"
+                    );
                 }
             }
         }

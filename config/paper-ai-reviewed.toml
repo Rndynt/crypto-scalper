@@ -1,0 +1,35 @@
+# paper-ai-reviewed.toml — paper mode + full LLM review + screening enabled.
+# Use to validate LLM quality and screening logic before going live.
+
+[bot]
+mode = "paper"
+
+[llm]
+enabled                 = true
+fail_closed_without_llm = false   # degrade gracefully if LLM is down
+entry_path_enabled      = true    # require LLM approval on entry path
+min_confidence          = 60
+fallback_ta_threshold   = 65
+
+[manager]
+enabled               = true
+fast_approve_min_conf = 80
+
+[screening]
+enabled             = true
+min_vote_fraction   = 0.6
+ema_fast            = 9
+ema_slow            = 21
+adx_period          = 14
+adx_min_trend       = 20.0
+rsi_period          = 14
+rsi_overbought      = 70.0
+rsi_oversold        = 30.0
+volume_ma_period    = 20
+volume_spike_factor = 1.5
+atr_period          = 14
+spread_max_atr_fraction = 0.1
+
+[risk]
+max_open_positions  = 3
+max_risk_per_trade  = 0.01

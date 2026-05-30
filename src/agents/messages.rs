@@ -159,6 +159,15 @@ pub enum AgentEvent {
         reason: PositionExitReason,
         strategy: String,
     },
+    /// `ExecutionAgent` moved (replaced) the broker-side stop-loss order.
+    /// Emitted after cancel + re-place of protective SL succeeds.
+    StopMoved {
+        client_id: String,
+        symbol: String,
+        old_stop: f64,
+        new_stop: f64,
+        reason: String,
+    },
     /// Heartbeat for liveness monitoring.
     Heartbeat {
         from: AgentId,

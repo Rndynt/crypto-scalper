@@ -90,13 +90,13 @@ pub struct LessonConfig {
 impl Default for LessonConfig {
     fn default() -> Self {
         Self {
-            min_trades_for_significance: 10,  // was 30 — learn faster
-            lose_streak_trigger: -5,           // was -8 — react sooner
+            min_trades_for_significance: 10, // was 30 — learn faster
+            lose_streak_trigger: -5,         // was -8 — react sooner
             lose_streak_cooldown_minutes: 15,
             derate_win_rate: 0.35,
             boost_win_rate: 0.65,
             regime_blacklist_win_rate: 0.30,
-            regime_blacklist_min_trades: 5,    // was 12 — react sooner
+            regime_blacklist_min_trades: 5, // was 12 — react sooner
             drawdown_cooldown_pct: -5.0,
             drawdown_cooldown_minutes: 60,
             llm_overconf_actual_wr: 0.40,
@@ -126,7 +126,7 @@ impl LessonExtractor {
                 strategy: None,
                 regime: None,
                 symbol: None,
-                size_multiplier: 0.3,  // was 0.0 — reduce, don't kill
+                size_multiplier: 0.3, // was 0.0 — reduce, don't kill
                 ta_threshold_delta: 10,
                 llm_min_confidence_floor: Some(65),
                 valid_until: now + chrono::Duration::minutes(self.cfg.drawdown_cooldown_minutes),
@@ -145,7 +145,7 @@ impl LessonExtractor {
                     strategy: Some(strategy.clone()),
                     regime: None,
                     symbol: Some(symbol.clone()),
-                    size_multiplier: 0.4,  // was 0.0 — reduce, don't kill
+                    size_multiplier: 0.4, // was 0.0 — reduce, don't kill
                     ta_threshold_delta: 10,
                     llm_min_confidence_floor: Some(65),
                     valid_until: now
@@ -210,10 +210,10 @@ impl LessonExtractor {
                     strategy: Some(strategy.clone()),
                     regime: Some(regime.clone()),
                     symbol: None,
-                    size_multiplier: 0.2,  // was 0.0 — reduce, don't kill
+                    size_multiplier: 0.2, // was 0.0 — reduce, don't kill
                     ta_threshold_delta: 15,
                     llm_min_confidence_floor: Some(75),
-                    valid_until: now + chrono::Duration::hours(3),  // was 12h
+                    valid_until: now + chrono::Duration::hours(3), // was 12h
                     reason: format!(
                         "WR {:.1}% on {strategy} during {regime} ({} trades) — size reduced 3h",
                         s.win_rate() * 100.0,
@@ -257,10 +257,10 @@ impl LessonExtractor {
                     strategy: None,
                     regime: None,
                     symbol: Some(symbol.clone()),
-                    size_multiplier: 0.3,  // was 0.0 — reduce, don't kill
+                    size_multiplier: 0.3, // was 0.0 — reduce, don't kill
                     ta_threshold_delta: 15,
                     llm_min_confidence_floor: Some(70),
-                    valid_until: now + chrono::Duration::hours(4),  // was 24h
+                    valid_until: now + chrono::Duration::hours(4), // was 24h
                     reason: format!(
                         "{symbol} net {:+.2} over {} trades, WR {:.1}% — size reduced 4h",
                         s.net_pnl_usd,

@@ -234,8 +234,8 @@ mod tests {
         let v = policy.evaluate("ema_ribbon", "TRENDING", "BTCUSDT");
         // Policy no longer blocks, only reduces size (min 0.5 enforced)
         assert!(v.allowed);
-        assert!(v.size_multiplier < 1.0);   // size dikurangi
-        assert!(v.size_multiplier >= 0.5);  // tapi tidak pernah di bawah minimum
+        assert!(v.size_multiplier < 1.0); // size dikurangi
+        assert!(v.size_multiplier >= 0.5); // tapi tidak pernah di bawah minimum
         assert!(!v.matched_lessons.is_empty());
 
         // Different symbol still at full size.

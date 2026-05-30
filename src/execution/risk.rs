@@ -93,8 +93,14 @@ impl RiskManager {
         if let Ok(data) = std::fs::read_to_string(EQUITY_FILE) {
             if let Ok(snap) = serde_json::from_str::<serde_json::Value>(&data) {
                 let equity = snap.get("equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let peak = snap.get("peak_equity").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let pnl_today = snap.get("realized_pnl_today").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let peak = snap
+                    .get("peak_equity")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let pnl_today = snap
+                    .get("realized_pnl_today")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
                 if equity > 0.0 {
                     let mut i = self.inner.lock();
                     i.equity = equity;

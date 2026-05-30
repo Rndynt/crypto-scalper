@@ -252,7 +252,10 @@ impl PositionBook {
             if cfg.max_hold_secs > 0 {
                 let held = (now - p.opened_at).num_seconds();
                 if held > cfg.max_hold_secs {
-                    out.push(PositionAction::Close(p.clone(), PositionExitReason::TimeExit));
+                    out.push(PositionAction::Close(
+                        p.clone(),
+                        PositionExitReason::TimeExit,
+                    ));
                     to_remove.push(id.clone());
                     continue;
                 }
@@ -262,24 +265,36 @@ impl PositionBook {
             match p.side {
                 Side::Long => {
                     if p.stop_loss > 0.0 && price <= p.stop_loss {
-                        out.push(PositionAction::Close(p.clone(), PositionExitReason::StopLoss));
+                        out.push(PositionAction::Close(
+                            p.clone(),
+                            PositionExitReason::StopLoss,
+                        ));
                         to_remove.push(id.clone());
                         continue;
                     }
                     if p.take_profit > 0.0 && price >= p.take_profit {
-                        out.push(PositionAction::Close(p.clone(), PositionExitReason::TakeProfit));
+                        out.push(PositionAction::Close(
+                            p.clone(),
+                            PositionExitReason::TakeProfit,
+                        ));
                         to_remove.push(id.clone());
                         continue;
                     }
                 }
                 Side::Short => {
                     if p.stop_loss > 0.0 && price >= p.stop_loss {
-                        out.push(PositionAction::Close(p.clone(), PositionExitReason::StopLoss));
+                        out.push(PositionAction::Close(
+                            p.clone(),
+                            PositionExitReason::StopLoss,
+                        ));
                         to_remove.push(id.clone());
                         continue;
                     }
                     if p.take_profit > 0.0 && price <= p.take_profit {
-                        out.push(PositionAction::Close(p.clone(), PositionExitReason::TakeProfit));
+                        out.push(PositionAction::Close(
+                            p.clone(),
+                            PositionExitReason::TakeProfit,
+                        ));
                         to_remove.push(id.clone());
                         continue;
                     }
@@ -355,7 +370,10 @@ impl PositionBook {
                         }
                         // Check if trailing stop hit
                         if price <= p.stop_loss {
-                            out.push(PositionAction::Close(p.clone(), PositionExitReason::Trailing));
+                            out.push(PositionAction::Close(
+                                p.clone(),
+                                PositionExitReason::Trailing,
+                            ));
                             to_remove.push(id.clone());
                             continue;
                         }
@@ -416,7 +434,10 @@ impl PositionBook {
                             out.push(PositionAction::MoveSL(p.clone(), trail_stop));
                         }
                         if price >= p.stop_loss {
-                            out.push(PositionAction::Close(p.clone(), PositionExitReason::Trailing));
+                            out.push(PositionAction::Close(
+                                p.clone(),
+                                PositionExitReason::Trailing,
+                            ));
                             to_remove.push(id.clone());
                             continue;
                         }

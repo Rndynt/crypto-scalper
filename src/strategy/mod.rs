@@ -17,6 +17,8 @@ pub mod order_flow;
 pub mod pairs;
 pub mod regime;
 pub mod retirement;
+pub mod screened_vwap_scalp;
+pub mod screening;
 pub mod squeeze;
 pub mod state;
 pub mod trade_flow;
@@ -28,6 +30,7 @@ pub mod momentum;
 pub mod vwap_scalp;
 
 pub use regime::{Regime, RegimeDetector};
+pub use screening::ScreeningState;
 pub use state::{PreSignal, StrategyName, SymbolState};
 
 use crate::data::Candle;
@@ -41,24 +44,25 @@ pub trait Strategy {
 /// Select quant strategies based on regime.
 /// All strategies use OFI/VPIN/Kalman — regime only determines emphasis.
 pub fn select_strategies(active: &[StrategyName], regime: Regime) -> Vec<StrategyName> {
-    // All 4 quant strategies run in all regimes — they self-filter via VPIN/OFI
-    // Regime only shifts preference order
     let preferred: &[StrategyName] = match regime {
         Regime::TrendingBullish | Regime::TrendingBearish => &[
-            StrategyName::EmaRibbon, // → OrderFlow strategy
-            StrategyName::Momentum,  // → TradeFlow strategy
-            StrategyName::VwapScalp, // → KalmanTrend strategy
+            StrategyName::EmaRibbon,         // → OrderFlow
+            StrategyName::Momentum,          // → TradeFlow
+            StrategyName::ScreenedVwapScalp, // 15m-screened VWAP pullback
+            StrategyName::VwapScalp,         // → KalmanTrend
         ],
         Regime::Ranging | Regime::Squeeze => &[
-            StrategyName::MeanReversion, // → MicrostructureReversion
-            StrategyName::VwapScalp,     // → KalmanTrend
-            StrategyName::EmaRibbon,     // → OrderFlow
+            StrategyName::MeanReversion,     // → MicrostructureReversion
+            StrategyName::ScreenedVwapScalp, // VWAP pullback still valid in range
+            StrategyName::VwapScalp,         // → KalmanTrend
+            StrategyName::EmaRibbon,         // → OrderFlow
         ],
         Regime::Volatile => &[
             StrategyName::Momentum,  // → TradeFlow (VPIN gate handles safety)
             StrategyName::EmaRibbon, // → OrderFlow
         ],
         Regime::Unknown => &[
+            StrategyName::ScreenedVwapScalp,
             StrategyName::EmaRibbon,
             StrategyName::Momentum,
             StrategyName::VwapScalp,
@@ -81,5 +85,6 @@ pub fn build_strategies() -> Vec<Box<dyn Strategy + Send + Sync>> {
         Box::new(kalman_trend::KalmanTrendStrategy),
         Box::new(microstructure_reversion::MicrostructureReversion),
         Box::new(squeeze::Squeeze),
+        Box::new(screened_vwap_scalp::ScreenedVwapScalp),
     ]
 }

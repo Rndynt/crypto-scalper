@@ -23,13 +23,13 @@ use crate::execution::RiskManager;
 use crate::execution::tcm::TransactionCostModel;
 use crate::learning::LearningPolicy;
 use crate::quant::{QuantEngine, QuantSizingInput};
+use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
-use chrono::Utc;
 
 #[derive(Debug, Clone)]
 pub struct RiskAgentConfig {
@@ -216,7 +216,9 @@ pub fn spawn(
                             effective_ta_threshold: cfg.base_min_ta_threshold,
                             effective_llm_floor: cfg.base_min_llm_floor,
                             matched_lessons: vec!["stale/missing book ticker".into()],
-                            reason: Some("market data stale: book ticker age exceeded threshold".into()),
+                            reason: Some(
+                                "market data stale: book ticker age exceeded threshold".into(),
+                            ),
                         }));
                         continue;
                     }
@@ -498,7 +500,9 @@ pub fn spawn(
                         let notional = size * effective_entry;
                         let margin = notional / limits.max_leverage.max(1) as f64;
                         if margin < limits.min_margin_usd && size > 0.0 {
-                            let floor_size = limits.min_margin_usd * limits.max_leverage.max(1) as f64 / effective_entry.max(1e-9);
+                            let floor_size = limits.min_margin_usd
+                                * limits.max_leverage.max(1) as f64
+                                / effective_entry.max(1e-9);
                             size = floor_size;
                         }
                     }
@@ -543,7 +547,10 @@ pub fn spawn(
                 }
                 // Veto: release pending lock so the symbol can be retried next signal.
                 AgentEvent::ManagerVerdictEmitted(ref v)
-                    if matches!(v.action, crate::agents::messages::ManagerAction::Veto { .. }) =>
+                    if matches!(
+                        v.action,
+                        crate::agents::messages::ManagerAction::Veto { .. }
+                    ) =>
                 {
                     pending_symbols.lock().remove(&v.proposal.symbol);
                 }

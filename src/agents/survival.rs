@@ -297,11 +297,13 @@ fn on_position_closed(inner: &Arc<Mutex<SurvivalInner>>, pnl: f64, cfg: &Surviva
         }
         // Daily-loss-count cooldown — reduce size, NOT freeze (owner must approve freeze)
         if g.daily_loss_count >= cfg.daily_loss_count {
-            let until = now + ChronoDuration::hours(2);  // was 24h — just cooldown, not death
+            let until = now + ChronoDuration::hours(2); // was 24h — just cooldown, not death
             if g.cooldown_until.map(|t| t < until).unwrap_or(true) {
                 g.cooldown_until = Some(until);
-                g.cooldown_reason =
-                    Some(format!("{} losses today — defensive mode 2h", g.daily_loss_count));
+                g.cooldown_reason = Some(format!(
+                    "{} losses today — defensive mode 2h",
+                    g.daily_loss_count
+                ));
             }
         }
     } else {
@@ -605,7 +607,10 @@ mod tests {
         risk.on_position_closed(-30.0);
         let s = recompute(&inner, &risk, &cfg, 1000.0);
         // Cooldown active → Defensive (not Frozen — Frozen only via apply_state manually)
-        assert!(matches!(s.mode, SurvivalMode::Defensive | SurvivalMode::Cautious));
+        assert!(matches!(
+            s.mode,
+            SurvivalMode::Defensive | SurvivalMode::Cautious
+        ));
         assert!(s.size_multiplier <= 0.6);
     }
 }

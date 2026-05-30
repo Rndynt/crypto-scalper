@@ -108,14 +108,14 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut rx = bus_sub.subscribe();
             loop {
-            let ev = match rx.recv().await {
-                Ok(ev) => ev,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(skipped = n, "broadcast lagged — skipping events");
-                    continue;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            };
+                let ev = match rx.recv().await {
+                    Ok(ev) => ev,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "broadcast lagged — skipping events");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
                 match ev {
                     AgentEvent::BrainOutcomeReady(brain) => {
                         // Signal notification is handled by monitor.rs (inline, ordered).
@@ -193,7 +193,16 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         let journal_s = journal.clone();
         let pos_cfg_s = pos_cfg.clone();
         tokio::spawn(async move {
-            stdin_loop(bus_s, risk_s, book_s, metrics_s, ctrl_state_s, journal_s, pos_cfg_s).await;
+            stdin_loop(
+                bus_s,
+                risk_s,
+                book_s,
+                metrics_s,
+                ctrl_state_s,
+                journal_s,
+                pos_cfg_s,
+            )
+            .await;
         });
     }
 
@@ -367,8 +376,14 @@ async fn telegram_loop(
                                 let val = data.strip_prefix("cfg_lev_").unwrap_or("");
                                 let reply = cmd_leverage(&risk, &format!("/leverage {val}"));
                                 let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
-                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
-                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                let answer_url = format!(
+                                    "https://api.telegram.org/bot{token}/answerCallbackQuery"
+                                );
+                                let _ = client
+                                    .post(&answer_url)
+                                    .json(&serde_json::json!({ "callback_query_id": cb_id }))
+                                    .send()
+                                    .await;
                                 continue;
                             }
                             _ if data.starts_with("cfg_risk_") => {
@@ -379,10 +394,17 @@ async fn telegram_loop(
                                     let reply = format!(
                                         "✅ <b>Risk Updated</b>\n──────────\n📐 Risk per trade: <code>{pct:.1}%</code>\n🤖 ARIA v1.0"
                                     );
-                                    let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                    let _ =
+                                        send_telegram_html(&client, &token, &cb_chat, &reply).await;
                                 }
-                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
-                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                let answer_url = format!(
+                                    "https://api.telegram.org/bot{token}/answerCallbackQuery"
+                                );
+                                let _ = client
+                                    .post(&answer_url)
+                                    .json(&serde_json::json!({ "callback_query_id": cb_id }))
+                                    .send()
+                                    .await;
                                 continue;
                             }
                             _ if data.starts_with("cfg_maxpos_") => {
@@ -392,20 +414,40 @@ async fn telegram_loop(
                                     let reply = format!(
                                         "✅ <b>Max Positions Updated</b>\n──────────\n📊 Max open: <code>{n}</code>\n🤖 ARIA v1.0"
                                     );
-                                    let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
+                                    let _ =
+                                        send_telegram_html(&client, &token, &cb_chat, &reply).await;
                                 }
-                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
-                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                let answer_url = format!(
+                                    "https://api.telegram.org/bot{token}/answerCallbackQuery"
+                                );
+                                let _ = client
+                                    .post(&answer_url)
+                                    .json(&serde_json::json!({ "callback_query_id": cb_id }))
+                                    .send()
+                                    .await;
                                 continue;
                             }
                             _ if data.starts_with("close_") => {
                                 let sym = data.strip_prefix("close_").unwrap_or("");
                                 let full_sym = format!("{}USDT", sym.to_uppercase());
-                                bus.publish(AgentEvent::ControlCommand(ControlCommand::ClosePosition { symbol: full_sym.clone() }));
-                                let reply = format!("🔧 <b>Closing {}</b>...\n🤖 ARIA v1.0", sym.to_uppercase());
+                                bus.publish(AgentEvent::ControlCommand(
+                                    ControlCommand::ClosePosition {
+                                        symbol: full_sym.clone(),
+                                    },
+                                ));
+                                let reply = format!(
+                                    "🔧 <b>Closing {}</b>...\n🤖 ARIA v1.0",
+                                    sym.to_uppercase()
+                                );
                                 let _ = send_telegram_html(&client, &token, &cb_chat, &reply).await;
-                                let answer_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
-                                let _ = client.post(&answer_url).json(&serde_json::json!({ "callback_query_id": cb_id })).send().await;
+                                let answer_url = format!(
+                                    "https://api.telegram.org/bot{token}/answerCallbackQuery"
+                                );
+                                let _ = client
+                                    .post(&answer_url)
+                                    .json(&serde_json::json!({ "callback_query_id": cb_id }))
+                                    .send()
+                                    .await;
                                 continue;
                             }
                             _ => "",
@@ -443,7 +485,10 @@ async fn telegram_loop(
                                 }
 
                                 if !buttons.is_empty() {
-                                    send_telegram_html_with_buttons(&client, &token, &cb_chat, &reply, buttons).await;
+                                    send_telegram_html_with_buttons(
+                                        &client, &token, &cb_chat, &reply, buttons,
+                                    )
+                                    .await;
                                 } else {
                                     send_telegram_html(&client, &token, &cb_chat, &reply).await;
                                 }
@@ -492,8 +537,16 @@ async fn telegram_loop(
                         .await;
                         continue;
                     }
-                    let reply =
-                        handle_command(&text, &bus, &risk, &book, &metrics, &ctrl_state, &journal, &pos_cfg);
+                    let reply = handle_command(
+                        &text,
+                        &bus,
+                        &risk,
+                        &book,
+                        &metrics,
+                        &ctrl_state,
+                        &journal,
+                        &pos_cfg,
+                    );
                     if !reply.is_empty() {
                         let cmd_lower = text.trim().to_lowercase();
 
@@ -646,8 +699,16 @@ async fn stdin_loop(
     loop {
         match lines.next_line().await {
             Ok(Some(line)) => {
-                let reply =
-                    handle_command(&line, &bus, &risk, &book, &metrics, &ctrl_state, &journal, &pos_cfg);
+                let reply = handle_command(
+                    &line,
+                    &bus,
+                    &risk,
+                    &book,
+                    &metrics,
+                    &ctrl_state,
+                    &journal,
+                    &pos_cfg,
+                );
                 if !reply.is_empty() {
                     // Strip HTML tags for terminal output
                     let plain = strip_html(&reply);
@@ -707,11 +768,15 @@ fn handle_command(
         "/risk" | "risk" => cmd_risk(risk),
         "/history" | "history" => cmd_history(journal),
         "/leverage" | "leverage" if !cmd.contains(' ') => cmd_leverage(risk, ""),
-        _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => cmd_leverage(risk, &cmd),
+        _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => {
+            cmd_leverage(risk, &cmd)
+        }
         "/hold" | "hold" if !cmd.contains(' ') => cmd_hold(pos_cfg, ""),
         _ if cmd.starts_with("/hold ") || cmd.starts_with("hold ") => cmd_hold(pos_cfg, &cmd),
         "/breakeven" | "breakeven" if !cmd.contains(' ') => cmd_breakeven(pos_cfg, ""),
-        _ if cmd.starts_with("/breakeven ") || cmd.starts_with("breakeven ") => cmd_breakeven(pos_cfg, &cmd),
+        _ if cmd.starts_with("/breakeven ") || cmd.starts_with("breakeven ") => {
+            cmd_breakeven(pos_cfg, &cmd)
+        }
         "/config" | "config" => cmd_config(risk),
         "/lessons" | "lessons" => cmd_lessons(),
         "/reset" | "reset" => {
@@ -794,28 +859,56 @@ fn cmd_lessons() -> String {
     const LEARNING_STATE_PATH: &str = "data/learning_state.json";
     let data = match std::fs::read_to_string(LEARNING_STATE_PATH) {
         Ok(d) => d,
-        Err(_) => return "📭 <b>No learning data yet</b>
+        Err(_) => {
+            return "📭 <b>No learning data yet</b>
 Bot needs more trades to generate lessons.
-🤖 ARIA v1.0".to_string(),
+🤖 ARIA v1.0"
+                .to_string();
+        }
     };
     let snap: serde_json::Value = match serde_json::from_str(&data) {
         Ok(v) => v,
-        Err(e) => return format!("⚠ <b>Error reading lessons:</b> {e}
-🤖 ARIA v1.0"),
+        Err(e) => {
+            return format!(
+                "⚠ <b>Error reading lessons:</b> {e}
+🤖 ARIA v1.0"
+            );
+        }
     };
 
-    let overall_trades = snap.get("overall_trades").and_then(|v| v.as_u64()).unwrap_or(0);
-    let overall_wins = snap.get("overall_wins").and_then(|v| v.as_u64()).unwrap_or(0);
-    let overall_losses = snap.get("overall_losses").and_then(|v| v.as_u64()).unwrap_or(0);
-    let overall_pnl = snap.get("overall_net_pnl").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let lessons_count = snap.get("lessons_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let wr = if overall_trades > 0 { overall_wins as f64 / overall_trades as f64 * 100.0 } else { 0.0 };
+    let overall_trades = snap
+        .get("overall_trades")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let overall_wins = snap
+        .get("overall_wins")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let overall_losses = snap
+        .get("overall_losses")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let overall_pnl = snap
+        .get("overall_net_pnl")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let lessons_count = snap
+        .get("lessons_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let wr = if overall_trades > 0 {
+        overall_wins as f64 / overall_trades as f64 * 100.0
+    } else {
+        0.0
+    };
     let pnl_sign = if overall_pnl >= 0.0 { "+" } else { "" };
 
     let mut lines = vec![
         "🧠 <b>Learning System</b>".to_string(),
         "──────────".to_string(),
-        format!("📊 Overall: <code>{overall_trades}</code> trades (<code>{overall_wins}W/{overall_losses}L</code> · <code>{wr:.1}%</code>)"),
+        format!(
+            "📊 Overall: <code>{overall_trades}</code> trades (<code>{overall_wins}W/{overall_losses}L</code> · <code>{wr:.1}%</code>)"
+        ),
         format!("💰 Net PnL: <code>{pnl_sign}{overall_pnl:.2}$</code>"),
         format!("📋 Active Lessons: <code>{lessons_count}</code>"),
         "".to_string(),
@@ -829,12 +922,21 @@ Bot needs more trades to generate lessons.
             lines.push("──────────".to_string());
             for (i, lesson) in lessons.iter().enumerate().take(10) {
                 let kind = lesson.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
-                let strategy = lesson.get("strategy").and_then(|v| v.as_str()).unwrap_or("*");
+                let strategy = lesson
+                    .get("strategy")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("*");
                 let symbol = lesson.get("symbol").and_then(|v| v.as_str()).unwrap_or("*");
                 let regime = lesson.get("regime").and_then(|v| v.as_str()).unwrap_or("*");
-                let size_mult = lesson.get("size_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                let size_mult = lesson
+                    .get("size_multiplier")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0);
                 let reason = lesson.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-                let valid_until = lesson.get("valid_until").and_then(|v| v.as_str()).unwrap_or("?");
+                let valid_until = lesson
+                    .get("valid_until")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 let kind_emoji = match kind {
                     "Derate" => "🟡",
                     "Boost" => "🟢",
@@ -849,7 +951,13 @@ Bot needs more trades to generate lessons.
   ├ Regime: <code>{}</code> · Size: <code>{:.2}×</code>
   ├ <i>{}</i>
   └ Expires: <code>{}</code>",
-                    i + 1, strategy, symbol, regime, size_mult, reason, &valid_until[..16.min(valid_until.len())]
+                    i + 1,
+                    strategy,
+                    symbol,
+                    regime,
+                    size_mult,
+                    reason,
+                    &valid_until[..16.min(valid_until.len())]
                 ));
             }
         }
@@ -857,8 +965,10 @@ Bot needs more trades to generate lessons.
 
     lines.push("".to_string());
     lines.push("🤖 ARIA v1.0".to_string());
-    lines.join("
-")
+    lines.join(
+        "
+",
+    )
 }
 
 /// Build inline keyboard buttons for the /help message.
@@ -946,118 +1056,216 @@ fn command_buttons(cmd: &str) -> Vec<Vec<InlineButton>> {
 
     match cmd {
         "/help" | "help" | "/start" | "start" => help_buttons(),
-        "/status" | "status" => vec![
-            vec![
-                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
-                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
-                InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
-                help_btn,
-            ],
-        ],
-        "/positions" | "positions" => vec![
-            vec![
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
-                InlineButton { text: "🚨 FLAT ALL".into(), callback_data: "btn_flat".into() },
-                help_btn,
-            ],
-        ],
-        "/signals" | "signals" => vec![
-            vec![
-                InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
-                help_btn,
-            ],
-        ],
-        "/brain" | "brain" => vec![
-            vec![
-                InlineButton { text: "🔔 Signals".into(), callback_data: "btn_signals".into() },
-                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
-                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
-                help_btn,
-            ],
-        ],
-        "/performance" | "performance" => vec![
-            vec![
-                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
-                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                help_btn,
-            ],
-        ],
-        "/risk" | "risk" => vec![
-            vec![
-                InlineButton { text: "⚙ Leverage".into(), callback_data: "btn_leverage".into() },
-                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
-                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
-                help_btn,
-            ],
-        ],
-        "/leverage" | "leverage" => vec![
-            vec![
-                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
-                help_btn,
-            ],
-        ],
-        "/survival" | "survival" => vec![
-            vec![
-                InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
-                InlineButton { text: "💚 Health".into(), callback_data: "btn_health".into() },
-                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
-                help_btn,
-            ],
-        ],
-        "/history" | "history" => vec![
-            vec![
-                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
-                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                help_btn,
-            ],
-        ],
-        "/health" | "health" => vec![
-            vec![
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
-                InlineButton { text: "🧠 Brain".into(), callback_data: "btn_brain".into() },
-                help_btn,
-            ],
-        ],
-        "/freeze" | "freeze" => vec![
-            vec![
-                InlineButton { text: "▶ Unfreeze".into(), callback_data: "btn_unfreeze".into() },
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "🏥 Survival".into(), callback_data: "btn_survival".into() },
-                help_btn,
-            ],
-        ],
-        "/unfreeze" | "unfreeze" => vec![
-            vec![
-                InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
-                help_btn,
-            ],
-        ],
-        "/flat" | "flat" => vec![
-            vec![
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "📈 Positions".into(), callback_data: "btn_positions".into() },
-                InlineButton { text: "⏸ Freeze".into(), callback_data: "btn_freeze".into() },
-                help_btn,
-            ],
-        ],
-        "/lessons" | "lessons" => vec![
-            vec![
-                InlineButton { text: "📊 Status".into(), callback_data: "btn_status".into() },
-                InlineButton { text: "📋 Performance".into(), callback_data: "btn_performance".into() },
-                InlineButton { text: "📜 History".into(), callback_data: "btn_history".into() },
-                help_btn,
-            ],
-        ],
+        "/status" | "status" => vec![vec![
+            InlineButton {
+                text: "📈 Positions".into(),
+                callback_data: "btn_positions".into(),
+            },
+            InlineButton {
+                text: "📋 Performance".into(),
+                callback_data: "btn_performance".into(),
+            },
+            InlineButton {
+                text: "💚 Health".into(),
+                callback_data: "btn_health".into(),
+            },
+            help_btn,
+        ]],
+        "/positions" | "positions" => vec![vec![
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "📜 History".into(),
+                callback_data: "btn_history".into(),
+            },
+            InlineButton {
+                text: "🚨 FLAT ALL".into(),
+                callback_data: "btn_flat".into(),
+            },
+            help_btn,
+        ]],
+        "/signals" | "signals" => vec![vec![
+            InlineButton {
+                text: "🧠 Brain".into(),
+                callback_data: "btn_brain".into(),
+            },
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "🛡 Risk".into(),
+                callback_data: "btn_risk".into(),
+            },
+            help_btn,
+        ]],
+        "/brain" | "brain" => vec![vec![
+            InlineButton {
+                text: "🔔 Signals".into(),
+                callback_data: "btn_signals".into(),
+            },
+            InlineButton {
+                text: "📋 Performance".into(),
+                callback_data: "btn_performance".into(),
+            },
+            InlineButton {
+                text: "🛡 Risk".into(),
+                callback_data: "btn_risk".into(),
+            },
+            help_btn,
+        ]],
+        "/performance" | "performance" => vec![vec![
+            InlineButton {
+                text: "📜 History".into(),
+                callback_data: "btn_history".into(),
+            },
+            InlineButton {
+                text: "🏥 Survival".into(),
+                callback_data: "btn_survival".into(),
+            },
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            help_btn,
+        ]],
+        "/risk" | "risk" => vec![vec![
+            InlineButton {
+                text: "⚙ Leverage".into(),
+                callback_data: "btn_leverage".into(),
+            },
+            InlineButton {
+                text: "📈 Positions".into(),
+                callback_data: "btn_positions".into(),
+            },
+            InlineButton {
+                text: "🏥 Survival".into(),
+                callback_data: "btn_survival".into(),
+            },
+            help_btn,
+        ]],
+        "/leverage" | "leverage" => vec![vec![
+            InlineButton {
+                text: "🛡 Risk".into(),
+                callback_data: "btn_risk".into(),
+            },
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "📈 Positions".into(),
+                callback_data: "btn_positions".into(),
+            },
+            help_btn,
+        ]],
+        "/survival" | "survival" => vec![vec![
+            InlineButton {
+                text: "🛡 Risk".into(),
+                callback_data: "btn_risk".into(),
+            },
+            InlineButton {
+                text: "💚 Health".into(),
+                callback_data: "btn_health".into(),
+            },
+            InlineButton {
+                text: "📋 Performance".into(),
+                callback_data: "btn_performance".into(),
+            },
+            help_btn,
+        ]],
+        "/history" | "history" => vec![vec![
+            InlineButton {
+                text: "📋 Performance".into(),
+                callback_data: "btn_performance".into(),
+            },
+            InlineButton {
+                text: "📈 Positions".into(),
+                callback_data: "btn_positions".into(),
+            },
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            help_btn,
+        ]],
+        "/health" | "health" => vec![vec![
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "🏥 Survival".into(),
+                callback_data: "btn_survival".into(),
+            },
+            InlineButton {
+                text: "🧠 Brain".into(),
+                callback_data: "btn_brain".into(),
+            },
+            help_btn,
+        ]],
+        "/freeze" | "freeze" => vec![vec![
+            InlineButton {
+                text: "▶ Unfreeze".into(),
+                callback_data: "btn_unfreeze".into(),
+            },
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "🏥 Survival".into(),
+                callback_data: "btn_survival".into(),
+            },
+            help_btn,
+        ]],
+        "/unfreeze" | "unfreeze" => vec![vec![
+            InlineButton {
+                text: "⏸ Freeze".into(),
+                callback_data: "btn_freeze".into(),
+            },
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "📈 Positions".into(),
+                callback_data: "btn_positions".into(),
+            },
+            help_btn,
+        ]],
+        "/flat" | "flat" => vec![vec![
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "📈 Positions".into(),
+                callback_data: "btn_positions".into(),
+            },
+            InlineButton {
+                text: "⏸ Freeze".into(),
+                callback_data: "btn_freeze".into(),
+            },
+            help_btn,
+        ]],
+        "/lessons" | "lessons" => vec![vec![
+            InlineButton {
+                text: "📊 Status".into(),
+                callback_data: "btn_status".into(),
+            },
+            InlineButton {
+                text: "📋 Performance".into(),
+                callback_data: "btn_performance".into(),
+            },
+            InlineButton {
+                text: "📜 History".into(),
+                callback_data: "btn_history".into(),
+            },
+            help_btn,
+        ]],
         "/config" | "config" => config_buttons(),
         _ => vec![],
     }
@@ -1168,7 +1376,11 @@ fn cmd_status(
     )
 }
 
-fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>, risk: &Arc<RiskManager>) -> String {
+fn cmd_positions(
+    book: &Arc<PositionBook>,
+    prices: &HashMap<String, f64>,
+    risk: &Arc<RiskManager>,
+) -> String {
     let positions = book.snapshot();
     if positions.is_empty() {
         return "📭 <b>No open positions</b>\n🤖 ARIA v1.0".to_string();
@@ -1237,7 +1449,11 @@ fn cmd_positions(book: &Arc<PositionBook>, prices: &HashMap<String, f64>, risk: 
         // Notional value in USD
         let notional_usd = p.size * p.entry_price;
         let max_lev = risk.limits().max_leverage as f64;
-        let margin_usd = if max_lev > 0.0 { notional_usd / max_lev } else { notional_usd };
+        let margin_usd = if max_lev > 0.0 {
+            notional_usd / max_lev
+        } else {
+            notional_usd
+        };
 
         lines.push(format!(
             "{side_emoji} <b>#{idx} {sym}</b> — {side_label}{trailing}{be}\n\
@@ -1465,7 +1681,11 @@ fn cmd_survival(ctrl_state: &Arc<Mutex<ControlState>>) -> String {
         death = s.death_line_usd,
         pnl_sign = pnl_sign,
         pnl = s.realized_pnl_today,
-        pnl_pct = if s.initial_equity_usd > 0.0 { s.realized_pnl_today / s.initial_equity_usd * 100.0 } else { 0.0 },
+        pnl_pct = if s.initial_equity_usd > 0.0 {
+            s.realized_pnl_today / s.initial_equity_usd * 100.0
+        } else {
+            0.0
+        },
         dd = s.drawdown_pct,
         pos = s.open_positions,
         losses = s.consecutive_losses,
@@ -1773,19 +1993,16 @@ fn cmd_hold(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> S
     let current = pos_cfg.read().max_hold_secs;
 
     // Parse new hold time: "/hold 1800" or "hold 30m"
-    let new_secs = args
-        .split_whitespace()
-        .last()
-        .and_then(|s| {
-            // Support "30m" format
-            if let Some(mins) = s.strip_suffix('m') {
-                mins.parse::<i64>().ok().map(|m| m * 60)
-            } else if let Some(hrs) = s.strip_suffix('h') {
-                hrs.parse::<i64>().ok().map(|h| h * 3600)
-            } else {
-                s.parse::<i64>().ok()
-            }
-        });
+    let new_secs = args.split_whitespace().last().and_then(|s| {
+        // Support "30m" format
+        if let Some(mins) = s.strip_suffix('m') {
+            mins.parse::<i64>().ok().map(|m| m * 60)
+        } else if let Some(hrs) = s.strip_suffix('h') {
+            hrs.parse::<i64>().ok().map(|h| h * 3600)
+        } else {
+            s.parse::<i64>().ok()
+        }
+    });
 
     if let Some(secs) = new_secs {
         if secs < 60 || secs > 7200 {
@@ -1833,7 +2050,10 @@ fn cmd_hold(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> S
 
 fn cmd_breakeven(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> String {
     let current = pos_cfg.read().breakeven_r;
-    let arg = args.trim_start_matches("/breakeven").trim_start_matches("breakeven").trim();
+    let arg = args
+        .trim_start_matches("/breakeven")
+        .trim_start_matches("breakeven")
+        .trim();
     if arg.is_empty() {
         return format!(
             "🔒 <b>Breakeven Settings</b>\n\
@@ -1858,7 +2078,10 @@ fn cmd_breakeven(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str)
     }
     let new_r: f64 = match arg.parse() {
         Ok(v) => v,
-        Err(_) => return "⚠ Invalid value. Use e.g. <code>/breakeven 0.6</code>\n🤖 ARIA v1.0".to_string(),
+        Err(_) => {
+            return "⚠ Invalid value. Use e.g. <code>/breakeven 0.6</code>\n🤖 ARIA v1.0"
+                .to_string();
+        }
     };
     if new_r < 0.0 || new_r > 5.0 {
         return "⚠ Breakeven R must be 0.0–5.0. Set 0 to disable.\n🤖 ARIA v1.0".to_string();
@@ -1866,7 +2089,8 @@ fn cmd_breakeven(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str)
     let old_r = pos_cfg.read().breakeven_r;
     pos_cfg.write().breakeven_r = new_r;
     if new_r == 0.0 {
-        "✅ <b>Breakeven Disabled</b>\n──────────\n🔒 SL will NOT move to entry.\n🤖 ARIA v1.0".to_string()
+        "✅ <b>Breakeven Disabled</b>\n──────────\n🔒 SL will NOT move to entry.\n🤖 ARIA v1.0"
+            .to_string()
     } else {
         format!(
             "✅ <b>Breakeven Updated</b>\n\
@@ -1910,45 +2134,117 @@ fn config_buttons() -> Vec<Vec<InlineButton>> {
     vec![
         // Row 1: Leverage presets
         vec![
-            InlineButton { text: "🟢 20x".into(), callback_data: "cfg_lev_20".into() },
-            InlineButton { text: "🟡 50x".into(), callback_data: "cfg_lev_50".into() },
-            InlineButton { text: "🟠 75x".into(), callback_data: "cfg_lev_75".into() },
-            InlineButton { text: "🔴 100x".into(), callback_data: "cfg_lev_100".into() },
+            InlineButton {
+                text: "🟢 20x".into(),
+                callback_data: "cfg_lev_20".into(),
+            },
+            InlineButton {
+                text: "🟡 50x".into(),
+                callback_data: "cfg_lev_50".into(),
+            },
+            InlineButton {
+                text: "🟠 75x".into(),
+                callback_data: "cfg_lev_75".into(),
+            },
+            InlineButton {
+                text: "🔴 100x".into(),
+                callback_data: "cfg_lev_100".into(),
+            },
         ],
         // Row 2: Risk per trade presets
         vec![
-            InlineButton { text: "0.5% Risk".into(), callback_data: "cfg_risk_0.5".into() },
-            InlineButton { text: "1% Risk".into(), callback_data: "cfg_risk_1".into() },
-            InlineButton { text: "2% Risk".into(), callback_data: "cfg_risk_2".into() },
-            InlineButton { text: "5% Risk".into(), callback_data: "cfg_risk_5".into() },
+            InlineButton {
+                text: "0.5% Risk".into(),
+                callback_data: "cfg_risk_0.5".into(),
+            },
+            InlineButton {
+                text: "1% Risk".into(),
+                callback_data: "cfg_risk_1".into(),
+            },
+            InlineButton {
+                text: "2% Risk".into(),
+                callback_data: "cfg_risk_2".into(),
+            },
+            InlineButton {
+                text: "5% Risk".into(),
+                callback_data: "cfg_risk_5".into(),
+            },
         ],
         // Row 3: Max positions
         vec![
-            InlineButton { text: "📍 1 Pos".into(), callback_data: "cfg_maxpos_1".into() },
-            InlineButton { text: "📍 2 Pos".into(), callback_data: "cfg_maxpos_2".into() },
-            InlineButton { text: "📍 3 Pos".into(), callback_data: "cfg_maxpos_3".into() },
-            InlineButton { text: "📍 5 Pos".into(), callback_data: "cfg_maxpos_5".into() },
+            InlineButton {
+                text: "📍 1 Pos".into(),
+                callback_data: "cfg_maxpos_1".into(),
+            },
+            InlineButton {
+                text: "📍 2 Pos".into(),
+                callback_data: "cfg_maxpos_2".into(),
+            },
+            InlineButton {
+                text: "📍 3 Pos".into(),
+                callback_data: "cfg_maxpos_3".into(),
+            },
+            InlineButton {
+                text: "📍 5 Pos".into(),
+                callback_data: "cfg_maxpos_5".into(),
+            },
         ],
         // Row 4: Hold time presets
         vec![
-            InlineButton { text: "⏱ 5m".into(), callback_data: "hold_5m".into() },
-            InlineButton { text: "⏱ 15m".into(), callback_data: "hold_15m".into() },
-            InlineButton { text: "⏱ 30m".into(), callback_data: "hold_30m".into() },
-            InlineButton { text: "⏱ 1h".into(), callback_data: "hold_1h".into() },
+            InlineButton {
+                text: "⏱ 5m".into(),
+                callback_data: "hold_5m".into(),
+            },
+            InlineButton {
+                text: "⏱ 15m".into(),
+                callback_data: "hold_15m".into(),
+            },
+            InlineButton {
+                text: "⏱ 30m".into(),
+                callback_data: "hold_30m".into(),
+            },
+            InlineButton {
+                text: "⏱ 1h".into(),
+                callback_data: "hold_1h".into(),
+            },
         ],
         // Row 5: Breakeven presets
         vec![
-            InlineButton { text: "🔒 0.3R".into(), callback_data: "be_0.3".into() },
-            InlineButton { text: "🔒 0.5R".into(), callback_data: "be_0.5".into() },
-            InlineButton { text: "🔒 0.6R".into(), callback_data: "be_0.6".into() },
-            InlineButton { text: "🔒 1.0R".into(), callback_data: "be_1.0".into() },
+            InlineButton {
+                text: "🔒 0.3R".into(),
+                callback_data: "be_0.3".into(),
+            },
+            InlineButton {
+                text: "🔒 0.5R".into(),
+                callback_data: "be_0.5".into(),
+            },
+            InlineButton {
+                text: "🔒 0.6R".into(),
+                callback_data: "be_0.6".into(),
+            },
+            InlineButton {
+                text: "🔒 1.0R".into(),
+                callback_data: "be_1.0".into(),
+            },
         ],
         // Row 6: Navigation
         vec![
-            InlineButton { text: "⚡ Leverage".into(), callback_data: "btn_leverage".into() },
-            InlineButton { text: "⏱ Hold".into(), callback_data: "btn_hold".into() },
-            InlineButton { text: "🛡 Risk".into(), callback_data: "btn_risk".into() },
-            InlineButton { text: "🏠 Help".into(), callback_data: "btn_help".into() },
+            InlineButton {
+                text: "⚡ Leverage".into(),
+                callback_data: "btn_leverage".into(),
+            },
+            InlineButton {
+                text: "⏱ Hold".into(),
+                callback_data: "btn_hold".into(),
+            },
+            InlineButton {
+                text: "🛡 Risk".into(),
+                callback_data: "btn_risk".into(),
+            },
+            InlineButton {
+                text: "🏠 Help".into(),
+                callback_data: "btn_help".into(),
+            },
         ],
     ]
 }

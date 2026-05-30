@@ -3,8 +3,8 @@
 //! Uses `plotters` with built-in candlestick element and PNG output.
 
 use crate::data::Side;
-use plotters::prelude::*;
 use plotters::element::CandleStick;
+use plotters::prelude::*;
 use std::io::Read;
 use tracing::debug;
 
@@ -56,7 +56,10 @@ pub async fn fetch_klines(
             .await
             .map_err(|e| format!("kline parse: {}", e))?,
         _ => {
-            debug!("chart: primary kline failed, trying fallback for {}", symbol);
+            debug!(
+                "chart: primary kline failed, trying fallback for {}",
+                symbol
+            );
             client
                 .get(&fallback_url)
                 .send()
@@ -134,7 +137,11 @@ pub fn generate_signal_chart(
 
         let (title_area, chart_area) = root.split_vertically(36);
 
-        let slabel = if side == Side::Long { "📈 LONG" } else { "📉 SHORT" };
+        let slabel = if side == Side::Long {
+            "📈 LONG"
+        } else {
+            "📉 SHORT"
+        };
         title_area
             .draw(&Text::new(
                 format!(
@@ -215,7 +222,11 @@ pub fn generate_signal_chart(
             chart
                 .draw_series(std::iter::once(PathElement::new(
                     vec![(0i32, entry), (n, entry)],
-                    ShapeStyle { color: entry_c.to_rgba(), filled: false, stroke_width: 2 },
+                    ShapeStyle {
+                        color: entry_c.to_rgba(),
+                        filled: false,
+                        stroke_width: 2,
+                    },
                 )))
                 .map_err(fmt_err)?;
             chart
@@ -232,7 +243,11 @@ pub fn generate_signal_chart(
             chart
                 .draw_series(std::iter::once(PathElement::new(
                     vec![(0i32, sl), (n, sl)],
-                    ShapeStyle { color: sl_c.to_rgba(), filled: false, stroke_width: 2 },
+                    ShapeStyle {
+                        color: sl_c.to_rgba(),
+                        filled: false,
+                        stroke_width: 2,
+                    },
                 )))
                 .map_err(fmt_err)?;
             let label = format!("SL {:.2}", sl);
@@ -251,7 +266,11 @@ pub fn generate_signal_chart(
             chart
                 .draw_series(std::iter::once(PathElement::new(
                     vec![(0i32, tp), (n, tp)],
-                    ShapeStyle { color: tp_c.to_rgba(), filled: false, stroke_width: 2 },
+                    ShapeStyle {
+                        color: tp_c.to_rgba(),
+                        filled: false,
+                        stroke_width: 2,
+                    },
                 )))
                 .map_err(fmt_err)?;
             let label = format!("TP {:.2}", tp);
@@ -291,7 +310,13 @@ pub fn generate_signal_chart(
         .map_err(|e| format!("read png: {}", e))?;
     let _ = std::fs::remove_file(&tmp_path);
 
-    debug!("chart: {}x{} PNG {} bytes for {}", w, h, png_buf.len(), symbol);
+    debug!(
+        "chart: {}x{} PNG {} bytes for {}",
+        w,
+        h,
+        png_buf.len(),
+        symbol
+    );
     Ok(png_buf)
 }
 

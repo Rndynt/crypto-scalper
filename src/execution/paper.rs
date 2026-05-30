@@ -160,4 +160,21 @@ impl Exchange for PaperExchange {
             Ok(out)
         })
     }
+
+    fn fetch_order_status<'a>(
+        &'a self,
+        _symbol: &'a str,
+        _client_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<crate::execution::exchange::OrderStatus>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            // Paper exchange fills instantly — always Filled
+            Ok(crate::execution::exchange::OrderStatus::Filled)
+        })
+    }
 }

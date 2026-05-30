@@ -30,7 +30,11 @@ impl Strategy for OrderFlow {
         // Gate 1: VPIN must be low — high VPIN = adverse selection = informed trader
         // is on the OTHER side of your trade. Very dangerous.
         // VPIN soft gate
-        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
+        let vpin_penalty = if vpin > 0.50 {
+            ((vpin - 0.50) * 40.0).min(20.0) as u8
+        } else {
+            0
+        };
 
         // Gate 2: Order book imbalance from top-of-book
         let book_imbalance = s.order_book.bid_ask_ratio(5);
@@ -38,7 +42,7 @@ impl Strategy for OrderFlow {
         // book_imbalance < 1.0 = more asks (bearish pressure)
 
         // Gate 3: OFI must be significant — weak signal = noise
-        let ofi_strong = ofi.abs() > 0.15;  // relaxed from 0.3
+        let ofi_strong = ofi.abs() > 0.15; // relaxed from 0.3
         if !ofi_strong {
             return None;
         }

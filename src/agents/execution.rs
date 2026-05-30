@@ -88,7 +88,9 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                 interval.tick().await;
                 let marks = marks_fb.lock().clone();
                 for (sym, price) in &marks {
-                    if *price <= 0.0 { continue; }
+                    if *price <= 0.0 {
+                        continue;
+                    }
                     let exits = book_fb.check_exits(sym, *price, &pos_cfg_fb.read());
                     for action in exits {
                         match action {
@@ -99,7 +101,9 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 let _ = exchange_fb.cancel_all(&pos.symbol).await;
                                 let pnl_pct = if pos.entry_price > 0.0 {
                                     (*price - pos.entry_price) / pos.entry_price * 100.0
-                                } else { 0.0 };
+                                } else {
+                                    0.0
+                                };
                                 info!(
                                     symbol = %pos.symbol, side = %pos.side.as_str(), reason = %reason.as_str(),
                                     entry = %format!("{:.4}", pos.entry_price), exit = %format!("{:.4}", *price),
@@ -126,19 +130,26 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     Side::Short => Side::Long,
                                 };
                                 let partial_req = OrderRequest {
-                                    client_id: format!("aria-partial-{}-{}", pos.symbol, Utc::now().timestamp_millis()),
+                                    client_id: format!(
+                                        "aria-partial-{}-{}",
+                                        pos.symbol,
+                                        Utc::now().timestamp_millis()
+                                    ),
                                     symbol: pos.symbol.clone(),
                                     side: close_side,
                                     size: reduce_size,
-                                    price: None, stop_price: None,
-                                    stop_loss: 0.0, take_profit: 0.0,
+                                    price: None,
+                                    stop_price: None,
+                                    stop_loss: 0.0,
+                                    take_profit: 0.0,
                                     order_type: OrderType::Market,
                                     reduce_only: true,
                                 };
                                 if let Err(e) = exchange_fb.place_order(&partial_req).await {
                                     warn!(symbol = %pos.symbol, error = %e, "fallback: partial-tp order failed");
                                 }
-                                let remaining = book_fb.get(&pos.client_id).map(|p| p.size).unwrap_or(0.0);
+                                let remaining =
+                                    book_fb.get(&pos.client_id).map(|p| p.size).unwrap_or(0.0);
                                 info!(symbol = %pos.symbol, reduce_size, remaining, pnl_usd = %format!("{:+.4}", pnl), "execution(fallback): partial TP");
                                 bus_fb.publish(AgentEvent::PositionReduced {
                                     client_id: pos.client_id.clone(),
@@ -155,6 +166,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                             }
                             // P0-5: SL moved — cancel old broker SL order + place new one.
                             PositionAction::MoveSL(pos, new_sl) => {
+                                let old_stop = pos.stop_loss;
                                 let sl_cid = format!("{}-sl", pos.client_id);
                                 let _ = exchange_fb.cancel_order(&pos.symbol, &sl_cid).await;
                                 let close_side = match pos.side {
@@ -173,8 +185,20 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     order_type: OrderType::StopLoss,
                                     reduce_only: true,
                                 };
-                                if let Err(e) = exchange_fb.place_order(&new_sl_req).await {
-                                    tracing::debug!(symbol = %pos.symbol, new_sl, error = %e, "replace SL (fallback, non-fatal)");
+                                match exchange_fb.place_order(&new_sl_req).await {
+                                    Ok(_) => {
+                                        info!(symbol = %pos.symbol, old_stop, new_sl, "SL moved (fallback)");
+                                        bus_fb.publish(AgentEvent::StopMoved {
+                                            client_id: pos.client_id.clone(),
+                                            symbol: pos.symbol.clone(),
+                                            old_stop,
+                                            new_stop: new_sl,
+                                            reason: "breakeven_or_trailing".to_string(),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(symbol = %pos.symbol, new_sl, error = %e, "replace SL (fallback, non-fatal)");
+                                    }
                                 }
                             }
                             PositionAction::None => {}
@@ -247,19 +271,26 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     Side::Short => Side::Long,
                                 };
                                 let partial_req = OrderRequest {
-                                    client_id: format!("aria-partial-{}-{}", pos.symbol, Utc::now().timestamp_millis()),
+                                    client_id: format!(
+                                        "aria-partial-{}-{}",
+                                        pos.symbol,
+                                        Utc::now().timestamp_millis()
+                                    ),
                                     symbol: pos.symbol.clone(),
                                     side: close_side,
                                     size: reduce_size,
-                                    price: None, stop_price: None,
-                                    stop_loss: 0.0, take_profit: 0.0,
+                                    price: None,
+                                    stop_price: None,
+                                    stop_loss: 0.0,
+                                    take_profit: 0.0,
                                     order_type: OrderType::Market,
                                     reduce_only: true,
                                 };
                                 if let Err(e) = exchange.place_order(&partial_req).await {
                                     warn!(symbol = %pos.symbol, error = %e, "partial-tp order failed");
                                 }
-                                let remaining = book.get(&pos.client_id).map(|p| p.size).unwrap_or(0.0);
+                                let remaining =
+                                    book.get(&pos.client_id).map(|p| p.size).unwrap_or(0.0);
                                 info!(
                                     symbol = %pos.symbol,
                                     side   = %pos.side.as_str(),
@@ -283,6 +314,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                             }
                             // P0-5: SL moved (breakeven/trailing) — cancel old broker order + place new.
                             PositionAction::MoveSL(pos, new_sl) => {
+                                let old_stop = pos.stop_loss;
                                 let sl_cid = format!("{}-sl", pos.client_id);
                                 let _ = exchange.cancel_order(&pos.symbol, &sl_cid).await;
                                 let close_side = match pos.side {
@@ -301,8 +333,20 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     order_type: OrderType::StopLoss,
                                     reduce_only: true,
                                 };
-                                if let Err(e) = exchange.place_order(&new_sl_req).await {
-                                    tracing::debug!(symbol = %pos.symbol, new_sl, error = %e, "replace SL (non-fatal)");
+                                match exchange.place_order(&new_sl_req).await {
+                                    Ok(_) => {
+                                        info!(symbol = %pos.symbol, old_stop, new_sl, "SL moved");
+                                        bus_for_close.publish(AgentEvent::StopMoved {
+                                            client_id: pos.client_id.clone(),
+                                            symbol: pos.symbol.clone(),
+                                            old_stop,
+                                            new_stop: new_sl,
+                                            reason: "breakeven_or_trailing".to_string(),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(symbol = %pos.symbol, new_sl, error = %e, "replace SL (non-fatal)");
+                                    }
                                 }
                             }
                             PositionAction::None => {}
@@ -400,7 +444,11 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                             Side::Short => Side::Long,
                         };
                         let close_req = OrderRequest {
-                            client_id: format!("aria-close-{}-{}", pos.symbol, Utc::now().timestamp_millis()),
+                            client_id: format!(
+                                "aria-close-{}-{}",
+                                pos.symbol,
+                                Utc::now().timestamp_millis()
+                            ),
                             symbol: pos.symbol.clone(),
                             side: close_side,
                             size: pos.size,
@@ -546,7 +594,8 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                         let notional = req.size * req.price.unwrap_or(0.0);
                         let margin = notional / limits.max_leverage.max(1) as f64;
                         if margin < limits.min_margin_usd && req.size > 0.0 {
-                            req.size = limits.min_margin_usd * limits.max_leverage.max(1) as f64 / req.price.unwrap_or(1.0).max(1e-9);
+                            req.size = limits.min_margin_usd * limits.max_leverage.max(1) as f64
+                                / req.price.unwrap_or(1.0).max(1e-9);
                         }
                     }
                     if req.size <= 0.0 {
@@ -681,8 +730,9 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 trailing_activated: false,
                                 peak_price: fill_price,
                                 trough_price: fill_price,
-                                atr_at_entry: v.proposal.atr
-                                    .unwrap_or_else(|| (req.stop_loss - fill_price).abs().max(0.0001)),
+                                atr_at_entry: v.proposal.atr.unwrap_or_else(|| {
+                                    (req.stop_loss - fill_price).abs().max(0.0001)
+                                }),
                                 partial_taken: false,
                                 breakeven_activated: false,
                                 strategy: v.proposal.strategy.clone(),

@@ -40,7 +40,7 @@ impl Strategy for VwapScalp {
         // Fallback: 0.35% SL / 0.70% TP if ATR not ready.
         let atr = s.last_atr.unwrap_or(c.close * 0.0035);
         let (sl, tp) = match side {
-            Side::Long  => (c.close - atr, c.close + atr * 2.0),
+            Side::Long => (c.close - atr, c.close + atr * 2.0),
             Side::Short => (c.close + atr, c.close - atr * 2.0),
         };
 

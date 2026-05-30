@@ -378,6 +378,57 @@ impl Exchange for MexcFutures {
             Ok(out)
         })
     }
+
+    fn fetch_order_status<'a>(
+        &'a self,
+        symbol: &'a str,
+        client_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<crate::execution::exchange::OrderStatus>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            use crate::execution::exchange::OrderStatus;
+            let sym = mexc_symbol(symbol);
+            let qs = format!(
+                "symbol={}&externalOid={}",
+                urlencode(&sym),
+                urlencode(client_id)
+            );
+            let ts = self.timestamp_ms();
+            let sig = self.sign(ts, &qs)?;
+            let url = format!(
+                "{}/api/v1/private/order/get?{qs}",
+                self.base_url.trim_end_matches('/')
+            );
+            let resp = self
+                .auth_headers(self.client.get(url), ts, sig)
+                .send()
+                .await;
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    // MEXC order states: 1=New, 2=Filled, 3=PartiallyFilled, 4=Canceled
+                    let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
+                    let state = body
+                        .get("data")
+                        .and_then(|d| d.get("state"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    Ok(match state {
+                        1 => OrderStatus::New,
+                        2 => OrderStatus::Filled,
+                        3 => OrderStatus::PartiallyFilled,
+                        4 => OrderStatus::Canceled,
+                        _ => OrderStatus::Unknown,
+                    })
+                }
+                _ => Ok(OrderStatus::Unknown),
+            }
+        })
+    }
 }
 
 fn mexc_symbol(symbol: &str) -> String {

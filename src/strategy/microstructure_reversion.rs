@@ -64,7 +64,11 @@ impl Strategy for MicrostructureReversion {
 
         // VPIN: allow slightly higher since this is counter-trend
         // VPIN soft gate
-        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
+        let vpin_penalty = if vpin > 0.50 {
+            ((vpin - 0.50) * 40.0).min(20.0) as u8
+        } else {
+            0
+        };
 
         let side = if long_zone { Side::Long } else { Side::Short };
 

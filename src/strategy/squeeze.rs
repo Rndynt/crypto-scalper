@@ -34,14 +34,14 @@ impl Strategy for Squeeze {
                 format!("Squeeze expand up, ROC {roc:.2}%"),
                 // ATR-based SL: 0.3% (safe for 100x leverage)
                 c.close * 0.997,
-                c.close * 1.006,  // 0.6% TP (2:1 R:R)
+                c.close * 1.006, // 0.6% TP (2:1 R:R)
             )
         } else if roc < -0.1 && c.close < bb.mid {
             (
                 Side::Short,
                 format!("Squeeze expand down, ROC {roc:.2}%"),
                 c.close * 1.003,
-                c.close * 0.994,  // 0.6% TP (2:1 R:R)
+                c.close * 0.994, // 0.6% TP (2:1 R:R)
             )
         } else {
             return None;

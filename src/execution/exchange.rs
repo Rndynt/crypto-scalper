@@ -5,6 +5,26 @@ use crate::errors::Result;
 use crate::execution::orders::{OrderRequest, OrderType};
 use serde::{Deserialize, Serialize};
 
+/// Status of an order as reported by the exchange.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderStatus {
+    /// Order accepted, awaiting fill.
+    New,
+    /// Order partially filled (some quantity remains).
+    PartiallyFilled,
+    /// Order completely filled.
+    Filled,
+    /// Order was canceled.
+    Canceled,
+    /// IOC/FOK order expired without fill.
+    Expired,
+    /// Exchange rejected the order.
+    Rejected,
+    /// Status cannot be determined (use for error paths).
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderAck {
     pub client_id: String,
@@ -92,6 +112,15 @@ pub trait Exchange: Send + Sync {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Vec<OpenOrderSnapshot>>> + Send + 'a>,
     >;
+
+    /// Fetch the fill status of a single order by client_id.
+    /// Used to confirm whether a limit order was actually filled before
+    /// opening a local position. Paper exchange always returns Filled.
+    fn fetch_order_status<'a>(
+        &'a self,
+        symbol: &'a str,
+        client_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<OrderStatus>> + Send + 'a>>;
 
     fn name(&self) -> &'static str;
 }

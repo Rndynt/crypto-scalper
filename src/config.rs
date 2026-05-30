@@ -27,6 +27,8 @@ pub struct Config {
     pub control: ControlCfg,
     #[serde(default)]
     pub quant: QuantCfg,
+    #[serde(default)]
+    pub screening: ScreeningCfg,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -156,6 +158,15 @@ pub struct LlmCfg {
     /// Optional X-Title shown in OpenRouter dashboards.
     #[serde(default)]
     pub http_app_title: String,
+    /// When false (default), BrainAgent is NOT on the critical path for fast
+    /// 1m entries — TA + risk gate fire immediately and brain runs async.
+    /// When true, brain must approve before any order is placed.
+    #[serde(default = "default_entry_path_enabled")]
+    pub entry_path_enabled: bool,
+    /// Maximum ms Brain is allowed to delay entry path. Ignored when
+    /// entry_path_enabled = false.
+    #[serde(default = "default_llm_max_entry_latency")]
+    pub max_entry_latency_ms: u64,
 }
 
 /// Configuration for the TraderManagerAgent (multi-agent overseer LLM).
@@ -185,6 +196,17 @@ pub struct ManagerCfg {
     pub http_app_title: String,
     #[serde(default)]
     pub fail_open_on_error: bool,
+    /// Maximum ms to wait for the manager verdict before falling through.
+    /// 0 = use timeout_secs. For fast 1m scalping set ≤ 1500.
+    #[serde(default = "default_manager_max_entry_latency")]
+    pub max_entry_latency_ms: u64,
+}
+
+fn default_entry_path_enabled() -> bool {
+    false
+}
+fn default_llm_max_entry_latency() -> u64 {
+    1500
 }
 
 fn default_manager_provider() -> String {
@@ -205,6 +227,9 @@ fn default_manager_max_tokens() -> u32 {
 fn default_manager_fast_approve() -> u8 {
     90
 }
+fn default_manager_max_entry_latency() -> u64 {
+    1500
+}
 
 impl Default for ManagerCfg {
     fn default() -> Self {
@@ -220,6 +245,7 @@ impl Default for ManagerCfg {
             http_referer: String::new(),
             http_app_title: String::new(),
             fail_open_on_error: false,
+            max_entry_latency_ms: default_manager_max_entry_latency(),
         }
     }
 }
@@ -472,6 +498,85 @@ pub struct ControlCfg {
 
 fn default_telegram_poll() -> u64 {
     3
+}
+
+/// 15-minute screening / market-bias layer configuration.
+///
+/// When `hard_gate = true` (default), the screening result is a hard gate:
+///   Bullish → only LONG entries permitted
+///   Bearish → only SHORT entries permitted
+///   NoTrade  → no new entries
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScreeningCfg {
+    /// Master switch. Disable only for paper-ai-reviewed or debugging.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// HTF screening timeframe string, e.g. "15m".
+    #[serde(default = "default_screening_timeframe")]
+    pub timeframe: String,
+    /// Max age of screening state before it is considered stale (seconds).
+    #[serde(default = "default_screening_max_age")]
+    pub max_age_secs: u64,
+    /// When true, NoTrade blocks entries. When false, only direction-mismatch is blocked.
+    #[serde(default = "default_true")]
+    pub hard_gate: bool,
+    /// Allow counter-trend entries in paper mode (for research). Never allow in live.
+    #[serde(default)]
+    pub allow_countertrend_paper: bool,
+    /// Minimum screening confidence (0-100) to permit entries.
+    #[serde(default = "default_screening_min_confidence")]
+    pub min_confidence: u8,
+    /// Maximum price distance from VWAP (%) before NoTrade is forced.
+    #[serde(default = "default_screening_max_vwap_dist")]
+    pub max_vwap_distance_pct: f64,
+    /// Minimum ATR% to permit entries (filters flat markets).
+    #[serde(default = "default_screening_min_atr")]
+    pub min_atr_pct: f64,
+    /// Maximum ATR% to permit entries (filters extreme volatility).
+    #[serde(default = "default_screening_max_atr")]
+    pub max_atr_pct: f64,
+    /// Maximum choppiness index to permit entries (>61.8 = choppy/no-trend).
+    #[serde(default = "default_screening_max_choppiness")]
+    pub max_choppiness: f64,
+}
+
+fn default_screening_timeframe() -> String {
+    "15m".to_string()
+}
+fn default_screening_max_age() -> u64 {
+    1800
+}
+fn default_screening_min_confidence() -> u8 {
+    60
+}
+fn default_screening_max_vwap_dist() -> f64 {
+    0.8
+}
+fn default_screening_min_atr() -> f64 {
+    0.03
+}
+fn default_screening_max_atr() -> f64 {
+    2.5
+}
+fn default_screening_max_choppiness() -> f64 {
+    61.8
+}
+
+impl Default for ScreeningCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            timeframe: default_screening_timeframe(),
+            max_age_secs: default_screening_max_age(),
+            hard_gate: true,
+            allow_countertrend_paper: false,
+            min_confidence: default_screening_min_confidence(),
+            max_vwap_distance_pct: default_screening_max_vwap_dist(),
+            min_atr_pct: default_screening_min_atr(),
+            max_atr_pct: default_screening_max_atr(),
+            max_choppiness: default_screening_max_choppiness(),
+        }
+    }
 }
 
 /// Quant engine configuration — Kelly, vol targeting, VaR, IC, Kalman.

@@ -403,14 +403,14 @@ async fn run_agents(cfg: Config) -> Result<()> {
         tokio::spawn(async move {
             let mut rx = bus_sub.subscribe();
             loop {
-            let ev = match rx.recv().await {
-                Ok(ev) => ev,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(skipped = n, "broadcast lagged — skipping events");
-                    continue;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            };
+                let ev = match rx.recv().await {
+                    Ok(ev) => ev,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "broadcast lagged — skipping events");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
                 match ev {
                     crypto_scalper::agents::messages::AgentEvent::SurvivalUpdated(s) => {
                         *survival_state.write() = Some(s);
@@ -830,4 +830,3 @@ async fn recover_protection_prices(
     }
     (stop_loss, take_profit)
 }
-

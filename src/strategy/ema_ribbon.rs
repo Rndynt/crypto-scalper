@@ -45,8 +45,8 @@ impl Strategy for EmaRibbon {
             // Pullback entry: price dipped near EMA21 from above
             let pullback_zone = c.low <= e21 * 1.010 && c.close > e21 * 0.995;
             if pullback_zone && rsi > 25.0 && rsi < 75.0 {
-                let sl = c.close - atr;        // 1× ATR SL
-                let tp = c.close + atr * 2.0;  // 2× ATR TP (1:2 R:R)
+                let sl = c.close - atr; // 1× ATR SL
+                let tp = c.close + atr * 2.0; // 2× ATR TP (1:2 R:R)
                 let mut score: f64 = 66.0;
                 // Full ribbon alignment bonus
                 if e50.is_some() && e200.is_some() {
@@ -72,8 +72,8 @@ impl Strategy for EmaRibbon {
         if bearish_ribbon && ema50_confirms_bear && ema200_confirms_bear {
             let pullback_zone = c.high >= e21 * 0.990 && c.close < e21 * 1.005;
             if pullback_zone && rsi > 25.0 && rsi < 75.0 {
-                let sl = c.close + atr;        // 1× ATR SL
-                let tp = c.close - atr * 2.0;  // 2× ATR TP (1:2 R:R)
+                let sl = c.close + atr; // 1× ATR SL
+                let tp = c.close - atr * 2.0; // 2× ATR TP (1:2 R:R)
                 let mut score: f64 = 66.0;
                 if e50.is_some() && e200.is_some() {
                     score += 5.0;

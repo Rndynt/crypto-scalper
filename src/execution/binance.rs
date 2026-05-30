@@ -492,6 +492,59 @@ impl Exchange for BinanceFutures {
             Ok(out)
         })
     }
+
+    fn fetch_order_status<'a>(
+        &'a self,
+        symbol: &'a str,
+        client_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<crate::execution::exchange::OrderStatus>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            use crate::execution::exchange::OrderStatus;
+            let ts = self.timestamp_ms();
+            let params = vec![
+                ("symbol".to_string(), symbol.to_string()),
+                ("origClientOrderId".to_string(), client_id.to_string()),
+                ("timestamp".to_string(), ts.to_string()),
+                ("recvWindow".to_string(), self.recv_window_ms.to_string()),
+            ];
+            let qs = encode_query(&params);
+            let sig = self.sign(&qs)?;
+            let url = format!(
+                "{}/fapi/v1/order?{qs}&signature={sig}",
+                self.base_url.trim_end_matches('/')
+            );
+            let resp = self
+                .client
+                .get(&url)
+                .header("X-MBX-APIKEY", &self.api_key)
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                return Ok(OrderStatus::Unknown);
+            }
+            let body: serde_json::Value = resp.json().await?;
+            let status = match body
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("UNKNOWN")
+            {
+                "NEW" => OrderStatus::New,
+                "PARTIALLY_FILLED" => OrderStatus::PartiallyFilled,
+                "FILLED" => OrderStatus::Filled,
+                "CANCELED" => OrderStatus::Canceled,
+                "EXPIRED" => OrderStatus::Expired,
+                "REJECTED" => OrderStatus::Rejected,
+                _ => OrderStatus::Unknown,
+            };
+            Ok(status)
+        })
+    }
 }
 
 /// Round a quantity to the correct step size for the given futures symbol.

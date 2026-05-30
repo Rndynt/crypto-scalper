@@ -16,7 +16,10 @@ use crate::learning::{
 };
 use crate::llm::engine::LlmEngine;
 use crate::llm::prompts::LEARNING_ANALYSIS_PROMPT;
-use crate::monitoring::{TradeJournal, logger::{ClosedTrade, LearningStateSnapshot}};
+use crate::monitoring::{
+    TradeJournal,
+    logger::{ClosedTrade, LearningStateSnapshot},
+};
 use crate::quant::QuantEngine;
 use crate::shared_state::SharedState;
 use chrono::Utc;
@@ -113,7 +116,9 @@ async fn run_llm_analysis(llm: &LlmEngine, trades: &[ClosedTrade]) -> Vec<String
     let mut strat_map: HashMap<String, (u32, u32, f64)> = HashMap::new();
     for t in sample {
         let e = strat_map.entry(t.strategy.clone()).or_default();
-        if t.pnl_usd > 0.0 { e.0 += 1; }
+        if t.pnl_usd > 0.0 {
+            e.0 += 1;
+        }
         e.1 += 1;
         e.2 += t.pnl_usd;
     }
@@ -126,9 +131,15 @@ async fn run_llm_analysis(llm: &LlmEngine, trades: &[ClosedTrade]) -> Vec<String
     }
 
     // Direction breakdown
-    let long_wins  = sample.iter().filter(|t| t.direction == "LONG"  && t.pnl_usd > 0.0).count();
+    let long_wins = sample
+        .iter()
+        .filter(|t| t.direction == "LONG" && t.pnl_usd > 0.0)
+        .count();
     let long_total = sample.iter().filter(|t| t.direction == "LONG").count();
-    let short_wins  = sample.iter().filter(|t| t.direction == "SHORT" && t.pnl_usd > 0.0).count();
+    let short_wins = sample
+        .iter()
+        .filter(|t| t.direction == "SHORT" && t.pnl_usd > 0.0)
+        .count();
     let short_total = sample.iter().filter(|t| t.direction == "SHORT").count();
     summary.push_str(&format!(
         "\nDirection: LONG {long_wins}/{long_total} wins · SHORT {short_wins}/{short_total} wins\n"
@@ -138,7 +149,9 @@ async fn run_llm_analysis(llm: &LlmEngine, trades: &[ClosedTrade]) -> Vec<String
     let mut regime_map: HashMap<String, (u32, u32)> = HashMap::new();
     for t in sample {
         let e = regime_map.entry(t.regime.clone()).or_default();
-        if t.pnl_usd > 0.0 { e.0 += 1; }
+        if t.pnl_usd > 0.0 {
+            e.0 += 1;
+        }
         e.1 += 1;
     }
     summary.push_str("Regime: ");
@@ -150,15 +163,24 @@ async fn run_llm_analysis(llm: &LlmEngine, trades: &[ClosedTrade]) -> Vec<String
     match llm.analyze_text(LEARNING_ANALYSIS_PROMPT, &summary).await {
         Ok(text) => {
             // Strip markdown code fences if present
-            let clean = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+            let clean = text
+                .trim()
+                .trim_start_matches("```json")
+                .trim_start_matches("```")
+                .trim_end_matches("```")
+                .trim();
             match serde_json::from_str::<serde_json::Value>(clean) {
                 Ok(v) => {
                     if let Some(arr) = v.get("insights").and_then(|i| i.as_array()) {
-                        let insights: Vec<String> = arr.iter()
+                        let insights: Vec<String> = arr
+                            .iter()
                             .filter_map(|i| i.as_str())
                             .map(|s| s.to_string())
                             .collect();
-                        info!(count = insights.len(), "learning: LLM analysis produced insights");
+                        info!(
+                            count = insights.len(),
+                            "learning: LLM analysis produced insights"
+                        );
                         return insights;
                     }
                     warn!("learning: LLM response missing 'insights' key: {clean}");
@@ -242,14 +264,14 @@ pub fn spawn(
             tokio::spawn(async move {
                 let mut rx = bus_rt.subscribe();
                 loop {
-            let ev = match rx.recv().await {
-                Ok(ev) => ev,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(skipped = n, "broadcast lagged — skipping events");
-                    continue;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            };
+                    let ev = match rx.recv().await {
+                        Ok(ev) => ev,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(skipped = n, "broadcast lagged — skipping events");
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
                     if let AgentEvent::PositionClosed {
                         ref client_id,
                         pnl_usd,

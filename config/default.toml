@@ -174,3 +174,20 @@ ic_max_boost           = 10       # Max +/- confidence points from IC
 kalman_process_noise   = 0.01     # Kalman filter Q (lower = smoother)
 kalman_measurement_noise = 1.0   # Kalman filter R (higher = less reactive)
 kalman_min_velocity_bps = 3.0    # Min |velocity| in bps for trend signal
+
+[screening]
+# Multi-indicator pre-screening for ScreenedVwapScalp strategy.
+# Symbols that fail screening are not traded.
+enabled                    = false   # disabled by default — opt-in per overlay
+min_vote_fraction          = 0.6     # fraction of indicators that must agree (0.0–1.0)
+ema_fast                   = 9
+ema_slow                   = 21
+adx_period                 = 14
+adx_min_trend              = 20.0    # ADX floor for trend confirmation
+rsi_period                 = 14
+rsi_overbought             = 70.0
+rsi_oversold               = 30.0
+volume_ma_period           = 20
+volume_spike_factor        = 1.5     # current volume / MA must exceed this
+atr_period                 = 14
+spread_max_atr_fraction    = 0.1     # max spread as fraction of ATR

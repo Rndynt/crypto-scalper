@@ -6,8 +6,8 @@
 use crate::agents::MessageBus;
 use crate::agents::messages::{AgentEvent, AgentId, BrainOutcome, ControlCommand, ManagerAction};
 use crate::llm::engine::Decision;
-use crate::monitoring::{MetricsState, TelegramNotifier, TradeJournal, TradeRecord};
 use crate::monitoring::chart;
+use crate::monitoring::{MetricsState, TelegramNotifier, TradeJournal, TradeRecord};
 use crate::strategy::state::StrategyName;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex as PlMutex;
@@ -549,7 +549,9 @@ pub fn spawn(
                     );
                     // Spawn — don't block the event loop
                     let tg = telegram.clone();
-                    tokio::spawn(async move { let _ = tg.send(&msg).await; });
+                    tokio::spawn(async move {
+                        let _ = tg.send(&msg).await;
+                    });
                 }
                 AgentEvent::PositionClosed {
                     client_id,
@@ -647,7 +649,11 @@ pub fn spawn(
                     // Calculate ROE and margin (same logic as open notification)
                     let notional = size * entry_price;
                     let close_max_lev = max_leverage;
-                    let margin_usd = if close_max_lev > 0.0 { notional / close_max_lev } else { notional };
+                    let margin_usd = if close_max_lev > 0.0 {
+                        notional / close_max_lev
+                    } else {
+                        notional
+                    };
                     let roe_pct = pnl_pct.abs() * close_max_lev; // ROE = price change × leverage
 
                     let msg = format!(
@@ -704,6 +710,83 @@ pub fn spawn(
                 }
                 AgentEvent::PolicyRefreshed { lessons_count, .. } => {
                     metrics.update(|m| m.active_lessons = lessons_count as u64);
+                }
+                AgentEvent::PositionReduced {
+                    symbol,
+                    side,
+                    reduced_size,
+                    remaining_size,
+                    entry_price,
+                    exit_price,
+                    pnl_usd,
+                    reason,
+                    ..
+                } => {
+                    let side_label = if side == crate::data::Side::Long {
+                        "BUY"
+                    } else {
+                        "SELL"
+                    };
+                    info!(
+                        symbol = %symbol,
+                        side = %side_label,
+                        reduced = %format!("{:.4}", reduced_size),
+                        remaining = %format!("{:.4}", remaining_size),
+                        pnl = %format!("{:+.4}", pnl_usd),
+                        reason = %reason.as_str(),
+                        "📉 partial TP taken"
+                    );
+                    let msg = format!(
+                        "🎯 <b>PARTIAL TP</b> · <code>{sym}</code> {side}\n\
+                         📍 Entry: <code>{entry:.4}</code> → Exit: <code>{exit:.4}</code>\n\
+                         📦 Reduced: <code>{red:.4}</code> · Remaining: <code>{rem:.4}</code>\n\
+                         💵 PnL: <code>{pnl:+.4}$</code>\n\
+                         🤖 ARIA v1.0",
+                        sym = short_sym(&symbol),
+                        side = side_label,
+                        entry = entry_price,
+                        exit = exit_price,
+                        red = reduced_size,
+                        rem = remaining_size,
+                        pnl = pnl_usd,
+                    );
+                    let tg = telegram.clone();
+                    tokio::spawn(async move {
+                        let _ = tg.send(&msg).await;
+                    });
+                }
+                AgentEvent::ExecutionFailed { symbol, reason } => {
+                    warn!(symbol = %symbol, %reason, "⚠️ execution failed — pending lock released");
+                    let msg = format!(
+                        "⚠️ <b>EXECUTION FAILED</b>\n\
+                         Symbol: <code>{sym}</code>\n\
+                         Reason: <code>{reason}</code>\n\
+                         🤖 ARIA v1.0",
+                        sym = short_sym(&symbol),
+                        reason = reason,
+                    );
+                    let tg = telegram.clone();
+                    tokio::spawn(async move {
+                        let _ = tg.send(&msg).await;
+                    });
+                }
+                AgentEvent::StopMoved {
+                    symbol,
+                    old_stop,
+                    new_stop,
+                    reason,
+                    ..
+                } => {
+                    info!(
+                        symbol = %symbol,
+                        old = %format!("{:.4}", old_stop),
+                        new = %format!("{:.4}", new_stop),
+                        %reason,
+                        "🔒 stop loss moved"
+                    );
+                }
+                AgentEvent::ScreeningUpdated { symbol, bias, .. } => {
+                    info!(symbol = %symbol, bias = %bias.as_str(), "📡 screening bias updated");
                 }
                 _ => {}
             }
@@ -968,14 +1051,17 @@ async fn send_signal_notification(
     // ─── Generate chart and send as single photo message ────
     let chart_result = async {
         let candles = chart::fetch_klines(http_client, &brain.signal.symbol, "5m", 100).await?;
-        let chart_candles: Vec<chart::ChartCandle> = candles.iter().map(|c| chart::ChartCandle {
-            open_time: c.open_time,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume,
-        }).collect();
+        let chart_candles: Vec<chart::ChartCandle> = candles
+            .iter()
+            .map(|c| chart::ChartCandle {
+                open_time: c.open_time,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume,
+            })
+            .collect();
 
         let img = chart::generate_signal_chart(
             &brain.signal.symbol,

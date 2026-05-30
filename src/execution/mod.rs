@@ -12,7 +12,7 @@ pub mod quality;
 pub mod risk;
 pub mod tcm;
 
-pub use exchange::{Exchange, OrderAck};
+pub use exchange::{Exchange, OrderAck, OrderStatus};
 pub use orders::{OrderRequest, OrderType};
 pub use paper::PaperExchange;
 pub use position::{Position, PositionAction, PositionBook, PositionConfig, PositionExitReason};

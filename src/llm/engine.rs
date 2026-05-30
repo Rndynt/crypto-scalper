@@ -301,7 +301,11 @@ impl LlmEngine {
 
     /// Freeform LLM call — used by the learning agent for qualitative analysis.
     /// Returns the raw text response (caller parses it).
-    pub async fn analyze_text(&self, system_prompt: &str, user_content: &str) -> anyhow::Result<String> {
+    pub async fn analyze_text(
+        &self,
+        system_prompt: &str,
+        user_content: &str,
+    ) -> anyhow::Result<String> {
         if self.cfg.api_key.is_empty() {
             return Err(anyhow::anyhow!("LLM api key empty"));
         }
@@ -314,7 +318,11 @@ impl LlmEngine {
         Ok(result)
     }
 
-    async fn call_text_api(&self, system_prompt: &str, user_content: &str) -> anyhow::Result<String> {
+    async fn call_text_api(
+        &self,
+        system_prompt: &str,
+        user_content: &str,
+    ) -> anyhow::Result<String> {
         match self.cfg.provider {
             LlmProvider::Anthropic => {
                 let body = serde_json::json!({
@@ -323,15 +331,21 @@ impl LlmEngine {
                     "system": system_prompt,
                     "messages": [{ "role": "user", "content": user_content }]
                 });
-                let resp: serde_json::Value = self.client
+                let resp: serde_json::Value = self
+                    .client
                     .post(&self.cfg.api_base)
                     .header("x-api-key", &self.cfg.api_key)
                     .header("anthropic-version", "2023-06-01")
                     .json(&body)
-                    .send().await?
-                    .json().await?;
-                let text = resp.get("content").and_then(|c| c.get(0))
-                    .and_then(|b| b.get("text")).and_then(|t| t.as_str())
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
+                let text = resp
+                    .get("content")
+                    .and_then(|c| c.get(0))
+                    .and_then(|b| b.get("text"))
+                    .and_then(|t| t.as_str())
                     .ok_or_else(|| anyhow::anyhow!("empty anthropic response: {resp}"))?;
                 Ok(text.to_string())
             }
@@ -346,12 +360,17 @@ impl LlmEngine {
                         { "role": "user",   "content": user_content }
                     ]
                 });
-                let mut req = self.client
+                let mut req = self
+                    .client
                     .post(&self.cfg.api_base)
                     .header("api-key", &self.cfg.api_key)
                     .json(&body);
-                if let Some(ref r) = self.cfg.http_referer { req = req.header("HTTP-Referer", r); }
-                if let Some(ref t) = self.cfg.http_app_title { req = req.header("X-Title", t); }
+                if let Some(ref r) = self.cfg.http_referer {
+                    req = req.header("HTTP-Referer", r);
+                }
+                if let Some(ref t) = self.cfg.http_app_title {
+                    req = req.header("X-Title", t);
+                }
 
                 let raw_bytes = req.send().await?.bytes().await?;
                 let raw_str = String::from_utf8_lossy(&raw_bytes);
@@ -360,11 +379,19 @@ impl LlmEngine {
                 if let Some(err) = resp.get("error") {
                     return Err(anyhow::anyhow!("API error: {err}"));
                 }
-                let message = resp.get("choices").and_then(|c| c.get(0))
+                let message = resp
+                    .get("choices")
+                    .and_then(|c| c.get(0))
                     .and_then(|c| c.get("message"));
-                let text = message.and_then(|m| m.get("content")).and_then(|t| t.as_str())
+                let text = message
+                    .and_then(|m| m.get("content"))
+                    .and_then(|t| t.as_str())
                     .filter(|s| !s.is_empty())
-                    .or_else(|| message.and_then(|m| m.get("reasoning_content")).and_then(|t| t.as_str()))
+                    .or_else(|| {
+                        message
+                            .and_then(|m| m.get("reasoning_content"))
+                            .and_then(|t| t.as_str())
+                    })
                     .ok_or_else(|| anyhow::anyhow!("empty openai response: {resp}"))?;
                 Ok(text.to_string())
             }

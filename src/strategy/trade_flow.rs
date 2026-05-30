@@ -18,7 +18,8 @@ impl Strategy for TradeFlow {
     }
 
     fn evaluate(&self, s: &SymbolState, c: &Candle) -> Option<PreSignal> {
-        if s.candles.len() < 5 {  // relaxed from 10
+        if s.candles.len() < 5 {
+            // relaxed from 10
             return None;
         }
 
@@ -32,7 +33,11 @@ impl Strategy for TradeFlow {
         // VPIN 0.35-0.50: caution
         // VPIN > 0.50: informed traders active, STAY OUT
         // VPIN soft gate
-        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
+        let vpin_penalty = if vpin > 0.50 {
+            ((vpin - 0.50) * 40.0).min(20.0) as u8
+        } else {
+            0
+        };
 
         // Price velocity: compare last 3 closes for micro-momentum
         let closes: Vec<f64> = s.candles.iter().rev().take(4).map(|c| c.close).collect();
@@ -44,7 +49,8 @@ impl Strategy for TradeFlow {
         let velocity = (closes[0] - closes[3]) / closes[3]; // % change over 3 candles
 
         // Minimum velocity threshold to avoid trading chop
-        if velocity.abs() < 0.0002 {  // relaxed from 0.05%
+        if velocity.abs() < 0.0002 {
+            // relaxed from 0.05%
             // 0.05% minimum move
             return None;
         }

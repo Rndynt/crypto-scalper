@@ -11,10 +11,11 @@ use crate::data::{Candle, Side};
 use crate::errors::Result;
 use crate::execution::tcm::TransactionCostModel;
 use crate::strategy::{
-    RegimeDetector, Strategy, select_strategies,
+    RegimeDetector, Strategy,
     kalman_trend::KalmanTrendStrategy,
     microstructure_reversion::MicrostructureReversion,
     order_flow::OrderFlow,
+    select_strategies,
     squeeze::Squeeze,
     state::{PreSignal, StrategyName, SymbolState},
     trade_flow::TradeFlow,
@@ -146,6 +147,9 @@ impl BacktestEngine {
                     StrategyName::VwapScalp => KalmanTrendStrategy.evaluate(&state, c),
                     StrategyName::MeanReversion => MicrostructureReversion.evaluate(&state, c),
                     StrategyName::Squeeze => Squeeze.evaluate(&state, c),
+                    StrategyName::ScreenedVwapScalp => {
+                        crate::strategy::screened_vwap_scalp::ScreenedVwapScalp.evaluate(&state, c)
+                    }
                 };
                 if let Some(s) = sig {
                     if best
@@ -234,8 +238,8 @@ impl BacktestEngine {
         if sig.entry <= 0.0 {
             return 0.0;
         }
-        let notional = self.risk_per_trade_usd
-            / ((sig.entry - sig.stop_loss).abs() / sig.entry).max(0.001);
+        let notional =
+            self.risk_per_trade_usd / ((sig.entry - sig.stop_loss).abs() / sig.entry).max(0.001);
         let max_notional = self.equity_usd * self.max_position_notional_pct / 100.0;
         (notional.min(max_notional) / sig.entry).max(0.0)
     }

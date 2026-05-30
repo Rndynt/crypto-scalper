@@ -30,7 +30,11 @@ impl Strategy for KalmanTrendStrategy {
 
         // Gate: VPIN safety check
         // VPIN soft gate: high VPIN reduces confidence instead of blocking
-        let vpin_penalty = if vpin > 0.50 { ((vpin - 0.50) * 40.0).min(20.0) as u8 } else { 0 };
+        let vpin_penalty = if vpin > 0.50 {
+            ((vpin - 0.50) * 40.0).min(20.0) as u8
+        } else {
+            0
+        };
 
         // Use price velocity from recent candles as Kalman proxy
         // (real Kalman is updated separately in quant engine via update_kalman)
@@ -50,7 +54,8 @@ impl Strategy for KalmanTrendStrategy {
             .sum();
 
         // Velocity must be meaningful — filter noise
-        if velocity.abs() < 0.0001 {  // relaxed from 0.03%
+        if velocity.abs() < 0.0001 {
+            // relaxed from 0.03%
             // 0.03% per candle minimum
             return None;
         }
@@ -68,8 +73,8 @@ impl Strategy for KalmanTrendStrategy {
         let acceleration = velocity - velocity_prev;
 
         // Signal: velocity and acceleration must agree with OFI
-        let long_signal = velocity > 0.0 && ofi >= -0.15;  // removed acceleration requirement
-        let short_signal = velocity < 0.0 && ofi <= 0.15;  // removed acceleration requirement
+        let long_signal = velocity > 0.0 && ofi >= -0.15; // removed acceleration requirement
+        let short_signal = velocity < 0.0 && ofi <= 0.15; // removed acceleration requirement
 
         if !long_signal && !short_signal {
             return None;

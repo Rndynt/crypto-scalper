@@ -1,0 +1,38 @@
+# live-safe.toml — live mode with conservative risk caps + screening + LLM gating.
+# Conservative live preset: tighter sizing, SL/TP, max DD protection.
+
+[bot]
+mode = "live"
+
+[llm]
+enabled                 = true
+fail_closed_without_llm = true    # never enter a trade if LLM is unreachable
+entry_path_enabled      = true
+min_confidence          = 70
+fallback_ta_threshold   = 75
+
+[manager]
+enabled               = true
+fast_approve_min_conf = 85
+
+[screening]
+enabled             = true
+min_vote_fraction   = 0.65
+ema_fast            = 9
+ema_slow            = 21
+adx_period          = 14
+adx_min_trend       = 22.0
+rsi_period          = 14
+rsi_overbought      = 68.0
+rsi_oversold        = 32.0
+volume_ma_period    = 20
+volume_spike_factor = 1.6
+atr_period          = 14
+spread_max_atr_fraction = 0.08
+
+[risk]
+max_open_positions    = 2
+max_risk_per_trade    = 0.005    # 0.5% per trade — very conservative
+daily_drawdown_limit  = 0.03     # halt at 3% daily loss
+max_drawdown_pct      = 0.08     # survival halt at 8% from peak
+position_size_pct     = 0.05     # 5% of equity per position

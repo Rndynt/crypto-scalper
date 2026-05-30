@@ -15,13 +15,12 @@ use crate::agents::messages::{AgentEvent, AgentId, ScreeningBias, SignalEvaluati
 use crate::config::{AdvancedAlphaCfg, Schedule};
 use crate::data::Side;
 use crate::feeds::ExternalSnapshot;
+use crate::feeds::alt_data::AltDataInputs;
 use crate::microstructure::{Ofi, Vpin};
 use crate::quant::QuantEngine;
 use crate::shared_state::SharedState;
-use crate::feeds::alt_data::AltDataInputs;
 use crate::strategy::{
-    RegimeDetector,
-    Strategy,
+    RegimeDetector, Strategy,
     alpha_gate::{
         AdvancedAlphaInputs, AlphaGateDecision, advanced_alpha_gate, alt_data_inputs_from_snapshot,
         funding_rate_from_snapshot, kalman_trend_score,
@@ -29,6 +28,7 @@ use crate::strategy::{
     kalman_trend::KalmanTrendStrategy,
     microstructure_reversion::MicrostructureReversion,
     order_flow::OrderFlow,
+    screened_vwap_scalp::ScreenedVwapScalp as ScreenedVwapScalpStrategy,
     select_strategies,
     squeeze::Squeeze,
     state::{PreSignal, StrategyName, SymbolState},
@@ -151,7 +151,8 @@ pub fn spawn(
                         .or_insert_with(|| Vpin::new(vpin_bucket_size_for(&symbol), 50));
                     let vpin_value = vpin_tracker.update(buy_vol, sell_vol);
                     if let Some(vpin) = vpin_value {
-                        let abnormal = vpin_tracker.is_abnormal()
+                        let abnormal = vpin_tracker
+                            .is_abnormal()
                             .map(|(is_ab, _raw, _thresh)| is_ab)
                             .unwrap_or(false);
                         if let Ok(mut states_guard) = states.try_lock() {
@@ -315,9 +316,16 @@ pub fn spawn(
                             let sig = match name {
                                 StrategyName::EmaRibbon => OrderFlow.evaluate(state, &candle),
                                 StrategyName::Momentum => TradeFlow.evaluate(state, &candle),
-                                StrategyName::VwapScalp => KalmanTrendStrategy.evaluate(state, &candle),
-                                StrategyName::MeanReversion => MicrostructureReversion.evaluate(state, &candle),
+                                StrategyName::VwapScalp => {
+                                    KalmanTrendStrategy.evaluate(state, &candle)
+                                }
+                                StrategyName::MeanReversion => {
+                                    MicrostructureReversion.evaluate(state, &candle)
+                                }
                                 StrategyName::Squeeze => Squeeze.evaluate(state, &candle),
+                                StrategyName::ScreenedVwapScalp => {
+                                    ScreenedVwapScalpStrategy.evaluate(state, &candle)
+                                }
                             };
                             if let Some(mut s) = sig {
                                 if best_seen
@@ -383,7 +391,14 @@ pub fn spawn(
                                 }
                             }
                         }
-                        (filtered, regime, state.candles.len(), chosen, best_seen, forced)
+                        (
+                            filtered,
+                            regime,
+                            state.candles.len(),
+                            chosen,
+                            best_seen,
+                            forced,
+                        )
                     };
 
                     if let Some(signal) = best {
@@ -514,7 +529,9 @@ async fn bootstrap_htf_states(
 ) {
     use crate::data::Timeframe;
 
-    let tf = Timeframe { seconds: timeframe_secs };
+    let tf = Timeframe {
+        seconds: timeframe_secs,
+    };
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -527,14 +544,8 @@ async fn bootstrap_htf_states(
     };
 
     for (symbol, state) in htf_states.iter_mut() {
-        match crate::data::kline_bootstrap::fetch_klines(
-            &client,
-            rest_base_url,
-            symbol,
-            &tf,
-            220,
-        )
-        .await
+        match crate::data::kline_bootstrap::fetch_klines(&client, rest_base_url, symbol, &tf, 220)
+            .await
         {
             Ok(candles) => {
                 let n = candles.len();
@@ -597,7 +608,11 @@ fn paper_scout_signal(
         ta_confidence: 60,
         reason: format!(
             "paper_scout htf_bias={:.2} close={:.4} vwap={:.4} stop_pct={:.3}% atr_raw={:.4}",
-            bias, price, vwap, stop_pct * 100.0, raw_atr
+            bias,
+            price,
+            vwap,
+            stop_pct * 100.0,
+            raw_atr
         ),
         atr: Some(raw_atr),
     })
@@ -670,7 +685,10 @@ fn apply_mtf_context(
             htf_summary(higher_timeframes)
         );
     } else if score > 0 {
-        signal.ta_confidence = signal.ta_confidence.saturating_add((score * 2) as u8).min(100);
+        signal.ta_confidence = signal
+            .ta_confidence
+            .saturating_add((score * 2) as u8)
+            .min(100);
         signal.reason = format!(
             "{} | MTF-confirm(score={}, htf={})",
             signal.reason,
@@ -763,7 +781,11 @@ fn apply_advanced_alpha(
 
     let prices: Vec<f64> = state.candles.iter().map(|c| c.close).collect();
     let trend_score = if prices.len() >= 2 {
-        kalman_trend_score(&prices, cfg.kalman_process_noise, cfg.kalman_measurement_noise)
+        kalman_trend_score(
+            &prices,
+            cfg.kalman_process_noise,
+            cfg.kalman_measurement_noise,
+        )
     } else {
         0.0
     };
@@ -778,8 +800,13 @@ fn apply_advanced_alpha(
     match advanced_alpha_gate(alpha_inputs, signal_is_long) {
         AlphaGateDecision::Allow => Some(sig),
         AlphaGateDecision::Reduce => {
-            sig.ta_confidence = sig.ta_confidence.saturating_sub(cfg.reduce_confidence_delta);
-            sig.reason = format!("{} | alpha_caution(-{})", sig.reason, cfg.reduce_confidence_delta);
+            sig.ta_confidence = sig
+                .ta_confidence
+                .saturating_sub(cfg.reduce_confidence_delta);
+            sig.reason = format!(
+                "{} | alpha_caution(-{})",
+                sig.reason, cfg.reduce_confidence_delta
+            );
             Some(sig)
         }
         AlphaGateDecision::Block => {
