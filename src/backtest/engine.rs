@@ -26,6 +26,7 @@ pub struct SimTrade {
     pub pnl_pct: f64,
     pub bars_held: u32,
     pub reason: String,
+    atr: None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +116,7 @@ impl BacktestEngine {
                     pnl_pct,
                     bars_held: bars + 1,
                     reason: exit_reason,
+                    atr: None,
                 });
                 open = None;
             }
@@ -223,6 +225,7 @@ mod tests {
             take_profit: 102.0,
             ta_confidence: 80,
             reason: String::new(),
+            atr: None,
         };
         let exit = sig.take_profit * (1.0 - engine.slippage_bps / 10_000.0);
         let risk_size = engine.risk_per_trade_usd / (sig.entry - sig.stop_loss).abs();

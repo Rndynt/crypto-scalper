@@ -73,6 +73,7 @@ mod tests {
             take_profit: 101.0,
             ta_confidence: 80,
             reason: String::new(),
+            atr: None,
         };
         approx::assert_abs_diff_eq!(
             sig.net_expected_edge_bps(&tcm, 10_000.0, 100_000_000.0),

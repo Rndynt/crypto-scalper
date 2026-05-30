@@ -466,6 +466,7 @@ fn paper_scout_signal(
             stop_pct * 100.0,
             raw_atr
         ),
+        atr: Some(raw_atr),
     })
 }
 
@@ -683,6 +684,7 @@ mod tests {
             take_profit: 103.0,
             ta_confidence: 80,
             reason: "unit".into(),
+            atr: None,
         }
     }
 

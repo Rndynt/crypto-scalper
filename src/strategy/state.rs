@@ -50,6 +50,8 @@ pub struct PreSignal {
     pub take_profit: f64,
     pub ta_confidence: u8,
     pub reason: String,
+    /// ATR at signal time — used for trailing stop and position sizing.
+    pub atr: Option<f64>,
 }
 
 impl PreSignal {

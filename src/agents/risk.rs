@@ -523,6 +523,9 @@ pub fn spawn(
                     capped_signal.stop_loss = effective_sl;
                     capped_signal.take_profit = effective_tp;
 
+                    // Extract symbol before move into RiskVerdictMsg
+                    let symbol_for_pending = capped_signal.symbol.clone();
+
                     bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
                         signal: capped_signal,
                         regime,
@@ -536,7 +539,7 @@ pub fn spawn(
                     }));
                     // Lock symbol immediately — prevents duplicate while LLM + execution run.
                     // Released on OrderFilled (→ open_symbols) or Veto (→ cleared).
-                    pending_symbols.lock().insert(capped_signal.symbol.clone());
+                    pending_symbols.lock().insert(symbol_for_pending);
                 }
                 // Veto: release pending lock so the symbol can be retried next signal.
                 AgentEvent::ManagerVerdictEmitted(ref v)

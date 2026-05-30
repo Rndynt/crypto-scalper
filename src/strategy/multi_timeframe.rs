@@ -110,6 +110,7 @@ mod tests {
             take_profit: 102.0,
             ta_confidence: 70,
             reason: "test".into(),
+            atr: None,
         };
         let votes = vec![WeightedVote {
             timeframe_secs: 300,
