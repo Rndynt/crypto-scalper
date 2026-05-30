@@ -109,21 +109,22 @@ impl LearningPolicy {
             ));
         }
         if let Some(s) = g.memory.by_strategy.get(strategy) {
-            let alert = if s.win_rate() < 0.40 && s.trades >= 5 {
-                " ⚠️ LOW WIN RATE — be VERY selective"
+            let note = if s.net_pnl_usd > 0.0 {
+                format!(" [net +${:.2} — profitable]", s.net_pnl_usd)
             } else if s.recent_streak <= -3 {
-                " ⚠️ LOSS STREAK — require strong confluence"
+                format!(" [streak {} — reduce size to 0.5x]", s.recent_streak)
             } else {
-                ""
+                String::new()
             };
             out.push_str(&format!(
-                "Strategy {strategy}: {} trades · WR {:.1}% · PF {:.2} · streak {} · last5 {}{}\n",
+                "Strategy {strategy}: {} trades · WR {:.1}% · PF {:.2} · net ${:+.2} · streak {} · last5 {}{}\n",
                 s.trades,
                 s.win_rate() * 100.0,
                 s.profit_factor(),
+                s.net_pnl_usd,
                 s.recent_streak,
                 fmt_outcomes(s),
-                alert,
+                note,
             ));
         }
         if let Some(s) = g
@@ -131,16 +132,11 @@ impl LearningPolicy {
             .by_strategy_regime
             .get(&(strategy.into(), regime.into()))
         {
-            let alert = if s.win_rate() < 0.35 && s.trades >= 3 {
-                " ⚠️ FAILING IN THIS REGIME"
-            } else {
-                ""
-            };
             out.push_str(&format!(
-                "Regime {regime} for {strategy}: {} trades · WR {:.1}%{}\n",
+                "Regime {regime} for {strategy}: {} trades · WR {:.1}% · net ${:+.2}\n",
                 s.trades,
                 s.win_rate() * 100.0,
-                alert,
+                s.net_pnl_usd,
             ));
         }
         if let Some(s) = g
