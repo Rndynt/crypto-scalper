@@ -38,7 +38,7 @@ impl Strategy for OrderFlow {
         // book_imbalance < 1.0 = more asks (bearish pressure)
 
         // Gate 3: OFI must be significant — weak signal = noise
-        let ofi_strong = ofi.abs() > 0.15  # relaxed from 0.3;
+        let ofi_strong = ofi.abs() > 0.15;  // relaxed from 0.3
         if !ofi_strong {
             return None;
         }

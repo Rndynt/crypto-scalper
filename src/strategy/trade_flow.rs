@@ -18,7 +18,7 @@ impl Strategy for TradeFlow {
     }
 
     fn evaluate(&self, s: &SymbolState, c: &Candle) -> Option<PreSignal> {
-        if s.candles.len() < 5 {  # relaxed from 10
+        if s.candles.len() < 5 {  // relaxed from 10
             return None;
         }
 
@@ -44,7 +44,7 @@ impl Strategy for TradeFlow {
         let velocity = (closes[0] - closes[3]) / closes[3]; // % change over 3 candles
 
         // Minimum velocity threshold to avoid trading chop
-        if velocity.abs() < 0.0002 {  # relaxed from 0.05%
+        if velocity.abs() < 0.0002 {  // relaxed from 0.05%
             // 0.05% minimum move
             return None;
         }

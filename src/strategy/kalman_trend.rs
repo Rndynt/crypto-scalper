@@ -50,7 +50,7 @@ impl Strategy for KalmanTrendStrategy {
             .sum();
 
         // Velocity must be meaningful — filter noise
-        if velocity.abs() < 0.0001 {  # relaxed from 0.03% for aggressive mode
+        if velocity.abs() < 0.0001 {  // relaxed from 0.03%
             // 0.03% per candle minimum
             return None;
         }
@@ -68,8 +68,8 @@ impl Strategy for KalmanTrendStrategy {
         let acceleration = velocity - velocity_prev;
 
         // Signal: velocity and acceleration must agree with OFI
-        let long_signal = velocity > 0.0 && ofi >= -0.15;  # removed acceleration requirement
-        let short_signal = velocity < 0.0 && ofi <= 0.15;  # removed acceleration requirement
+        let long_signal = velocity > 0.0 && ofi >= -0.15;  // removed acceleration requirement
+        let short_signal = velocity < 0.0 && ofi <= 0.15;  // removed acceleration requirement
 
         if !long_signal && !short_signal {
             return None;
