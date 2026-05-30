@@ -444,7 +444,7 @@ pub fn spawn(
                     let base_size = risk.calculate_size(effective_entry, effective_sl);
 
                     // Apply quant engine sizing (Kelly, vol-target, VaR, Kalman)
-                    let (size, _quant_reason) = if let Some(ref qe) = quant_engine {
+                    let (mut size, _quant_reason) = if let Some(ref qe) = quant_engine {
                         let qr = qe.compute_sizing(QuantSizingInput {
                             symbol: &signal.symbol,
                             strategy: signal.strategy.as_str(),
@@ -473,6 +473,18 @@ pub fn spawn(
                     } else {
                         (base_size * verdict.size_multiplier, String::new())
                     };
+
+                    // Enforce minimum margin — learning/quant multipliers can
+                    // shrink size below usable levels. Floor: min_margin_usd.
+                    {
+                        let limits = risk.limits();
+                        let notional = size * effective_entry;
+                        let margin = notional / limits.max_leverage.max(1) as f64;
+                        if margin < limits.min_margin_usd && size > 0.0 {
+                            let floor_size = limits.min_margin_usd * limits.max_leverage.max(1) as f64 / effective_entry.max(1e-9);
+                            size = floor_size;
+                        }
+                    }
 
                     if size <= 0.0 {
                         bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
