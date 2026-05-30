@@ -77,32 +77,33 @@ impl StrategyHealth {
     }
 
     pub fn should_disable(&self) -> bool {
-        // Disable if:
-        // - 15+ loss streak (very aggressive failure)
-        // - Win rate < 15% after 20+ trades (clearly broken strategy)
-        // - Total PnL < -$50 after 10+ trades (significant losses)
-        self.loss_streak >= 15
-            || (self.total_trades >= 20 && self.win_rate < 0.15)
-            || (self.total_trades >= 10 && self.total_pnl < -50.0)
+        // Disable only when catastrophically broken — bot must keep trading.
+        // Win rate alone is never enough: a 20% WR with 5:1 RR is profitable.
+        // Only disable on extreme loss streak OR deep dollar loss.
+        self.loss_streak >= 20
+            || (self.total_trades >= 30 && self.win_rate < 0.10)
+            || (self.total_trades >= 15 && self.total_pnl < -80.0)
     }
 
     pub fn should_reduce_size(&self) -> bool {
-        // Reduce size if:
-        // - 5+ loss streak
-        // - Win rate < 30% after 10+ trades
-        self.loss_streak >= 5 || (self.total_trades >= 10 && self.win_rate < 0.3)
+        // Reduce size on extended streaks — never stop trading entirely.
+        self.loss_streak >= 8 || (self.total_trades >= 15 && self.win_rate < 0.20)
     }
 
     pub fn size_multiplier(&self) -> f64 {
         if !self.enabled {
             return 0.0;
         }
-        if self.loss_streak >= 5 {
-            0.2
-        } else if self.loss_streak >= 3 {
+        // Gentle reduction — keep bot trading at all times.
+        // Sizing is the lever, not trade blocking.
+        if self.loss_streak >= 10 {
+            0.3
+        } else if self.loss_streak >= 7 {
             0.5
-        } else if self.win_rate > 0.6 && self.total_trades >= 10 {
-            1.2 // Boost winning strategies
+        } else if self.loss_streak >= 4 {
+            0.7
+        } else if self.total_pnl > 0.0 && self.total_trades >= 10 {
+            1.1 // Slight boost for profitable strategies
         } else {
             1.0
         }

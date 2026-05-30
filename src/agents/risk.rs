@@ -143,15 +143,19 @@ pub fn spawn(
                     while q.len() > 30 {
                         q.pop_front();
                     }
-                    if q.len() >= 20 {
+                    // OOS decay: only reduce size, never hard-block.
+                    // Requires 30 trades + WR < 20% + deeply negative PnL.
+                    // Bot must keep trading — size reduction is the lever.
+                    if q.len() >= 30 {
                         let wins = q.iter().filter(|&&p| p > 0.0).count();
                         let wr = wins as f64 / q.len() as f64;
                         let pnl_sum: f64 = q.iter().sum();
-                        if wr < 0.35 && pnl_sum < 0.0 {
-                            disabled_strategies
-                                .lock()
-                                .insert(strategy.clone(), chrono::Utc::now().timestamp() + 3600);
-                            warn!(strategy = %strategy, win_rate = wr, pnl_sum, "risk: strategy auto-disabled (OOS decay)");
+                        if wr < 0.20 && pnl_sum < -20.0 {
+                            // Throttle to 30 min cooldown only when catastrophically broken
+                            let until = chrono::Utc::now().timestamp() + 1800;
+                            disabled_strategies.lock().insert(strategy.clone(), until);
+                            warn!(strategy = %strategy, win_rate = wr, pnl_sum,
+                                "risk: OOS decay throttle (30 min reduced-size cooldown)");
                         }
                     }
                     continue;

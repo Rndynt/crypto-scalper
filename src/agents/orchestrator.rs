@@ -262,14 +262,8 @@ pub fn spawn(
                     state.avg_confidence =
                         conf_sum as f64 / state.recent_brains.len().max(1) as f64;
 
-                    // Reduce size if brain confidence is consistently low
-                    if state.avg_confidence < 40.0 {
-                        state.size_multiplier *= 0.8;
-                        warn!(
-                            "orchestrator: avg brain confidence {:.0}% < 40%, reducing size",
-                            state.avg_confidence
-                        );
-                    }
+                    // Avg confidence is tracked for monitoring only — NOT used to
+                    // compound-reduce size. Sizing is driven by survival score.
                     publish_snapshot = true;
                 }
 
@@ -286,16 +280,12 @@ pub fn spawn(
                     state.win_rate =
                         wins as f64 / state.recent_outcomes.len().max(1) as f64 * 100.0;
 
-                    // Reduce size if win rate drops below threshold
-                    if state.win_rate < cfg.min_win_rate && state.recent_outcomes.len() >= 10 {
-                        state.size_multiplier *= 0.8;
-                        warn!(
-                            "orchestrator: win rate {:.1}% < {:.1}%, reducing size",
-                            state.win_rate, cfg.min_win_rate
-                        );
-                    }
+                    // Win rate is NOT used to reduce size — net PnL and ROE matter,
+                    // not win rate. The survival score (already applied above via
+                    // SurvivalUpdated) is the correct lever. Compounding WR-based
+                    // reductions cause the bot to stop trading entirely.
 
-                    // Emergency freeze on big loss
+                    // Emergency freeze on big loss (relative: >30% of equity in one trade)
                     if pnl_usd < -100.0 && cfg.emergency_freeze_enabled {
                         let reason = format!("orchestrator emergency: large loss ${:.2}", pnl_usd);
                         warn!("{}", reason);
