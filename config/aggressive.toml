@@ -28,7 +28,7 @@ timeframes = ["1m", "5m", "15m"]
 mode                = "adaptive"
 active              = ["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]
 min_ta_confidence   = 45
-paper_scout_enabled = true
+paper_scout_enabled = false  # disabled — noise generator
 
 [advanced_alpha]
 enabled                  = false
@@ -75,7 +75,7 @@ min_net_edge_bps          = 0.0
 max_position_notional_pct = 200.0
 assumed_daily_volume_usd  = 1_000_000_000.0
 min_margin_usd            = 6.0
-max_hold_secs             = 900
+max_hold_secs             = 0     # disabled — let SL/TP manage exits
 
 [schedule]
 dead_zone_start_hour_wib = 0

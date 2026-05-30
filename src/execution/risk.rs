@@ -355,20 +355,36 @@ impl RiskManager {
         Ok(())
     }
 
-    /// Calculate qty from equity × risk% as margin target.
-    /// size = (equity × risk_per_trade_pct% × max_leverage) / entry
-    /// Gives consistent margin based on config risk setting.
-    pub fn calculate_size(&self, entry: f64, _stop_loss: f64) -> f64 {
+    /// Calculate qty using risk-based sizing: risk_amount / SL_distance.
+    /// This ensures each trade risks exactly risk_per_trade_pct of equity,
+    /// regardless of stop loss distance. Wide SL = smaller position, tight SL = larger.
+    pub fn calculate_size(&self, entry: f64, stop_loss: f64) -> f64 {
         let i = self.inner.lock();
         if entry <= 0.0 {
             return 0.0;
         }
-        let margin = i.equity * i.limits.risk_per_trade_pct / 100.0;
-        if margin <= 0.0 {
+        let risk_amount = i.equity * i.limits.risk_per_trade_pct / 100.0;
+        if risk_amount <= 0.0 {
             return 0.0;
         }
-        let notional = margin * i.limits.max_leverage as f64;
-        let qty = notional / entry.max(1e-9);
+        let sl_distance = (entry - stop_loss).abs();
+        if sl_distance <= 0.0 {
+            // Fallback: use margin-based sizing if SL is missing
+            let margin = risk_amount;
+            let notional = margin * i.limits.max_leverage as f64;
+            let qty = notional / entry.max(1e-9);
+            let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
+            return qty.min(leverage_cap).max(0.0);
+        }
+        // Risk-based: qty = risk_amount / sl_distance_per_unit
+        let qty = risk_amount / sl_distance;
+        // Enforce min margin floor
+        let margin_usd = qty * entry / i.limits.max_leverage.max(1) as f64;
+        let qty = if margin_usd < i.limits.min_margin_usd && i.limits.min_margin_usd > 0.0 {
+            i.limits.min_margin_usd * i.limits.max_leverage.max(1) as f64 / entry.max(1e-9)
+        } else {
+            qty
+        };
         // Respect leverage cap
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
         qty.min(leverage_cap).max(0.0)
