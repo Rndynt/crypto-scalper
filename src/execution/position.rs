@@ -459,3 +459,321 @@ pub fn pnl_usd(p: &Position, exit_price: f64) -> f64 {
         Side::Short => (p.entry_price - exit_price) * p.size,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    /// Helper: open a fresh PositionBook with one position, return the book.
+    fn book_with(pos: Position) -> PositionBook {
+        let b = PositionBook::new();
+        b.inner.lock().insert(pos.client_id.clone(), pos);
+        b
+    }
+
+    fn base_long() -> Position {
+        Position {
+            client_id: "test-long".into(),
+            symbol: "BTCUSDT".into(),
+            side: Side::Long,
+            entry_price: 100.0,
+            stop_loss: 90.0,   // R = 10
+            take_profit: 120.0,
+            size: 1.0,
+            atr_at_entry: 10.0,
+            opened_at: Utc::now(),
+            strategy: "vwap_scalp".into(),
+            partial_taken: false,
+            breakeven_activated: false,
+            trailing_activated: false,
+            peak_price: 100.0,
+            trough_price: 100.0,
+        }
+    }
+
+    fn base_short() -> Position {
+        Position {
+            client_id: "test-short".into(),
+            symbol: "BTCUSDT".into(),
+            side: Side::Short,
+            entry_price: 100.0,
+            stop_loss: 110.0,  // R = 10
+            take_profit: 80.0,
+            size: 1.0,
+            atr_at_entry: 10.0,
+            opened_at: Utc::now(),
+            strategy: "vwap_scalp".into(),
+            partial_taken: false,
+            breakeven_activated: false,
+            trailing_activated: false,
+            peak_price: 100.0,
+            trough_price: 100.0,
+        }
+    }
+
+    fn cfg_partial_only() -> PositionConfig {
+        PositionConfig {
+            max_hold_secs: 0, // disable time exit
+            partial_tp_enabled: true,
+            partial_tp_r: 1.0,
+            breakeven_r: 0.5,
+            trail_activate_r: 1.5, // high — won't trigger in partial tests
+            trail_atr_mult: 0.5,
+        }
+    }
+
+    // ── Partial TP — Long ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_partial_tp_long_emits_reduce_and_move_sl() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = cfg_partial_only();
+
+        // Price exactly at 1R profit: entry=100, R=10, price=110
+        let actions = book.check_exits("BTCUSDT", 110.0, &cfg);
+
+        // Must have Reduce + MoveSL
+        assert_eq!(actions.len(), 2, "expected Reduce + MoveSL, got: {:?}", actions.len());
+
+        let has_reduce = actions.iter().any(|a| matches!(a, PositionAction::Reduce(_, _, PositionExitReason::PartialTP)));
+        let has_move_sl = actions.iter().any(|a| matches!(a, PositionAction::MoveSL(_, _)));
+        assert!(has_reduce, "Reduce(PartialTP) not emitted");
+        assert!(has_move_sl, "MoveSL not emitted after partial TP");
+    }
+
+    #[test]
+    fn test_partial_tp_long_halves_size_and_sets_sl_to_entry() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = cfg_partial_only();
+
+        let actions = book.check_exits("BTCUSDT", 110.0, &cfg);
+
+        // Reduce action should have size 0.5 (half of 1.0)
+        for a in &actions {
+            if let PositionAction::Reduce(p, reduce_size, _) = a {
+                assert!((reduce_size - 0.5).abs() < 1e-9, "reduce_size should be 0.5, got {}", reduce_size);
+                assert!((p.size - 0.5).abs() < 1e-9, "snapshot size should be 0.5, got {}", p.size);
+            }
+            if let PositionAction::MoveSL(p, new_sl) = a {
+                // SL should be moved to entry price (100.0)
+                assert!((new_sl - 100.0).abs() < 1e-9, "new SL should be entry 100.0, got {}", new_sl);
+                let _ = p;
+            }
+        }
+
+        // Book should still have the position with half size
+        let book_inner = book.inner.lock();
+        let remaining = book_inner.get("test-long").expect("position should still be in book");
+        assert!((remaining.size - 0.5).abs() < 1e-9, "remaining size should be 0.5, got {}", remaining.size);
+        assert!((remaining.stop_loss - 100.0).abs() < 1e-9, "SL should be moved to entry");
+        assert!(remaining.partial_taken, "partial_taken flag should be set");
+    }
+
+    #[test]
+    fn test_partial_tp_long_not_triggered_below_1r() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = cfg_partial_only();
+
+        // Price at 0.9R — should NOT trigger partial TP
+        let actions = book.check_exits("BTCUSDT", 109.0, &cfg);
+        let has_reduce = actions.iter().any(|a| matches!(a, PositionAction::Reduce(_, _, _)));
+        assert!(!has_reduce, "Reduce should not fire at 0.9R profit");
+    }
+
+    // ── Partial TP — Short ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_partial_tp_short_emits_reduce_and_move_sl() {
+        let pos = base_short();
+        let book = book_with(pos);
+        let cfg = cfg_partial_only();
+
+        // Price at 1R profit: entry=100, R=10, price=90
+        let actions = book.check_exits("BTCUSDT", 90.0, &cfg);
+
+        let has_reduce = actions.iter().any(|a| matches!(a, PositionAction::Reduce(_, _, PositionExitReason::PartialTP)));
+        let has_move_sl = actions.iter().any(|a| matches!(a, PositionAction::MoveSL(_, _)));
+        assert!(has_reduce, "Reduce(PartialTP) not emitted for short");
+        assert!(has_move_sl, "MoveSL not emitted after short partial TP");
+    }
+
+    #[test]
+    fn test_partial_tp_short_sl_moves_to_entry() {
+        let pos = base_short();
+        let book = book_with(pos);
+        let cfg = cfg_partial_only();
+
+        let actions = book.check_exits("BTCUSDT", 90.0, &cfg);
+        for a in &actions {
+            if let PositionAction::MoveSL(_, new_sl) = a {
+                assert!((new_sl - 100.0).abs() < 1e-9, "short SL should move to entry 100.0, got {}", new_sl);
+            }
+        }
+    }
+
+    // ── Breakeven — Long ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_breakeven_long_moves_sl_at_0_5r() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = PositionConfig {
+            max_hold_secs: 0,
+            partial_tp_enabled: false, // disable partial TP so only breakeven fires
+            partial_tp_r: 1.0,
+            breakeven_r: 0.5,
+            trail_activate_r: 1.5,
+            trail_atr_mult: 0.5,
+        };
+
+        // Price at 0.5R: entry=100, R=10, price=105
+        let actions = book.check_exits("BTCUSDT", 105.0, &cfg);
+
+        let move_sl = actions.iter().find(|a| matches!(a, PositionAction::MoveSL(_, _)));
+        assert!(move_sl.is_some(), "MoveSL should fire at breakeven (0.5R)");
+
+        if let Some(PositionAction::MoveSL(_, new_sl)) = move_sl {
+            assert!((new_sl - 100.0).abs() < 1e-9, "breakeven SL should be entry 100.0, got {}", new_sl);
+        }
+    }
+
+    #[test]
+    fn test_breakeven_does_not_fire_twice() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = PositionConfig {
+            max_hold_secs: 0,
+            partial_tp_enabled: false,
+            partial_tp_r: 1.0,
+            breakeven_r: 0.5,
+            trail_activate_r: 1.5,
+            trail_atr_mult: 0.5,
+        };
+
+        // First call at 0.5R — should set breakeven
+        let _ = book.check_exits("BTCUSDT", 105.0, &cfg);
+        // Second call at same price — breakeven_activated is set, should not emit MoveSL again
+        let actions2 = book.check_exits("BTCUSDT", 105.0, &cfg);
+        let move_count = actions2.iter().filter(|a| matches!(a, PositionAction::MoveSL(_, _))).count();
+        assert_eq!(move_count, 0, "MoveSL should not fire a second time after breakeven_activated=true");
+    }
+
+    // ── MoveSL — trailing ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_trailing_stop_activates_and_moves_sl() {
+        // Use high breakeven_r (1.5) so breakeven does NOT trigger at 1R,
+        // keeping R = 10 (stop_loss=90, entry=100) so the trailing logic
+        // can compute trail_stop = price - atr*mult = 110 - 5 = 105.
+        let pos = base_long(); // stop_loss=90, entry=100 → R=10
+        let book = book_with(pos);
+        let cfg = PositionConfig {
+            max_hold_secs: 0,
+            partial_tp_enabled: false,
+            partial_tp_r: 1.0,
+            breakeven_r: 1.5,       // high — won't fire at 1R
+            trail_activate_r: 1.0,  // activate at 1R
+            trail_atr_mult: 0.5,
+        };
+
+        // Price at exactly 1R: entry=100, R=10, price=110
+        // trail_dist = atr_at_entry(10) * 0.5 = 5; trail_stop = 110 - 5 = 105
+        // trail_stop (105) > stop_loss (90) → MoveSL fires
+        let actions = book.check_exits("BTCUSDT", 110.0, &cfg);
+        let move_sl = actions.iter().find(|a| {
+            if let PositionAction::MoveSL(_, sl) = a { *sl > 100.0 } else { false }
+        });
+        assert!(move_sl.is_some(), "trailing MoveSL should fire at 1R profit");
+
+        if let Some(PositionAction::MoveSL(_, new_sl)) = move_sl {
+            assert!((new_sl - 105.0).abs() < 1e-9, "trailing SL should be 105.0, got {}", new_sl);
+        }
+    }
+
+    #[test]
+    fn test_trailing_stop_not_triggered_below_activate_r() {
+        let pos = base_long(); // stop_loss=90, entry=100 → R=10
+        let book = book_with(pos);
+        let cfg = PositionConfig {
+            max_hold_secs: 0,
+            partial_tp_enabled: false,
+            partial_tp_r: 1.0,
+            breakeven_r: 1.5,       // high — won't fire at 0.9R
+            trail_activate_r: 1.0,  // needs full 1R to activate
+            trail_atr_mult: 0.5,
+        };
+
+        // Price at 0.9R (109) — trailing should NOT activate
+        let actions = book.check_exits("BTCUSDT", 109.0, &cfg);
+        // Only a breakeven/trailing MoveSL above entry would count; there should be none
+        let has_trailing = actions.iter().any(|a| {
+            if let PositionAction::MoveSL(_, sl) = a { *sl > 90.0 } else { false }
+        });
+        assert!(!has_trailing, "trailing should not fire below trail_activate_r");
+    }
+
+    // ── Hard SL/TP ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_hard_stop_loss_long() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = PositionConfig { max_hold_secs: 0, ..Default::default() };
+
+        // Price at or below SL (90.0) → Close(StopLoss)
+        let actions = book.check_exits("BTCUSDT", 90.0, &cfg);
+        let closed = actions.iter().any(|a| matches!(a, PositionAction::Close(_, PositionExitReason::StopLoss)));
+        assert!(closed, "hard SL should close the long position");
+    }
+
+    #[test]
+    fn test_hard_take_profit_long() {
+        let pos = base_long();
+        let book = book_with(pos);
+        let cfg = PositionConfig { max_hold_secs: 0, ..Default::default() };
+
+        // Price at or above TP (120.0) → Close(TakeProfit)
+        let actions = book.check_exits("BTCUSDT", 120.0, &cfg);
+        let tped = actions.iter().any(|a| matches!(a, PositionAction::Close(_, PositionExitReason::TakeProfit)));
+        assert!(tped, "hard TP should close the long position");
+    }
+
+    #[test]
+    fn test_hard_stop_loss_short() {
+        let pos = base_short();
+        let book = book_with(pos);
+        let cfg = PositionConfig { max_hold_secs: 0, ..Default::default() };
+
+        // Price at or above SL (110.0) → Close(StopLoss)
+        let actions = book.check_exits("BTCUSDT", 110.0, &cfg);
+        let closed = actions.iter().any(|a| matches!(a, PositionAction::Close(_, PositionExitReason::StopLoss)));
+        assert!(closed, "hard SL should close the short position");
+    }
+
+    // ── pnl_usd helper ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_pnl_usd_long_profit() {
+        let pos = base_long();
+        let pnl = pnl_usd(&pos, 110.0);
+        assert!((pnl - 10.0).abs() < 1e-9, "expected pnl=10.0, got {}", pnl);
+    }
+
+    #[test]
+    fn test_pnl_usd_long_loss() {
+        let pos = base_long();
+        let pnl = pnl_usd(&pos, 95.0);
+        assert!((pnl - (-5.0)).abs() < 1e-9, "expected pnl=-5.0, got {}", pnl);
+    }
+
+    #[test]
+    fn test_pnl_usd_short_profit() {
+        let pos = base_short();
+        let pnl = pnl_usd(&pos, 90.0);
+        assert!((pnl - 10.0).abs() < 1e-9, "expected pnl=10.0, got {}", pnl);
+    }
+}

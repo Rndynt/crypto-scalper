@@ -209,13 +209,25 @@ pub fn spawn(
                         if let Some(htf) = htf_states.get_mut(&symbol) {
                             htf.on_closed(candle);
                             let bias = compute_htf_bias(htf);
+                            let prev_bias = screening_bias.get(&symbol).copied();
                             screening_bias.insert(symbol.clone(), bias);
-                            info!(
-                                symbol = %symbol,
-                                bias = %bias.as_str(),
-                                candles = htf.candles.len(),
-                                "📡 15m screening bias updated"
-                            );
+                            // Only log when bias actually changes — avoids spam every 15m
+                            if prev_bias != Some(bias) {
+                                info!(
+                                    symbol = %symbol,
+                                    bias = %bias.as_str(),
+                                    prev = %prev_bias.map(|b| b.as_str()).unwrap_or("none"),
+                                    candles = htf.candles.len(),
+                                    "📡 15m bias changed"
+                                );
+                            } else {
+                                debug!(
+                                    symbol = %symbol,
+                                    bias = %bias.as_str(),
+                                    candles = htf.candles.len(),
+                                    "📡 15m bias unchanged"
+                                );
+                            }
                             bus.publish(AgentEvent::ScreeningUpdated {
                                 symbol: symbol.clone(),
                                 bias,
@@ -294,14 +306,15 @@ pub fn spawn(
                         let regime = RegimeDetector::detect(state);
                         let chosen = select_strategies(&active, regime);
 
-                        info!(
+                        // Per-candle evaluation — debug only to avoid log spam
+                        debug!(
                             symbol = %symbol,
                             regime = %regime.as_str(),
                             candles = state.candles.len(),
                             strategies = ?chosen,
                             screening_bias = %current_bias.as_str(),
                             ema200_ready = state.ema_200.value().is_some(),
-                            "🔍 screening"
+                            "🔍 eval"
                         );
 
                         let mut best: Option<PreSignal> = None;

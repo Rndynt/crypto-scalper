@@ -14,7 +14,7 @@ use parking_lot::Mutex as PlMutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Default, Clone, Copy)]
 struct PriceSnapshot {
@@ -331,7 +331,7 @@ pub fn spawn(
                         reason: e.reason.clone(),
                         best,
                     });
-                    info!(
+                    debug!(
                         symbol = %e.symbol,
                         timeframe = %format!("{}m", e.timeframe_secs / 60),
                         regime = %regime,

@@ -312,13 +312,13 @@ mod tests {
 
     fn make_candle(close: f64, high: f64, low: f64, volume: f64) -> Candle {
         Candle {
-            open_time: Utc::now().timestamp_millis(),
+            open_time: Utc::now(),
             open: close,
             high,
             low,
             close,
             volume,
-            close_time: Utc::now().timestamp_millis(),
+            close_time: Utc::now(),
         }
     }
 

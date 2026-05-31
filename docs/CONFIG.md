@@ -59,6 +59,17 @@ and `ws_base_url` to `wss://stream.binancefuture.com/stream`.
 | `active` | `["mean_reversion", "ema_ribbon", "momentum", "vwap_scalp", "squeeze"]` | Active strategy set |
 | `min_ta_confidence` | `65` | Minimum TA confidence to proceed past `RiskAgent` |
 
+**Available strategies** (use these names in `active`):
+
+| Name | Aliases (also accepted) | Description |
+|---|---|---|
+| `order_flow` | `ema_ribbon` | Order-flow imbalance + OFI momentum |
+| `trade_flow` | `momentum` | Signed trade-flow momentum |
+| `kalman_trend` | `vwap_scalp` | Kalman-filtered trend with VWAP context |
+| `microstructure_reversion` | `mean_reversion` | Mean reversion via microstructure |
+| `squeeze` | — | Volatility squeeze breakout |
+| `screened_vwap_scalp` | — | VWAP pullback scalp gated by multi-indicator screening (requires `[screening] enabled = true`) |
+
 Strategy code lives in `src/strategy/`. To remove a strategy, drop it
 from `active`.
 
@@ -81,6 +92,8 @@ returns `GO`, `NO_GO`, or `WAIT`.
 | `min_confidence` | `70` | Floor that the LLM's confidence must clear |
 | `fallback_ta_threshold` | `75` | When LLM is offline, TA-only mode requires this confidence |
 | `max_tokens` | `1024` | Response cap |
+| `entry_path_enabled` | `false` | When `true`, require LLM approval on the entry path (adds ~1 extra LLM round-trip per candidate) |
+| `max_entry_latency_ms` | `300` | Max total latency budget (ms) from signal to execution; signals older than this are discarded |
 
 Env-var resolution:
 
@@ -111,6 +124,8 @@ auto-approved. See [docs/ARCHITECTURE.md](ARCHITECTURE.md) §3.6.
 | `fast_approve_min_conf` | `90` | skip the manager LLM call when brain conf ≥ this AND no lessons matched AND survival is Healthy |
 | `http_referer` | repo URL | analytics |
 | `http_app_title` | `"ARIA TraderManager"` | analytics |
+
+| `max_entry_latency_ms` | `500` | Max total latency budget (ms) that the manager may add to the entry pipeline |
 
 Env var: `MANAGER_API_KEY` (falls back to the brain LLM key if unset).
 
@@ -168,6 +183,38 @@ context to block adverse candidates or reduce their TA confidence before
 the risk/LLM pipeline. Missing or stale feed snapshots are treated as no-op
 so the gate does not trade on stale external context. It does not directly
 size orders.
+
+---
+
+## `[screening]` — multi-indicator market screening
+
+Pre-screens each symbol before `screened_vwap_scalp` is evaluated.
+A symbol must pass a majority vote across several indicators to be
+tradeable. Disabled by default — opt-in with `enabled = true` in your
+overlay.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Master switch. When disabled, all symbols pass |
+| `min_vote_fraction` | `0.6` | Fraction (0.0–1.0) of indicators that must agree to allow a trade |
+| `ema_fast` | `9` | Period for fast EMA |
+| `ema_slow` | `21` | Period for slow EMA |
+| `adx_period` | `14` | ADX calculation period |
+| `adx_min_trend` | `20.0` | ADX floor; below this, trend is considered weak |
+| `rsi_period` | `14` | RSI calculation period |
+| `rsi_overbought` | `70.0` | RSI level above which longs are blocked |
+| `rsi_oversold` | `30.0` | RSI level below which shorts are blocked |
+| `volume_ma_period` | `20` | SMA period for volume baseline |
+| `volume_spike_factor` | `1.5` | Required ratio of current volume to its SMA |
+| `atr_period` | `14` | ATR calculation period |
+| `spread_max_atr_fraction` | `0.1` | Max allowed spread as a fraction of ATR |
+
+The vote count is the number of indicators that agree with the
+proposed direction (bullish / bearish). If `votes / total_indicators ≥
+min_vote_fraction`, the symbol is allowed. The screening result is
+published as `AgentEvent::ScreeningUpdated` with a `ScreeningBias`
+(`Bullish` / `Bearish` / `Neutral`) that the `SignalAgent` uses to
+gate `screened_vwap_scalp` signals.
 
 ---
 
@@ -352,3 +399,56 @@ enabled = false
 [survival]
 enabled = false             # turn off survival in pure-strategy testing
 ```
+
+---
+
+### Paper-fast — TA-only, no LLM, fastest iteration (`config/paper-fast.toml`)
+
+Zero-latency paper mode: every signal flows straight to paper execution
+with no LLM calls. Use when you want to validate indicator logic at full speed.
+
+```toml
+ARIA_CONFIG_OVERLAY=config/paper-fast.toml ./target/debug/aria
+```
+
+Key settings:
+- `[llm] enabled = false` + `fail_closed_without_llm = false` — TA signals
+  proceed even without LLM
+- `[manager] enabled = false`
+- `[screening] enabled = false`
+- Max 3 open positions, 1% risk/trade
+
+---
+
+### Paper-AI-reviewed — full LLM + screening (`config/paper-ai-reviewed.toml`)
+
+Paper mode with complete LLM pipeline + screening enabled. Use to validate
+LLM quality and `screened_vwap_scalp` behavior before going live.
+
+```toml
+ARIA_CONFIG_OVERLAY=config/paper-ai-reviewed.toml ./target/debug/aria
+```
+
+Key settings:
+- `[llm] enabled = true` + `entry_path_enabled = true`
+- `[manager] enabled = true`
+- `[screening] enabled = true, min_vote_fraction = 0.6`
+
+---
+
+### Live-safe — conservative live mode (`config/live-safe.toml`)
+
+Live trading with tight risk caps, full LLM gating, and screening.
+`fail_closed_without_llm = true` means the bot will not trade if the LLM
+is unreachable — **no silent TA-only fallback**.
+
+```toml
+ARIA_CONFIG_OVERLAY=config/live-safe.toml ./target/release/aria
+```
+
+Key settings:
+- `[mode] run_mode = "live"` (requires `BINANCE_API_KEY` + `BINANCE_API_SECRET`)
+- `[llm] min_confidence = 70, fail_closed_without_llm = true`
+- `[risk] max_open_positions = 2, max_risk_per_trade = 0.005` (0.5% per trade)
+- `[screening] enabled = true, min_vote_fraction = 0.65`
+- Survival halt at 8% drawdown from peak
