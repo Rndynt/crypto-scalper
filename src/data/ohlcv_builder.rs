@@ -42,6 +42,10 @@ impl OhlcvBuilder {
     /// Ingest a trade. If a bucket boundary is crossed, returns the finalized
     /// candle of the previous bucket.
     pub fn ingest(&mut self, t: Trade) -> Option<Candle> {
+        if !t.price.is_finite() || t.price <= 0.0 || !t.qty.is_finite() || t.qty < 0.0 {
+            return None;
+        }
+
         let bucket = self.bucket_for(t.ts);
         let mut finalized = None;
 
@@ -78,12 +82,25 @@ impl OhlcvBuilder {
     }
 
     fn finalize(&self, bucket_start: DateTime<Utc>) -> Candle {
+        let mut high = self.high;
+        let mut low = self.low;
+        // Self-heal any legacy/corrupted in-progress builder state so one bad
+        // zero low cannot poison indicators and stall all signal generation.
+        if !low.is_finite() || low <= 0.0 {
+            low = self.open.min(self.close);
+        }
+        if !high.is_finite() || high <= 0.0 {
+            high = self.open.max(self.close);
+        }
+        high = high.max(self.open).max(self.close);
+        low = low.min(self.open).min(self.close);
+
         Candle {
             open_time: bucket_start,
             close_time: bucket_start + chrono::Duration::seconds(self.interval_secs),
             open: self.open,
-            high: self.high,
-            low: self.low,
+            high,
+            low,
             close: self.close,
             volume: self.volume,
         }
@@ -120,5 +137,15 @@ mod tests {
         assert_eq!(c.low, 99.5);
         assert_eq!(c.close, 99.5);
         approx::assert_abs_diff_eq!(c.volume, 1.7, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn ignores_invalid_trade_prices() {
+        let mut b = OhlcvBuilder::new(60);
+        assert!(b.ingest(trade(0, 100.0, 1.0)).is_none());
+        assert!(b.ingest(trade(10, 0.0, 1.0)).is_none());
+        let c = b.ingest(trade(60, 101.0, 1.0)).expect("finalize");
+        assert_eq!(c.low, 100.0);
+        assert!(c.low > 0.0);
     }
 }

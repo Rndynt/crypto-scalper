@@ -31,7 +31,11 @@ impl Vpin {
         self.current_sell += sell_volume.max(0.0);
         let total = self.current_buy + self.current_sell;
         if total < self.bucket_size {
-            return self.value();
+            // Do not re-emit the previous VPIN value on every trade.  The signal
+            // agent only needs a fresh value when a volume bucket closes; emitting
+            // stale values here made percentile history fill with duplicates and
+            // produced noisy repeated abnormal alerts.
+            return None;
         }
         let imbalance = (self.current_buy - self.current_sell).abs() / total.max(1e-9);
         self.buckets.push_back(imbalance);
@@ -40,18 +44,16 @@ impl Vpin {
         }
         self.current_buy = 0.0;
         self.current_sell = 0.0;
-        self.value()
+        let raw = self.value()?;
+        self.record_value(raw);
+        Some(raw)
     }
 
     pub fn value(&self) -> Option<f64> {
         if self.buckets.len() < self.window {
             return None;
         }
-        let raw = self.buckets.iter().sum::<f64>() / self.buckets.len() as f64;
-        // Record in history
-        // Note: we can't mutate in value() since it takes &self
-        // History recording happens in the signal agent instead
-        Some(raw)
+        Some(self.buckets.iter().sum::<f64>() / self.buckets.len() as f64)
     }
 
     /// Record a VPIN value into history for percentile calculation.
@@ -77,9 +79,8 @@ impl Vpin {
 
     /// Check if VPIN is abnormally high (above 95th percentile).
     /// Returns (is_abnormal, raw_value, threshold).
-    pub fn is_abnormal(&mut self) -> Option<(bool, f64, f64)> {
+    pub fn is_abnormal(&self) -> Option<(bool, f64, f64)> {
         let raw = self.value()?;
-        self.record_value(raw);
         match self.adaptive_threshold() {
             Some(thresh) => Some((raw > thresh, raw, thresh)),
             None => None, // Not enough history yet — don't flag
@@ -101,8 +102,16 @@ mod tests {
 
     #[test]
     fn adaptive_threshold_requires_history() {
-        let mut vpin = Vpin::new(10.0, 2);
+        let vpin = Vpin::new(10.0, 2);
         // Not enough history
         assert!(vpin.adaptive_threshold().is_none());
+    }
+
+    #[test]
+    fn does_not_reemit_stale_value_between_bucket_closes() {
+        let mut vpin = Vpin::new(10.0, 2);
+        assert!(vpin.update(10.0, 0.0).is_none());
+        assert!(vpin.update(10.0, 0.0).is_some());
+        assert!(vpin.update(1.0, 0.0).is_none());
     }
 }

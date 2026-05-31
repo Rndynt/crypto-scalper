@@ -151,21 +151,20 @@ pub fn spawn(
                         .or_insert_with(|| Vpin::new(vpin_bucket_size_for(&symbol), 50));
                     let vpin_value = vpin_tracker.update(buy_vol, sell_vol);
                     if let Some(vpin) = vpin_value {
-                        let abnormal = vpin_tracker
-                            .is_abnormal()
+                        let abnormal_check = vpin_tracker.is_abnormal();
+                        let abnormal = abnormal_check
                             .map(|(is_ab, _raw, _thresh)| is_ab)
                             .unwrap_or(false);
-                        if let Ok(mut states_guard) = states.try_lock() {
-                            if let Some(state) = states_guard.get_mut(&symbol) {
-                                let was_abnormal = state.vpin_abnormal;
-                                if abnormal && !was_abnormal {
-                                    if let Some((_, raw, thresh)) = vpin_tracker.is_abnormal() {
-                                        warn!(symbol=%symbol, vpin=raw, threshold=thresh, "VPIN ABNORMAL — above 95th percentile");
-                                    }
+                        let mut states_guard = states.lock().await;
+                        if let Some(state) = states_guard.get_mut(&symbol) {
+                            let was_abnormal = state.vpin_abnormal;
+                            if abnormal && !was_abnormal {
+                                if let Some((_, raw, thresh)) = abnormal_check {
+                                    warn!(symbol=%symbol, vpin=raw, threshold=thresh, "VPIN ABNORMAL — above 95th percentile");
                                 }
-                                state.last_vpin = Some(vpin);
-                                state.vpin_abnormal = abnormal;
                             }
+                            state.last_vpin = Some(vpin);
+                            state.vpin_abnormal = abnormal;
                         }
                     }
                 }
@@ -718,7 +717,10 @@ fn apply_mtf_context(
         score += if aligned { 2 } else { -3 };
     }
     if score < 0 {
-        signal.ta_confidence = signal.ta_confidence.saturating_sub((-score * 4) as u8);
+        // The 15m screening bias is already a hard side gate above.  Keep this
+        // MTF adjustment as a nudge, not a second hard block that drags otherwise
+        // valid scalps below the risk TA floor for several candles.
+        signal.ta_confidence = signal.ta_confidence.saturating_sub((-score * 2) as u8);
         signal.reason = format!(
             "{} | MTF-contradict(score={}, htf={})",
             signal.reason,
