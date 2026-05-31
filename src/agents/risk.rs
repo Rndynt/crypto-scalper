@@ -561,6 +561,11 @@ pub fn spawn(
                         info!(symbol = %symbol, "risk: released pending lock after execution failure");
                     }
                 }
+                AgentEvent::RiskReservationReleased { symbol, reason } => {
+                    if pending_symbols.lock().remove(&symbol) {
+                        info!(symbol = %symbol, reason = %reason, "risk: released pending lock after downstream rejection");
+                    }
+                }
                 _ => {}
             }
         }

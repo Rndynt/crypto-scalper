@@ -73,6 +73,11 @@ pub fn spawn(
                                     cooldown_ms = LLM_COOLDOWN_SECS * 1000,
                                     "brain: LLM cooldown active — skipping"
                                 );
+                                release_risk_reservation(
+                                    &bus,
+                                    &symbol,
+                                    "brain LLM cooldown active",
+                                );
                                 continue;
                             }
                         }
@@ -85,7 +90,14 @@ pub fn spawn(
                         let states = states.lock().await;
                         match states.get(&symbol) {
                             Some(s) => ContextBuilder::build(s, regime, &signal, external),
-                            None => continue,
+                            None => {
+                                release_risk_reservation(
+                                    &bus,
+                                    &symbol,
+                                    "brain missing symbol state",
+                                );
+                                continue;
+                            }
                         }
                     };
                     ctx.historical_summary = policy.historical_summary(
@@ -124,6 +136,11 @@ pub fn spawn(
                         Ok(o) => o,
                         Err(e) => {
                             warn!(error = %e, fail_closed = fail_closed_without_llm, "brain agent: LLM call failed");
+                            release_risk_reservation(
+                                &bus,
+                                &symbol,
+                                format!("brain LLM call failed: {e}"),
+                            );
                             continue;
                         }
                     };
@@ -164,6 +181,11 @@ pub fn spawn(
                             side = %signal.side.as_str(),
                             "brain: REJECTED — LLM-adjusted SL/TP geometry invalid"
                         );
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            "brain rejected: invalid LLM SL/TP geometry",
+                        );
                         continue;
                     }
 
@@ -181,6 +203,11 @@ pub fn spawn(
                             rr = %format!("{:.2}", rr),
                             "brain: REJECTED — LLM-adjusted SL/TP gives R:R < 0.8"
                         );
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            format!("brain rejected: R:R {rr:.2} < 0.8"),
+                        );
                         continue;
                     }
 
@@ -196,6 +223,11 @@ pub fn spawn(
                     // BLOCK TA-only fallback if fail_closed_without_llm is set.
                     if llm_out.offline_fallback && fail_closed_without_llm {
                         warn!(symbol = %symbol, "brain: BLOCKED — LLM unavailable, fail_closed=true");
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            "brain blocked: LLM unavailable with fail_closed=true",
+                        );
                         continue;
                     }
 
@@ -216,6 +248,11 @@ pub fn spawn(
                                     side = ?signal.side,
                                     "brain: BLOCKED — trade against regime trend"
                                 );
+                                release_risk_reservation(
+                                    &bus,
+                                    &symbol,
+                                    "brain blocked: trade against regime trend",
+                                );
                                 continue;
                             }
                         }
@@ -234,6 +271,14 @@ pub fn spawn(
                             conf_floor = live_conf_floor,
                             "brain: REJECTED — confidence below calibrated floor"
                         );
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            format!(
+                                "brain rejected: confidence {} < {}",
+                                llm_out.decision.confidence, live_conf_floor
+                            ),
+                        );
                         continue;
                     }
 
@@ -245,6 +290,11 @@ pub fn spawn(
                             symbol = %symbol,
                             decision = ?final_decision.decision,
                             "brain: REJECTED — not Go"
+                        );
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            format!("brain rejected: {:?}", final_decision.decision),
                         );
                         continue;
                     }
@@ -263,4 +313,11 @@ pub fn spawn(
             }
         }
     })
+}
+
+fn release_risk_reservation(bus: &MessageBus, symbol: &str, reason: impl Into<String>) {
+    bus.publish(AgentEvent::RiskReservationReleased {
+        symbol: symbol.to_string(),
+        reason: reason.into(),
+    });
 }
