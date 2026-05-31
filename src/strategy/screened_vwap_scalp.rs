@@ -54,9 +54,9 @@ impl Strategy for ScreenedVwapScalp {
         let long_ofi_ok = ofi >= -0.2;
 
         if long_pullback && long_recovery && long_ofi_ok {
-            let stop_dist = atr * 1.2;
-            let stop_loss = low - stop_dist * 0.5;
-            let stop_loss = stop_loss.min(close - atr * 0.8);
+            // Use low as SL anchor, but guard against low=0.0 (data not yet filled)
+            let low_anchor = if low > 0.0 { low } else { close - atr };
+            let stop_loss = (low_anchor - atr * 0.5).min(close - atr * 0.8);
             if stop_loss >= close {
                 return None;
             }
@@ -64,7 +64,8 @@ impl Strategy for ScreenedVwapScalp {
             if risk <= 0.0 {
                 return None;
             }
-            let take_profit = close + risk * 1.3;
+            // R:R = 2.0 → passes min_reward_risk = 1.5 gate
+            let take_profit = close + risk * 2.0;
 
             // Confidence: base 62, bonus for OFI confirmation
             let mut confidence: u8 = 62;
@@ -110,7 +111,8 @@ impl Strategy for ScreenedVwapScalp {
             if risk <= 0.0 {
                 return None;
             }
-            let take_profit = close - risk * 1.3;
+            // R:R = 2.0 → passes min_reward_risk = 1.5 gate
+            let take_profit = close - risk * 2.0;
 
             let mut confidence: u8 = 62;
             if ofi < -0.3 {
