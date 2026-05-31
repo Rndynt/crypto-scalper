@@ -32,8 +32,8 @@ impl Strategy for Squeeze {
             (
                 Side::Long,
                 format!("Squeeze expand up, ROC {roc:.2}%"),
-                c.close - atr,         // 1× ATR SL
-                c.close + atr * 2.0,   // 2× ATR TP (1:2 R:R)
+                c.close - atr,       // 1× ATR SL
+                c.close + atr * 2.0, // 2× ATR TP (1:2 R:R)
             )
         } else if roc < -0.1 && c.close < bb.mid {
             (
