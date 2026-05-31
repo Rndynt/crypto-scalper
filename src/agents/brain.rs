@@ -162,10 +162,58 @@ pub fn spawn(
                     let mut adjusted_risk = risk.clone();
                     adjusted_risk.size = adjusted_size;
 
+                    let final_decision = llm_out.decision.clone();
+
+                    info!(
+                        symbol = %symbol,
+                        decision = ?final_decision.decision,
+                        confidence = final_decision.confidence,
+                        offline_fallback = llm_out.offline_fallback,
+                        reason = %final_decision.reasoning.summary,
+                        "brain: decision"
+                    );
+
+                    // BLOCK TA-only fallback if fail_closed_without_llm is set.
+                    if llm_out.offline_fallback && fail_closed_without_llm {
+                        warn!(symbol = %symbol, "brain: BLOCKED — LLM unavailable, fail_closed=true");
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            "brain blocked: LLM unavailable with fail_closed=true",
+                        );
+                        continue;
+                    }
+
+                    // Publish every real LLM decision, including NoGo/Wait, so status
+                    // counters and /signals do not stay stuck on the last GO while the
+                    // brain is actively rejecting new candidates. Manager/execution
+                    // already ignore non-GO outcomes.
+                    if final_decision.decision != Decision::Go {
+                        bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
+                            signal: Box::new(signal),
+                            regime,
+                            risk: adjusted_risk,
+                            decision: final_decision.clone(),
+                            latency_ms: llm_out.latency_ms,
+                            offline_fallback: llm_out.offline_fallback,
+                        }));
+                        info!(
+                            symbol = %symbol,
+                            decision = ?final_decision.decision,
+                            "brain: REJECTED — not Go"
+                        );
+                        release_risk_reservation(
+                            &bus,
+                            &symbol,
+                            format!("brain rejected: {:?}", final_decision.decision),
+                        );
+                        continue;
+                    }
+
                     // Use LLM-adjusted SL/TP — brain sets exact levels
-                    let final_sl = llm_out.decision.sl_adjustment.unwrap_or(signal.stop_loss);
-                    let final_tp = llm_out.decision.tp_adjustment.unwrap_or(signal.take_profit);
-                    let final_entry = llm_out.decision.entry_price.unwrap_or(signal.entry);
+                    let final_sl = final_decision.sl_adjustment.unwrap_or(signal.stop_loss);
+                    let final_tp = final_decision.tp_adjustment.unwrap_or(signal.take_profit);
+                    let final_entry = final_decision.entry_price.unwrap_or(signal.entry);
 
                     // Validate LLM-adjusted SL/TP geometry — reject if wrong side of entry
                     let geometry_ok = match signal.side {
@@ -207,26 +255,6 @@ pub fn spawn(
                             &bus,
                             &symbol,
                             format!("brain rejected: R:R {rr:.2} < 0.8"),
-                        );
-                        continue;
-                    }
-
-                    info!(
-                        symbol = %symbol,
-                        decision = ?llm_out.decision.decision,
-                        confidence = llm_out.decision.confidence,
-                        offline_fallback = llm_out.offline_fallback,
-                        reason = %llm_out.decision.reasoning.summary,
-                        "brain: decision"
-                    );
-
-                    // BLOCK TA-only fallback if fail_closed_without_llm is set.
-                    if llm_out.offline_fallback && fail_closed_without_llm {
-                        warn!(symbol = %symbol, "brain: BLOCKED — LLM unavailable, fail_closed=true");
-                        release_risk_reservation(
-                            &bus,
-                            &symbol,
-                            "brain blocked: LLM unavailable with fail_closed=true",
                         );
                         continue;
                     }
@@ -278,23 +306,6 @@ pub fn spawn(
                                 "brain rejected: confidence {} < {}",
                                 llm_out.decision.confidence, live_conf_floor
                             ),
-                        );
-                        continue;
-                    }
-
-                    let final_decision = llm_out.decision.clone();
-
-                    // REJECT if not Go
-                    if final_decision.decision != Decision::Go {
-                        info!(
-                            symbol = %symbol,
-                            decision = ?final_decision.decision,
-                            "brain: REJECTED — not Go"
-                        );
-                        release_risk_reservation(
-                            &bus,
-                            &symbol,
-                            format!("brain rejected: {:?}", final_decision.decision),
                         );
                         continue;
                     }
