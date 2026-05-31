@@ -201,6 +201,29 @@ pub fn spawn(
                     timeframe_secs,
                     candle,
                 } => {
+                    if !is_valid_closed_candle(&candle) {
+                        warn!(
+                            symbol = %symbol,
+                            timeframe_secs,
+                            open = candle.open,
+                            high = candle.high,
+                            low = candle.low,
+                            close = candle.close,
+                            "signal: dropping malformed candle before indicator/strategy update"
+                        );
+                        bus.publish(AgentEvent::SignalEvaluation(SignalEvaluationMsg {
+                            symbol,
+                            timeframe_secs,
+                            regime: None,
+                            candles: 0,
+                            strategies: Vec::new(),
+                            reason: "malformed_candle_ohlc".to_string(),
+                            best_strategy: None,
+                            best_confidence: None,
+                        }));
+                        continue;
+                    }
+
                     // ── HTF screening update (P0-2/P0-3) ──────────────────────────
                     // When a 15m (screening) candle closes, update the HTF state and
                     // recompute the ScreeningBias for this symbol. Publish the bias
@@ -749,6 +772,19 @@ fn no_signal_reason(
         (Some(s), None) => format!("no_signal({})", s.as_str()),
         _ => "no_candidate".into(),
     }
+}
+
+fn is_valid_closed_candle(candle: &crate::data::Candle) -> bool {
+    let prices = [candle.open, candle.high, candle.low, candle.close];
+    if prices.iter().any(|p| !p.is_finite() || *p <= 0.0) {
+        return false;
+    }
+
+    candle.high >= candle.low
+        && candle.open >= candle.low
+        && candle.open <= candle.high
+        && candle.close >= candle.low
+        && candle.close <= candle.high
 }
 
 fn in_dead_zone(schedule: &Schedule) -> bool {

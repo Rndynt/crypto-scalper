@@ -14,6 +14,16 @@ use crate::strategy::state::{PreSignal, StrategyName, SymbolState};
 
 pub struct ScreenedVwapScalp;
 
+fn valid_ohlc(c: &Candle) -> bool {
+    let prices = [c.open, c.high, c.low, c.close];
+    prices.iter().all(|p| p.is_finite() && *p > 0.0)
+        && c.high >= c.low
+        && c.open >= c.low
+        && c.open <= c.high
+        && c.close >= c.low
+        && c.close <= c.high
+}
+
 impl Strategy for ScreenedVwapScalp {
     fn name(&self) -> StrategyName {
         StrategyName::ScreenedVwapScalp
@@ -28,6 +38,13 @@ impl Strategy for ScreenedVwapScalp {
         let close = closed.close;
         let high = closed.high;
         let low = closed.low;
+
+        // Never trade off malformed websocket/bootstrap candles. A zero low/high
+        // makes every VWAP pullback look valid and produces absurd ATR-based
+        // SL/TP distances (for example `low=0.0000` in the signal reason).
+        if !valid_ohlc(closed) {
+            return None;
+        }
 
         let ema8 = state.ema_8.value()?;
         let ema21 = state.ema_21.value()?;
@@ -182,6 +199,15 @@ mod tests {
         let mut state = SymbolState::new("BTCUSDT");
         seed_state(&mut state, 40000.0, 10); // Only 10 candles
         let closed = make_candle(40010.0, 40020.0, 40000.0, 40010.0);
+        assert!(ScreenedVwapScalp.evaluate(&state, &closed).is_none());
+    }
+
+    #[test]
+    fn test_malformed_zero_low_returns_none() {
+        let mut state = SymbolState::new("BTCUSDT");
+        seed_state(&mut state, 40000.0, 35);
+        state.last_vwap = Some(40010.0);
+        let closed = make_candle(40010.0, 40020.0, 0.0, 40015.0);
         assert!(ScreenedVwapScalp.evaluate(&state, &closed).is_none());
     }
 
