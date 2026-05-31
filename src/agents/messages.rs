@@ -116,6 +116,14 @@ pub enum AgentEvent {
         symbol: String,
         reason: String,
     },
+    /// A downstream gate consumed a risk-approved reservation but decided no
+    /// order will be sent. The `RiskAgent` releases `pending_symbols` so a
+    /// Brain NoGo, LLM cooldown, invalid geometry, or similar reject does not
+    /// masquerade as an already-open position.
+    RiskReservationReleased {
+        symbol: String,
+        reason: String,
+    },
     /// Execution quality feedback event (implementation shortfall in bps).
     SlippageObserved {
         symbol: String,
