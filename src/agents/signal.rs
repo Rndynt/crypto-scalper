@@ -515,21 +515,26 @@ fn compute_htf_bias(state: &SymbolState) -> ScreeningBias {
         return ScreeningBias::Unknown;
     }
 
-    // Take the last 6 candles (5 close-to-close moves)
-    let recent: Vec<f64> = candles.iter().rev().take(6).map(|c| c.close).collect();
-    // recent[0] = newest, recent[5] = oldest
+    // Take the last 8 candles (7 close-to-close moves) for more signal
+    let recent: Vec<f64> = candles.iter().rev().take(8).map(|c| c.close).collect();
     let up_moves = recent.windows(2).filter(|w| w[0] > w[1]).count();
     let dn_moves = recent.windows(2).filter(|w| w[0] < w[1]).count();
     let total = recent.len().saturating_sub(1).max(1);
 
-    // Require 60% agreement for a directional bias
-    let threshold = (total as f64 * 0.6).ceil() as usize;
-    if up_moves >= threshold {
+    // Require 70% strong directional agreement for Bullish/Bearish
+    // Below threshold → Unknown (allows both sides, strategies decide)
+    // NoTrade is only used when explicitly ranging — here we use Unknown as default
+    let bull_threshold = (total as f64 * 0.70).ceil() as usize;
+    let bear_threshold = (total as f64 * 0.70).ceil() as usize;
+
+    if up_moves >= bull_threshold {
         ScreeningBias::Bullish
-    } else if dn_moves >= threshold {
+    } else if dn_moves >= bear_threshold {
         ScreeningBias::Bearish
     } else {
-        ScreeningBias::NoTrade
+        // Insufficient directional clarity → Unknown (not NoTrade)
+        // Unknown allows both directions; let strategies decide based on regime
+        ScreeningBias::Unknown
     }
 }
 

@@ -17,7 +17,6 @@ impl Strategy for Squeeze {
         let bb = s.last_bb?;
         let ku = s.last_keltner_upper?;
         let kl = s.last_keltner_lower?;
-        let _atr = s.last_atr?;
         let roc = s.last_roc.unwrap_or(0.0);
 
         // Check if we're still inside the squeeze (BB inside Keltner)
@@ -28,20 +27,20 @@ impl Strategy for Squeeze {
 
         // Expansion detected — use ROC for direction.
         // Lower threshold: 0.1% (was 0.3%) — crypto moves fast in squeeze release.
+        let atr = s.last_atr.unwrap_or(c.close * 0.003);
         let (side, reason, sl, tp) = if roc > 0.1 && c.close > bb.mid {
             (
                 Side::Long,
                 format!("Squeeze expand up, ROC {roc:.2}%"),
-                // ATR-based SL: 0.3% (safe for 100x leverage)
-                c.close * 0.997,
-                c.close * 1.006, // 0.6% TP (2:1 R:R)
+                c.close - atr,         // 1× ATR SL
+                c.close + atr * 2.0,   // 2× ATR TP (1:2 R:R)
             )
         } else if roc < -0.1 && c.close < bb.mid {
             (
                 Side::Short,
                 format!("Squeeze expand down, ROC {roc:.2}%"),
-                c.close * 1.003,
-                c.close * 0.994, // 0.6% TP (2:1 R:R)
+                c.close + atr,
+                c.close - atr * 2.0,
             )
         } else {
             return None;

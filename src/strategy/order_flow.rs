@@ -48,8 +48,8 @@ impl Strategy for OrderFlow {
         }
 
         // Signal: OFI and book imbalance must agree on direction
-        let long_signal = ofi > 0.3 && book_imbalance > 1.15; // buyers dominating
-        let short_signal = ofi < -0.15 && book_imbalance < 0.90; // sellers dominating
+        let long_signal = ofi > 0.20 && book_imbalance > 1.08; // buyers dominating
+        let short_signal = ofi < -0.20 && book_imbalance < 0.93; // sellers dominating
 
         if !long_signal && !short_signal {
             return None;

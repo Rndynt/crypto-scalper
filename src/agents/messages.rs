@@ -215,12 +215,14 @@ impl ScreeningBias {
     }
 
     /// Returns true when the given side is permitted by the current bias.
+    /// NoTrade (ranging) still allows entries — mean-reversion strategies
+    /// work in ranging markets. The strategy itself gates on regime.
+    /// Only hard-blocks: Bullish blocks Short, Bearish blocks Long.
     pub fn allows(&self, side: &crate::data::Side) -> bool {
         match (self, side) {
-            (Self::Bullish, crate::data::Side::Long) => true,
-            (Self::Bearish, crate::data::Side::Short) => true,
-            (Self::Unknown, _) => true,
-            _ => false,
+            (Self::Bearish, crate::data::Side::Long) => false,
+            (Self::Bullish, crate::data::Side::Short) => false,
+            _ => true, // Bullish+Long, Bearish+Short, NoTrade+any, Unknown+any
         }
     }
 }

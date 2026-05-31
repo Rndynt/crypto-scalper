@@ -26,8 +26,8 @@ timeframes = ["1m", "5m", "15m"]
 
 [strategy]
 mode                = "adaptive"
-active              = ["ema_ribbon", "vwap_scalp", "squeeze"]
-min_ta_confidence   = 60    # RAISED: was 45, below this = noise not signal
+active              = ["ema_ribbon", "vwap_scalp", "squeeze", "screened_vwap_scalp"]
+min_ta_confidence   = 52    # quant strategies emit 62-72, need room for VPIN penalty
 paper_scout_enabled = false
 
 [advanced_alpha]
@@ -46,7 +46,7 @@ api_base        = "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
 http_referer    = "https://github.com/whaledecoder/crypto-scalper"
 http_app_title  = "ARIA Crypto Scalper"
 timeout_secs    = 120
-min_confidence  = 55    # RAISED: was 40 — only enter on solid conviction
+min_confidence  = 52    # aligned with ta threshold
 fallback_ta_threshold = 60
 max_tokens      = 4096
 
