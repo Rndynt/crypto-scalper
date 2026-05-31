@@ -203,24 +203,20 @@ pub fn spawn(
                     continue;
                 }
                 AgentEvent::PreSignalEmitted { signal, regime } => {
-                    // Hard gate stale market microstructure inputs.
+                    // Stale book data is a caution signal, not a startup deadlock.
+                    // When bootstrap/live bookTicker is late, keep the bot trading
+                    // with reduced size instead of hard-blocking every candidate.
                     let now_ts = Utc::now().timestamp();
                     let last_book_ts = spread_ts.lock().get(&signal.symbol).copied().unwrap_or(0);
-                    if last_book_ts == 0 || (now_ts - last_book_ts) > cfg.max_book_staleness_secs {
-                        bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
-                            signal: signal.clone(),
-                            regime,
-                            outcome: RiskOutcome::Blocked,
-                            size: 0.0,
-                            size_multiplier: 0.0,
-                            effective_ta_threshold: cfg.base_min_ta_threshold,
-                            effective_llm_floor: cfg.base_min_llm_floor,
-                            matched_lessons: vec!["stale/missing book ticker".into()],
-                            reason: Some(
-                                "market data stale: book ticker age exceeded threshold".into(),
-                            ),
-                        }));
-                        continue;
+                    let book_stale =
+                        last_book_ts == 0 || (now_ts - last_book_ts) > cfg.max_book_staleness_secs;
+                    if book_stale {
+                        warn!(
+                            symbol = %signal.symbol,
+                            last_book_age_secs = if last_book_ts == 0 { -1 } else { now_ts - last_book_ts },
+                            max_age_secs = cfg.max_book_staleness_secs,
+                            "risk: book ticker stale/missing — continuing at reduced size"
+                        );
                     }
                     // Block if symbol already has an open OR pending position.
                     // pending_symbols covers the race window between RiskVerdict::Allowed
@@ -307,6 +303,12 @@ pub fn spawn(
                         "orchestrator size multiplier {:.2}",
                         orchestrator_mult
                     ));
+                    if book_stale {
+                        verdict.size_multiplier *= 0.75;
+                        verdict
+                            .matched_lessons
+                            .push("book ticker stale/missing => size x0.75".into());
+                    }
                     // Cap TA threshold — learning can only raise by max 5 points (60→65)
                     let effective_ta_threshold = cfg.base_min_ta_threshold; // always 60, no learning delta
                     let llm_floor = verdict

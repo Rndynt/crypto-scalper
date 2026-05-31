@@ -53,8 +53,8 @@ api_base = "https://openrouter.ai/api/v1/chat/completions"
 http_referer   = "https://github.com/whaledecoder/crypto-scalper"
 http_app_title = "ARIA Crypto Scalper"
 timeout_secs = 8
-# Lower LLM confidence floor — let TA signals through even when LLM is uncertain.
-min_confidence = 60
+# Lower LLM confidence floor — 50-59 confidence is allowed at reduced size per prompt.
+min_confidence = 50
 # Lower fallback threshold so TA-only mode still trades.
 fallback_ta_threshold = 60
 max_tokens = 1024

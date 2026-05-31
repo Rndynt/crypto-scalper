@@ -176,6 +176,16 @@ pub fn spawn(
                     // BLOCK TA-only fallback if fail_closed_without_llm is set.
                     if llm_out.offline_fallback && fail_closed_without_llm {
                         warn!(symbol = %symbol, "brain: BLOCKED — LLM unavailable, fail_closed=true");
+                        publish_rejected_brain(
+                            &bus,
+                            signal.clone(),
+                            regime,
+                            adjusted_risk.clone(),
+                            final_decision.clone(),
+                            llm_out.latency_ms,
+                            llm_out.offline_fallback,
+                            "LLM unavailable with fail_closed=true",
+                        );
                         release_risk_reservation(
                             &bus,
                             &symbol,
@@ -229,6 +239,16 @@ pub fn spawn(
                             side = %signal.side.as_str(),
                             "brain: REJECTED — LLM-adjusted SL/TP geometry invalid"
                         );
+                        publish_rejected_brain(
+                            &bus,
+                            signal.clone(),
+                            regime,
+                            adjusted_risk.clone(),
+                            final_decision.clone(),
+                            llm_out.latency_ms,
+                            llm_out.offline_fallback,
+                            "invalid LLM SL/TP geometry",
+                        );
                         release_risk_reservation(
                             &bus,
                             &symbol,
@@ -250,6 +270,16 @@ pub fn spawn(
                             symbol = %symbol,
                             rr = %format!("{:.2}", rr),
                             "brain: REJECTED — LLM-adjusted SL/TP gives R:R < 0.8"
+                        );
+                        publish_rejected_brain(
+                            &bus,
+                            signal.clone(),
+                            regime,
+                            adjusted_risk.clone(),
+                            final_decision.clone(),
+                            llm_out.latency_ms,
+                            llm_out.offline_fallback,
+                            format!("R:R {rr:.2} < 0.8"),
                         );
                         release_risk_reservation(
                             &bus,
@@ -276,6 +306,16 @@ pub fn spawn(
                                     side = ?signal.side,
                                     "brain: BLOCKED — trade against regime trend"
                                 );
+                                publish_rejected_brain(
+                                    &bus,
+                                    signal.clone(),
+                                    regime,
+                                    adjusted_risk.clone(),
+                                    final_decision.clone(),
+                                    llm_out.latency_ms,
+                                    llm_out.offline_fallback,
+                                    "trade against regime trend",
+                                );
                                 release_risk_reservation(
                                     &bus,
                                     &symbol,
@@ -298,6 +338,19 @@ pub fn spawn(
                             confidence = llm_out.decision.confidence,
                             conf_floor = live_conf_floor,
                             "brain: REJECTED — confidence below calibrated floor"
+                        );
+                        publish_rejected_brain(
+                            &bus,
+                            signal.clone(),
+                            regime,
+                            adjusted_risk.clone(),
+                            final_decision.clone(),
+                            llm_out.latency_ms,
+                            llm_out.offline_fallback,
+                            format!(
+                                "confidence {} < {}",
+                                llm_out.decision.confidence, live_conf_floor
+                            ),
                         );
                         release_risk_reservation(
                             &bus,
@@ -324,6 +377,30 @@ pub fn spawn(
             }
         }
     })
+}
+
+fn publish_rejected_brain(
+    bus: &MessageBus,
+    signal: crate::strategy::state::PreSignal,
+    regime: crate::strategy::Regime,
+    risk: crate::agents::messages::RiskVerdictMsg,
+    mut decision: crate::llm::engine::TradeDecision,
+    latency_ms: u64,
+    offline_fallback: bool,
+    reason: impl Into<String>,
+) {
+    let reason = reason.into();
+    decision.decision = Decision::NoGo;
+    decision.reasoning.summary = format!("Rejected after LLM GO: {reason}");
+    decision.reasoning.risk_factors = reason;
+    bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
+        signal: Box::new(signal),
+        regime,
+        risk,
+        decision,
+        latency_ms,
+        offline_fallback,
+    }));
 }
 
 fn release_risk_reservation(bus: &MessageBus, symbol: &str, reason: impl Into<String>) {
