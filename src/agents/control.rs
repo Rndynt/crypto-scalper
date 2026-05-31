@@ -295,6 +295,40 @@ async fn telegram_loop(
         info!("registered {} bot commands with Telegram", 15);
     }
 
+    // ── Startup drain ──────────────────────────────────────────────────────────
+    // On restart, Telegram re-queues every unacknowledged update since the bot
+    // was last running (offset=0 → all pending). We skip them without processing
+    // by calling getUpdates?timeout=0 once and advancing past the highest id.
+    {
+        let drain_url = format!(
+            "https://api.telegram.org/bot{token}/getUpdates?timeout=0&limit=100"
+        );
+        match client.get(&drain_url).send().await {
+            Ok(resp) => {
+                if let Ok(body) = resp.json::<Value>().await {
+                    let max_id = body
+                        .get("result")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| {
+                            arr.iter()
+                                .filter_map(|u| u.get("update_id").and_then(|v| v.as_i64()))
+                                .max()
+                        })
+                        .unwrap_or(0);
+                    if max_id > 0 {
+                        *last_update_id.lock() = max_id;
+                        info!(drained_up_to = max_id, "telegram: drained stale queued updates");
+                    }
+                }
+            }
+            Err(e) => warn!(error = %e, "telegram startup drain failed"),
+        }
+    }
+
+    // In-session dedup guard — prevents double-processing if the same update_id
+    // somehow appears in two consecutive poll responses (network retry race).
+    let mut seen_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
     loop {
         let offset = *last_update_id.lock() + 1;
         let url = format!(
@@ -317,8 +351,18 @@ async fn telegram_loop(
                     .unwrap_or_default();
                 for upd in updates {
                     let update_id = upd.get("update_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    // Always advance the stored offset so the next poll starts past this id
                     if update_id > *last_update_id.lock() {
                         *last_update_id.lock() = update_id;
+                    }
+                    // Skip if we already processed this update in this session
+                    if !seen_ids.insert(update_id) {
+                        warn!(update_id, "telegram: duplicate update_id — skipped");
+                        continue;
+                    }
+                    // Keep seen_ids bounded to last 500 entries
+                    if seen_ids.len() > 500 {
+                        seen_ids.clear();
                     }
 
                     // ─── Handle callback queries (inline button clicks) ───
