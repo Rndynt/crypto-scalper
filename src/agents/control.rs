@@ -67,8 +67,62 @@ struct ControlState {
     survival: Option<SurvivalState>,
     /// Latest mid-prices by symbol (updated from L2 events).
     prices: HashMap<String, f64>,
+    /// Operator-command stats derived directly from the bus subscriber.
+    ///
+    /// `/status` and `/performance` must not depend solely on MonitorAgent's
+    /// MetricsState because Telegram commands can arrive before that async
+    /// consumer has processed the same event (or after it lagged/dropped one).
+    stats: ControlStats,
     /// Initial equity from config, used for /reset command.
     initial_equity: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ControlStats {
+    signals_today: u64,
+    trades_today: u64,
+    llm_go: u64,
+    llm_nogo: u64,
+    llm_wait: u64,
+    llm_avg_confidence: f64,
+    llm_avg_latency_ms: u64,
+    llm_offline_fallbacks: u64,
+    active_lessons: u64,
+    daily_pnl: f64,
+    wins: u64,
+    losses: u64,
+    consecutive_losses: u64,
+}
+
+impl ControlStats {
+    fn record_brain(&mut self, brain: &BrainOutcome) {
+        let n = self.llm_go + self.llm_nogo + self.llm_wait;
+        let avg = self.llm_avg_confidence * n as f64 + brain.decision.confidence as f64;
+        match brain.decision.decision {
+            crate::llm::engine::Decision::Go => self.llm_go += 1,
+            crate::llm::engine::Decision::NoGo => self.llm_nogo += 1,
+            crate::llm::engine::Decision::Wait => self.llm_wait += 1,
+        }
+        let total = self.llm_go + self.llm_nogo + self.llm_wait;
+        self.llm_avg_confidence = avg / total.max(1) as f64;
+        self.llm_avg_latency_ms =
+            (self.llm_avg_latency_ms * total.saturating_sub(1) + brain.latency_ms) / total.max(1);
+        if brain.offline_fallback {
+            self.llm_offline_fallbacks += 1;
+        }
+    }
+
+    fn record_closed_trade(&mut self, pnl_usd: f64) {
+        self.trades_today += 1;
+        self.daily_pnl += pnl_usd;
+        if pnl_usd >= 0.0 {
+            self.wins += 1;
+            self.consecutive_losses = 0;
+        } else {
+            self.losses += 1;
+            self.consecutive_losses += 1;
+        }
+    }
 }
 
 pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
@@ -97,6 +151,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
         recent_brains: Vec::new(),
         survival: None,
         prices: HashMap::new(),
+        stats: ControlStats::default(),
         initial_equity,
     }));
 
@@ -122,6 +177,7 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
                         // Do NOT send here — fire-and-forget causes race with position notif.
 
                         let mut st = ctrl_state.lock();
+                        st.stats.record_brain(&brain);
                         // Deduplicate: keep only latest per symbol
                         st.recent_brains
                             .retain(|b| b.signal.symbol != brain.signal.symbol);
@@ -138,6 +194,15 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
                     } if best_bid > 0.0 && best_ask > 0.0 => {
                         let mid = (best_bid + best_ask) / 2.0;
                         ctrl_state.lock().prices.insert(symbol, mid);
+                    }
+                    AgentEvent::PreSignalEmitted { .. } => {
+                        ctrl_state.lock().stats.signals_today += 1;
+                    }
+                    AgentEvent::PositionClosed { pnl_usd, .. } => {
+                        ctrl_state.lock().stats.record_closed_trade(pnl_usd);
+                    }
+                    AgentEvent::PolicyRefreshed { lessons_count, .. } => {
+                        ctrl_state.lock().stats.active_lessons = lessons_count as u64;
                     }
                     AgentEvent::SurvivalUpdated(s) => {
                         ctrl_state.lock().survival = Some(s.clone());
@@ -300,9 +365,8 @@ async fn telegram_loop(
     // was last running (offset=0 → all pending). We skip them without processing
     // by calling getUpdates?timeout=0 once and advancing past the highest id.
     {
-        let drain_url = format!(
-            "https://api.telegram.org/bot{token}/getUpdates?timeout=0&limit=100"
-        );
+        let drain_url =
+            format!("https://api.telegram.org/bot{token}/getUpdates?timeout=0&limit=100");
         match client.get(&drain_url).send().await {
             Ok(resp) => {
                 if let Ok(body) = resp.json::<Value>().await {
@@ -317,7 +381,10 @@ async fn telegram_loop(
                         .unwrap_or(0);
                     if max_id > 0 {
                         *last_update_id.lock() = max_id;
-                        info!(drained_up_to = max_id, "telegram: drained stale queued updates");
+                        info!(
+                            drained_up_to = max_id,
+                            "telegram: drained stale queued updates"
+                        );
                     }
                 }
             }
@@ -796,7 +863,7 @@ fn handle_command(
 ) -> String {
     let cmd = text.trim().to_lowercase();
     match cmd.as_str() {
-        "/status" | "status" => cmd_status(bus, risk, book, metrics),
+        "/status" | "status" => cmd_status(bus, risk, book, metrics, ctrl_state),
         "/positions" | "positions" => {
             let prices = ctrl_state.lock().prices.clone();
             cmd_positions(book, &prices, risk)
@@ -1320,12 +1387,22 @@ fn cmd_status(
     risk: &Arc<RiskManager>,
     book: &Arc<PositionBook>,
     metrics: &Arc<MetricsState>,
+    ctrl_state: &Arc<Mutex<ControlState>>,
 ) -> String {
     bus.publish(AgentEvent::ControlCommand(ControlCommand::StatusRequest));
     let s = risk.snapshot();
     let limits = risk.limits();
     let positions = book.snapshot();
     let m = metrics.snapshot();
+    let ctrl = ctrl_state.lock();
+    let ctrl_stats = ctrl.stats.clone();
+    let initial_equity = ctrl.initial_equity;
+    drop(ctrl);
+    let display_pnl = if ctrl_stats.daily_pnl.abs() > s.realized_pnl_today.abs() {
+        ctrl_stats.daily_pnl
+    } else {
+        s.realized_pnl_today
+    };
 
     let status_emoji = if s.tripped {
         "🚨"
@@ -1341,7 +1418,7 @@ fn cmd_status(
     } else {
         "ACTIVE"
     };
-    let pnl_sign = if s.realized_pnl_today >= 0.0 { "+" } else { "" };
+    let pnl_sign = if display_pnl >= 0.0 { "+" } else { "" };
 
     // Build positions summary
     let pos_lines: Vec<String> = positions
@@ -1398,19 +1475,25 @@ fn cmd_status(
         equity = s.equity,
         peak = s.peak_equity,
         pnl_sign = pnl_sign,
-        pnl = s.realized_pnl_today,
-        pnl_pct = s.daily_loss_pct,
+        pnl = display_pnl,
+        pnl_pct = if initial_equity > 0.0 {
+            display_pnl / initial_equity * 100.0
+        } else {
+            s.daily_loss_pct
+        },
         dd = s.drawdown_pct,
-        open_pos = s.open_positions,
+        open_pos = positions.len(),
         max_pos = limits.max_open_positions,
         pos_section = pos_section,
-        signals = m.signals_today,
-        trades = m.trades_today,
-        avg_conf = m.llm_avg_confidence,
-        go = m.llm_go,
-        nogo = m.llm_nogo,
-        wait = m.llm_wait,
-        offline = m.llm_offline_fallbacks,
+        signals = m.signals_today.max(ctrl_stats.signals_today),
+        trades = m.trades_today.max(ctrl_stats.trades_today),
+        avg_conf = m.llm_avg_confidence.max(ctrl_stats.llm_avg_confidence),
+        go = m.llm_go.max(ctrl_stats.llm_go),
+        nogo = m.llm_nogo.max(ctrl_stats.llm_nogo),
+        wait = m.llm_wait.max(ctrl_stats.llm_wait),
+        offline = m
+            .llm_offline_fallbacks
+            .max(ctrl_stats.llm_offline_fallbacks),
         max_dd = limits.max_drawdown_pct,
         max_dl = limits.max_daily_loss_pct,
         risk_pct = limits.risk_per_trade_pct,
@@ -1427,6 +1510,12 @@ fn cmd_positions(
 ) -> String {
     let positions = book.snapshot();
     if positions.is_empty() {
+        let risk_open = risk.snapshot().open_positions;
+        if risk_open > 0 {
+            return format!(
+                "⚠️ <b>Position state syncing</b>\n──────────\nRisk engine still reports <code>{risk_open}</code> open position(s), but the local position book is empty right now. Try again after the next market tick or check exchange reconciliation.\n🤖 ARIA v1.0"
+            );
+        }
         return "📭 <b>No open positions</b>\n🤖 ARIA v1.0".to_string();
     }
 
@@ -1592,8 +1681,14 @@ fn cmd_performance(
     let m = metrics.snapshot();
     let st = ctrl_state.lock();
     let survival = st.survival.as_ref();
+    let ctrl_stats = st.stats.clone();
+    let display_pnl = if ctrl_stats.daily_pnl.abs() > s.realized_pnl_today.abs() {
+        ctrl_stats.daily_pnl
+    } else {
+        s.realized_pnl_today
+    };
 
-    let pnl_sign = if s.realized_pnl_today >= 0.0 { "+" } else { "" };
+    let pnl_sign = if display_pnl >= 0.0 { "+" } else { "" };
     let wr = if m.trades_today > 0 {
         // Estimate win rate from brain GO vs trades
         // (we don't have direct win count here, so use survival if available)
@@ -1609,13 +1704,25 @@ fn cmd_performance(
         } else {
             0.0
         };
-        (wr_est, sv.consecutive_losses)
+        (
+            wr_est,
+            sv.consecutive_losses
+                .max(ctrl_stats.consecutive_losses as u32),
+        )
     } else {
-        (wr, 0)
+        (wr, ctrl_stats.consecutive_losses as u32)
     };
 
-    let pnl_pct = if s.equity > 0.0 {
-        s.realized_pnl_today / s.equity * 100.0
+    let pnl_pct = if st.initial_equity > 0.0 {
+        display_pnl / st.initial_equity * 100.0
+    } else if s.equity > 0.0 {
+        display_pnl / s.equity * 100.0
+    } else {
+        0.0
+    };
+    let total_closed = ctrl_stats.wins + ctrl_stats.losses;
+    let win_rate = if total_closed > 0 {
+        ctrl_stats.wins as f64 / total_closed as f64 * 100.0
     } else {
         0.0
     };
@@ -1631,6 +1738,7 @@ fn cmd_performance(
          \n\
          📈 <b>Activity</b>\n\
          ├ Trades Today: <code>{trades}</code>\n\
+         ├ Win Rate: <code>{win_rate:.1}%</code> (<code>{wins}W/{losses}L</code>)\n\
          ├ Signals Today: <code>{signals}</code>\n\
          ├ AI GO/NOGO/WAIT: <code>{go}</code>/<code>{nogo}</code>/<code>{wait}</code>\n\
          ├ Avg LLM Latency: <code>{latency}ms</code>\n\
@@ -1643,21 +1751,26 @@ fn cmd_performance(
          \n\
          🤖 ARIA v1.0",
         pnl_sign = pnl_sign,
-        pnl = s.realized_pnl_today,
+        pnl = display_pnl,
         pnl_pct = pnl_pct,
         equity = s.equity,
         peak = s.peak_equity,
         dd = s.drawdown_pct,
-        trades = m.trades_today,
-        signals = m.signals_today,
-        go = m.llm_go,
-        nogo = m.llm_nogo,
-        wait = m.llm_wait,
-        latency = m.llm_avg_latency_ms,
+        trades = m.trades_today.max(ctrl_stats.trades_today),
+        win_rate = win_rate,
+        wins = ctrl_stats.wins,
+        losses = ctrl_stats.losses,
+        signals = m.signals_today.max(ctrl_stats.signals_today),
+        go = m.llm_go.max(ctrl_stats.llm_go),
+        nogo = m.llm_nogo.max(ctrl_stats.llm_nogo),
+        wait = m.llm_wait.max(ctrl_stats.llm_wait),
+        latency = m.llm_avg_latency_ms.max(ctrl_stats.llm_avg_latency_ms),
         consec = consec_losses,
-        avg_conf = m.llm_avg_confidence,
-        lessons = m.active_lessons,
-        offline = m.llm_offline_fallbacks,
+        avg_conf = m.llm_avg_confidence.max(ctrl_stats.llm_avg_confidence),
+        lessons = m.active_lessons.max(ctrl_stats.active_lessons),
+        offline = m
+            .llm_offline_fallbacks
+            .max(ctrl_stats.llm_offline_fallbacks),
     )
 }
 
