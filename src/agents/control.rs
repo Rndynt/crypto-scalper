@@ -882,8 +882,8 @@ fn handle_command(
         _ if cmd.starts_with("/leverage ") || cmd.starts_with("leverage ") => {
             cmd_leverage(risk, &cmd)
         }
-        "/hold" | "hold" if !cmd.contains(' ') => cmd_hold(pos_cfg, ""),
-        _ if cmd.starts_with("/hold ") || cmd.starts_with("hold ") => cmd_hold(pos_cfg, &cmd),
+        "/hold" | "hold" if !cmd.contains(' ') => cmd_hold(bus, pos_cfg, ""),
+        _ if cmd.starts_with("/hold ") || cmd.starts_with("hold ") => cmd_hold(bus, pos_cfg, &cmd),
         "/breakeven" | "breakeven" if !cmd.contains(' ') => cmd_breakeven(pos_cfg, ""),
         _ if cmd.starts_with("/breakeven ") || cmd.starts_with("breakeven ") => {
             cmd_breakeven(pos_cfg, &cmd)
@@ -2146,12 +2146,28 @@ fn cmd_leverage(risk: &Arc<RiskManager>, args: &str) -> String {
     }
 }
 
-fn cmd_hold(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> String {
+fn format_hold_duration(secs: i64) -> String {
+    if secs == 0 {
+        return "disabled".to_string();
+    }
+    if secs % 3600 == 0 {
+        return format!("{}h", secs / 3600);
+    }
+    if secs % 60 == 0 {
+        return format!("{}m", secs / 60);
+    }
+    format!("{}s", secs)
+}
+
+fn cmd_hold(
+    bus: &MessageBus,
+    pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>,
+    args: &str,
+) -> String {
     let current = pos_cfg.read().max_hold_secs;
 
-    // Parse new hold time: "/hold 1800" or "hold 30m"
+    // Parse new hold time: "/hold 1800", "hold 30m", "hold 1h", or "hold 0".
     let new_secs = args.split_whitespace().last().and_then(|s| {
-        // Support "30m" format
         if let Some(mins) = s.strip_suffix('m') {
             mins.parse::<i64>().ok().map(|m| m * 60)
         } else if let Some(hrs) = s.strip_suffix('h') {
@@ -2162,45 +2178,60 @@ fn cmd_hold(pos_cfg: &Arc<parking_lot::RwLock<PositionConfig>>, args: &str) -> S
     });
 
     if let Some(secs) = new_secs {
-        if secs < 60 || secs > 7200 {
+        if secs != 0 && !(60..=7200).contains(&secs) {
             return format!(
-                "⚠ Hold time must be 60s–7200s (1m–2h). You entered: <code>{}s</code>\n🤖 ARIA v1.0",
+                "⚠ Hold time must be <code>0</code> or 60s–7200s (1m–2h). You entered: <code>{}s</code>\n🤖 ARIA v1.0",
                 secs
             );
         }
+
         pos_cfg.write().max_hold_secs = secs;
-        let mins = secs / 60;
+        bus.publish(AgentEvent::ControlCommand(ControlCommand::SetMaxHold {
+            secs,
+        }));
+
+        let old_label = format_hold_duration(current);
+        let new_label = format_hold_duration(secs);
+        let behavior = if secs == 0 {
+            "💡 Time exit is now disabled. Positions will only close by SL/TP/trailing/manual."
+                .to_string()
+        } else {
+            format!("💡 Positions open longer than {new_label} will be time-exited.")
+        };
+
         format!(
             "✅ <b>Max Hold Time Updated</b>\n\
              ──────────\n\
-             ⏱ Max Hold: <code>{old_m}m</code> → <code>{new_m}m</code> ({new_s}s)\n\
+             ⏱ Max Hold: <code>{old}</code> → <code>{new}</code> ({new_s}s)\n\
              \n\
-             💡 Positions open longer than {new_m}m will be time-exited.\n\
+             {behavior}\n\
              Set <code>/hold 0</code> to disable time exit.\n\
              \n\
              🤖 ARIA v1.0",
-            old_m = current / 60,
-            new_m = mins,
+            old = old_label,
+            new = new_label,
             new_s = secs,
+            behavior = behavior,
         )
     } else {
-        let mins = current / 60;
+        let current_label = format_hold_duration(current);
         format!(
             "⏱ <b>Max Hold Time Settings</b>\n\
              ──────────\n\
-             📊 Current: <code>{mins}m</code> ({current}s)\n\
+             📊 Current: <code>{current_label}</code> ({current}s)\n\
              \n\
              ⚡ <b>Quick Presets</b>\n\
-             ├ 🟢 <code>/hold 5m</code> — 5 min (ultra HFT)\n\
-             ├ 🟡 <code>/hold 15m</code> — 15 min (default)\n\
-             ├ 🟠 <code>/hold 30m</code> — 30 min (swing scalp)\n\
-             └ 🔴 <code>/hold 1h</code> — 1 hour (position trade)\n\
+             ├ 🟢 <code>/hold 5m</code> — 5 min\n\
+             ├ 🟡 <code>/hold 15m</code> — 15 min\n\
+             ├ 🟠 <code>/hold 30m</code> — 30 min\n\
+             ├ 🔴 <code>/hold 1h</code> — 1 hour\n\
+             └ ⛔ <code>/hold 0</code> — disable time exit\n\
              \n\
-             💡 To change: <code>/hold 30m</code> or <code>/hold 1800</code>\n\
+             💡 To change: <code>/hold 1h</code>, <code>/hold 3600</code>, or <code>/hold 0</code>\n\
              \n\
              🤖 ARIA v1.0",
             current = current,
-            mins = mins,
+            current_label = current_label,
         )
     }
 }

@@ -367,6 +367,13 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                 AgentEvent::SurvivalUpdated(s) => {
                     *survival.lock() = Some(s);
                 }
+                AgentEvent::ControlCommand(ControlCommand::SetMaxHold { secs }) => {
+                    pos_cfg.write().max_hold_secs = secs;
+                    info!(
+                        max_hold_secs = secs,
+                        "execution: max hold time updated from control command"
+                    );
+                }
                 AgentEvent::ControlCommand(ControlCommand::FlatAll { reason }) => {
                     warn!(%reason, "execution: flat-all requested — closing every position");
                     let positions = book.snapshot();
