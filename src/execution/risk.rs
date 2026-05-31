@@ -393,7 +393,17 @@ impl RiskManager {
         };
         // Respect leverage cap
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
-        qty.min(leverage_cap).max(0.0)
+        let qty = qty.min(leverage_cap);
+
+        // Enforce max position notional cap (e.g. 150% of equity)
+        // Prevents absurd sizes when SL is very tight
+        if i.limits.max_position_notional_pct > 0.0 {
+            let max_notional = i.equity * i.limits.max_position_notional_pct / 100.0;
+            let notional_cap = max_notional / entry.max(1e-9);
+            qty.min(notional_cap).max(0.0)
+        } else {
+            qty.max(0.0)
+        }
     }
 
     /// Calculate position size with LLM conviction scaling.

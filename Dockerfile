@@ -17,6 +17,9 @@ COPY --from=builder /app/target/release/aria /usr/local/bin/aria
 WORKDIR /app
 COPY config ./config
 
+# Default to aggressive config — override via ARIA_CONFIG_OVERLAY env var in Coolify
+ENV ARIA_CONFIG_OVERLAY=config/aggressive.toml
+
 EXPOSE 3000
 
 CMD ["aria"]

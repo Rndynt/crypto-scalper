@@ -299,8 +299,14 @@ impl MarketContext {
             let _ = writeln!(s, "  Last trade PnL  : ${:.2}", self.recent_trade_pnl);
         }
 
-        // Warning if strategy is performing poorly
-        if self.strategy_total_trades >= 3 && self.strategy_win_rate < 0.40 {
+        // New bot / insufficient data notice
+        if self.strategy_total_trades < 10 {
+            let _ = writeln!(
+                s,
+                "  ℹ️ NEW STRATEGY: Only {} trades recorded — WR is statistically meaningless. Judge by TA, OFI and regime ONLY.",
+                self.strategy_total_trades
+            );
+        } else if self.strategy_total_trades >= 3 && self.strategy_win_rate < 0.40 {
             let _ = writeln!(
                 s,
                 "  ⚠️ WARNING: This strategy has LOW win rate — be EXTRA selective!"

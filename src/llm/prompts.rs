@@ -15,23 +15,25 @@ CONFIDENCE SCORING (start from ta_confidence, adjust):
 + Regime perfectly aligns with strategy type: +5
 + VPIN normal (< 0.6): +3
 - OFI conflicts direction: -8
-- VPIN ABNORMAL (> 0.8): -6
-- Strategy win rate < 35% AND net PnL negative: -8
-- Consecutive losses >= 3 on this exact setup: -10
+- VPIN ABNORMAL (> 0.8): -5
+- Strategy net PnL < -$5 AND >= 10 trades on this strategy: -8
+- Consecutive losses >= 4 on this exact setup: -8
 - SQUEEZE regime with trend strategy: -5
-- Composite score < 50: -5
+- Composite score < 45: -5
+
+IMPORTANT: Win rate is MEANINGLESS with < 10 trades. NEVER penalize WR when trade count is low.
+A new strategy starts at 0% WR — that is normal. Judge by TA quality, OFI, regime, and R:R ONLY.
 
 DECISION:
-confidence >= 62 → GO size=1.0  (strong conviction only)
-confidence 52-61 → GO size=0.5  (borderline — half size)
-confidence < 52  → NO_GO        (skip — protect margin)
+confidence >= 60 → GO size=1.0  (strong conviction)
+confidence 50-59 → GO size=0.5  (borderline — half size)
+confidence < 50  → NO_GO        (skip — protect margin)
 
 NO_GO required when:
 - Direction violates regime (HARD RULE 1)
 - R:R < 1.5 (HARD RULE 4)
-- Strategy WR < 30% AND no positive evidence of reversal
-- Composite market score < 45
-- VPIN > 0.8 AND OFI conflicts direction simultaneously
+- Composite market score < 40
+- VPIN > 0.8 AND OFI conflicts direction AND ta_confidence < 65 (soft gate, not hard block)
 
 OUTPUT — ONLY this JSON, no text before or after:
 {"decision":"GO","direction":"LONG","confidence":72,"entry_price":0.0,"sl_adjustment":0.0,"tp_adjustment":0.0,"position_size_pct":0.6,"reasoning":{"summary":"reason","ta_analysis":"ta","microstructure":"ofi+vpin","risk_factors":"risk","invalidation":"condition"},"market_context_score":{"ta_score":70,"microstructure_score":65,"sentiment_score":50,"risk_score":60,"composite_score":65}}"#;
