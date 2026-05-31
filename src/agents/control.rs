@@ -1398,11 +1398,10 @@ fn cmd_status(
     let ctrl_stats = ctrl.stats.clone();
     let initial_equity = ctrl.initial_equity;
     drop(ctrl);
-    let display_pnl = if ctrl_stats.daily_pnl.abs() > s.realized_pnl_today.abs() {
-        ctrl_stats.daily_pnl
-    } else {
-        s.realized_pnl_today
-    };
+    let display_pnl = [ctrl_stats.daily_pnl, s.realized_pnl_today, m.daily_pnl]
+        .into_iter()
+        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .unwrap_or(0.0);
 
     let status_emoji = if s.tripped {
         "🚨"
@@ -1682,11 +1681,10 @@ fn cmd_performance(
     let st = ctrl_state.lock();
     let survival = st.survival.as_ref();
     let ctrl_stats = st.stats.clone();
-    let display_pnl = if ctrl_stats.daily_pnl.abs() > s.realized_pnl_today.abs() {
-        ctrl_stats.daily_pnl
-    } else {
-        s.realized_pnl_today
-    };
+    let display_pnl = [ctrl_stats.daily_pnl, s.realized_pnl_today, m.daily_pnl]
+        .into_iter()
+        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .unwrap_or(0.0);
 
     let pnl_sign = if display_pnl >= 0.0 { "+" } else { "" };
     let wr = if m.trades_today > 0 {

@@ -22,6 +22,7 @@ pub struct StrategyHealth {
     pub loss_streak: u64,
     pub max_loss_streak: u64,
     pub last_trade_ts: Option<String>,
+    pub last_trade_pnl: f64,
     pub enabled: bool,
     pub disable_reason: Option<String>,
 }
@@ -48,6 +49,7 @@ impl StrategyHealth {
             loss_streak: 0,
             max_loss_streak: 0,
             last_trade_ts: None,
+            last_trade_pnl: 0.0,
             enabled: true,
             disable_reason: None,
         }
@@ -57,6 +59,8 @@ impl StrategyHealth {
         self.total_trades += 1;
         self.total_pnl += pnl;
         self.avg_pnl = self.total_pnl / self.total_trades as f64;
+        self.last_trade_pnl = pnl;
+        self.last_trade_ts = Some(chrono::Utc::now().to_rfc3339());
 
         if pnl > 0.0 {
             self.wins += 1;
@@ -378,7 +382,7 @@ impl SharedState {
             total_wins += h.wins;
             total_pnl += h.total_pnl;
             if h.last_trade_ts.is_some() {
-                last_trade_pnl = h.avg_pnl; // Use avg as proxy for last
+                last_trade_pnl = h.last_trade_pnl;
             }
         }
 
