@@ -445,6 +445,31 @@ async fn run_agents(cfg: Config) -> Result<()> {
     )
     .await;
 
+    // --- Full REST + SSE API server ---
+    // Runs on metrics_bind port + 1 to avoid conflict with old dashboard.
+    {
+        let api_port = bind.port() + 1;
+        let api_bind: std::net::SocketAddr = format!("0.0.0.0:{}", api_port).parse().unwrap();
+        let (event_tx, _) = tokio::sync::broadcast::channel(1024);
+        let api_state = crypto_scalper::monitoring::api::ApiState {
+            metrics: Arc::clone(&metrics),
+            survival: Arc::clone(&survival_state),
+            policy: Some(Arc::new(policy.clone())),
+            book: Arc::clone(&book),
+            risk: Arc::clone(&risk),
+            journal: Some(Arc::clone(&journal)),
+            shared_state: Arc::clone(&shared_state),
+            config_summary: crypto_scalper::monitoring::api::build_config_summary(&cfg),
+            event_tx: event_tx.clone(),
+            screening_bias: Arc::new(PlRwLock::new(HashMap::new())),
+            recent_signals: Arc::new(PlRwLock::new(Vec::new())),
+        };
+        // Spawn event bridge (MessageBus → SSE)
+        crypto_scalper::monitoring::api::spawn_event_bridge(bus.clone(), api_state.clone());
+        // Spawn API server
+        let _api_handle = crypto_scalper::monitoring::api::spawn_api_server(api_state, api_bind);
+    }
+
     // --- Spawn agents ---
     let _data = crypto_scalper::agents::data::spawn(
         bus.clone(),
