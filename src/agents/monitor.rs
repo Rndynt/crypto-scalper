@@ -490,7 +490,7 @@ pub fn spawn(
                     signal_id,
                 } => {
                     // Scope lock strictly — must not cross .await boundary
-                    let trade_no = {
+                    let _trade_no = {
                         let mut c = counters.lock();
                         c.orders_filled += 1;
                         c.trades_total += 1;
