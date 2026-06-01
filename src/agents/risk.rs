@@ -279,36 +279,8 @@ pub fn spawn(
                         }
                     }
 
-                    let mut verdict =
+                    let verdict =
                         policy.evaluate(signal.strategy.as_str(), regime.as_str(), &signal.symbol);
-                    // Adaptive portfolio risk budget based on current load.
-                    let open_n = open_symbols.lock().len() as f64;
-                    let load_mult = if open_n >= 5.0 {
-                        0.70
-                    } else if open_n >= 3.0 {
-                        0.80
-                    } else if open_n >= 2.0 {
-                        0.90
-                    } else {
-                        1.0
-                    };
-                    verdict.size_multiplier *= load_mult;
-                    verdict.matched_lessons.push(format!(
-                        "portfolio load {} => size x{:.2}",
-                        open_n, load_mult
-                    ));
-                    let orchestrator_mult = *orchestrator_multiplier.lock();
-                    verdict.size_multiplier *= orchestrator_mult;
-                    verdict.matched_lessons.push(format!(
-                        "orchestrator size multiplier {:.2}",
-                        orchestrator_mult
-                    ));
-                    if book_stale {
-                        verdict.size_multiplier *= 0.75;
-                        verdict
-                            .matched_lessons
-                            .push("book ticker stale/missing => size x0.75".into());
-                    }
                     // Cap TA threshold — learning can only raise by max 5 points (60→65)
                     let effective_ta_threshold = cfg.base_min_ta_threshold; // always 60, no learning delta
                     let llm_floor = verdict
@@ -340,7 +312,7 @@ pub fn spawn(
                             regime,
                             outcome: RiskOutcome::Blocked,
                             size: 0.0,
-                            size_multiplier: verdict.size_multiplier,
+                            size_multiplier: 1.0,
                             effective_ta_threshold,
                             effective_llm_floor: llm_floor,
                             matched_lessons: verdict.matched_lessons,
@@ -359,7 +331,7 @@ pub fn spawn(
                             regime,
                             outcome: RiskOutcome::Blocked,
                             size: 0.0,
-                            size_multiplier: verdict.size_multiplier,
+                            size_multiplier: 1.0,
                             effective_ta_threshold,
                             effective_llm_floor: llm_floor,
                             matched_lessons: verdict.matched_lessons,
@@ -369,19 +341,6 @@ pub fn spawn(
                     }
 
                     let spread_pct = spreads.lock().get(&signal.symbol).copied();
-                    if let Some(sf) = slippage_bps.lock().get(&signal.symbol).copied() {
-                        if sf >= 12.0 {
-                            verdict.size_multiplier *= 0.5;
-                            verdict
-                                .matched_lessons
-                                .push(format!("slippage {:.2}bps => size x0.50", sf));
-                        } else if sf >= 7.0 {
-                            verdict.size_multiplier *= 0.75;
-                            verdict
-                                .matched_lessons
-                                .push(format!("slippage {:.2}bps => size x0.75", sf));
-                        }
-                    }
                     if let Some(sp) = spread_pct {
                         if sp >= cfg.max_spread_pct_block {
                             bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
@@ -389,7 +348,7 @@ pub fn spawn(
                                 regime,
                                 outcome: RiskOutcome::Blocked,
                                 size: 0.0,
-                                size_multiplier: verdict.size_multiplier,
+                                size_multiplier: 1.0,
                                 effective_ta_threshold,
                                 effective_llm_floor: llm_floor,
                                 matched_lessons: verdict.matched_lessons,
@@ -399,13 +358,6 @@ pub fn spawn(
                                 )),
                             }));
                             continue;
-                        }
-                        if sp >= cfg.spread_caution_pct {
-                            verdict.size_multiplier *= cfg.spread_caution_size_mult.clamp(0.1, 1.0);
-                            verdict.matched_lessons.push(format!(
-                                "spread caution {:.4}% => size x{:.2}",
-                                sp, cfg.spread_caution_size_mult
-                            ));
                         }
                     }
 
@@ -423,7 +375,7 @@ pub fn spawn(
                             regime,
                             outcome: RiskOutcome::Blocked,
                             size: 0.0,
-                            size_multiplier: verdict.size_multiplier,
+                            size_multiplier: 1.0,
                             effective_ta_threshold,
                             effective_llm_floor: llm_floor,
                             matched_lessons: verdict.matched_lessons,
@@ -444,7 +396,7 @@ pub fn spawn(
                             regime,
                             outcome: RiskOutcome::Blocked,
                             size: 0.0,
-                            size_multiplier: verdict.size_multiplier,
+                            size_multiplier: 1.0,
                             effective_ta_threshold,
                             effective_llm_floor: llm_floor,
                             matched_lessons: verdict.matched_lessons,
@@ -464,9 +416,10 @@ pub fn spawn(
                     // the SurvivalAgent-controlled size_multiplier.
                     let base_size = risk.calculate_size(effective_entry, effective_sl);
 
-                    // Apply quant engine sizing (Kelly, vol-target, VaR, Kalman)
-                    let (size, _quant_reason) = if let Some(ref qe) = quant_engine {
-                        let qr = qe.compute_sizing(QuantSizingInput {
+                    // Size is controlled solely by the risk agent — no external multipliers.
+                    // Quant engine runs for IC/Kalman context only; its size_multiplier is ignored.
+                    if let Some(ref qe) = quant_engine {
+                        qe.compute_sizing(QuantSizingInput {
                             symbol: &signal.symbol,
                             strategy: signal.strategy.as_str(),
                             side: signal.side,
@@ -475,25 +428,8 @@ pub fn spawn(
                             equity: risk.equity(),
                             base_risk_pct: cfg.base_risk_pct,
                         });
-                        if qr.var_rejected {
-                            bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
-                                signal: signal.clone(),
-                                regime,
-                                outcome: RiskOutcome::Blocked,
-                                size: 0.0,
-                                size_multiplier: verdict.size_multiplier,
-                                effective_ta_threshold,
-                                effective_llm_floor: llm_floor,
-                                matched_lessons: verdict.matched_lessons,
-                                reason: Some(format!("quant VaR cap: {}", qr.reason)),
-                            }));
-                            continue;
-                        }
-                        let adjusted = base_size * verdict.size_multiplier * qr.size_multiplier;
-                        (adjusted, qr.reason)
-                    } else {
-                        (base_size * verdict.size_multiplier, String::new())
-                    };
+                    }
+                    let size = base_size;
 
                     if size <= 0.0 {
                         bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
@@ -501,7 +437,7 @@ pub fn spawn(
                             regime,
                             outcome: RiskOutcome::Blocked,
                             size: 0.0,
-                            size_multiplier: verdict.size_multiplier,
+                            size_multiplier: 1.0,
                             effective_ta_threshold,
                             effective_llm_floor: llm_floor,
                             matched_lessons: verdict.matched_lessons,
@@ -512,14 +448,12 @@ pub fn spawn(
 
                     {
                         let limits = risk.limits();
-                        let notional = size * effective_entry;
-                        let margin = notional / limits.max_leverage.max(1) as f64;
-                        if limits.min_margin_usd > 0.0 && margin < limits.min_margin_usd {
+                        let risk_amount = risk.equity() * limits.risk_per_trade_pct / 100.0;
+                        if limits.min_margin_usd > 0.0 && risk_amount < limits.min_margin_usd {
                             warn!(
                                 symbol = %signal.symbol,
-                                margin,
+                                risk_amount,
                                 min_margin_usd = limits.min_margin_usd,
-                                notional,
                                 size,
                                 "risk: blocked dust-sized position below min_margin_usd"
                             );
@@ -528,12 +462,12 @@ pub fn spawn(
                                 regime,
                                 outcome: RiskOutcome::Blocked,
                                 size: 0.0,
-                                size_multiplier: verdict.size_multiplier,
+                                size_multiplier: 1.0,
                                 effective_ta_threshold,
                                 effective_llm_floor: llm_floor,
                                 matched_lessons: verdict.matched_lessons,
                                 reason: Some(format!(
-                                    "margin ${margin:.2} < min_margin_usd ${:.2}",
+                                    "risk_amount ${risk_amount:.2} < min_margin_usd ${:.2}",
                                     limits.min_margin_usd
                                 )),
                             }));
@@ -554,7 +488,7 @@ pub fn spawn(
                         regime,
                         outcome: RiskOutcome::Allowed,
                         size,
-                        size_multiplier: verdict.size_multiplier,
+                        size_multiplier: 1.0,
                         effective_ta_threshold,
                         effective_llm_floor: llm_floor,
                         matched_lessons: verdict.matched_lessons,

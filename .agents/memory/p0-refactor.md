@@ -42,6 +42,21 @@ Backtest uses live strategy implementations via the `StrategyName` enum aliases:
 
 **Why:** The backtest was calling phantom legacy strategy names that no longer matched the live signal code, making backtest results meaningless.
 
+## Size controlled solely by RiskAgent
+All size multipliers outside `risk.rs` have been removed. The only place size is set is `RiskManager::calculate_size()`.
+
+Removed paths that previously cut size:
+- `execution.rs` `ManagerAction::Adjust { size_multiplier }` → now ignored, only SL/TP offsets applied
+- `execution.rs` `exec_policy.size_multiplier` (lesson-derived) → entire block removed
+- `brain.rs` soft reject override → was `x0.35`, now size unchanged
+- `brain.rs` regime conflict → was `x0.5`, now log only
+- `brain.rs` LLM widened stop → was `risk_scale`, now no-op
+- `brain.rs` low confidence → was `x0.5`, now log only
+
+`below_min_margin_reason()` in execution.rs now compares `equity * risk_pct%` (true USD at risk) vs `min_margin_usd`, NOT `notional/leverage`.
+
+**Why:** Multiple agents were stacking multipliers resulting in ~$1 margin positions. User requirement: risk agent is sole size authority.
+
 ## alpha_gate real API
 `advanced_alpha_gate(inputs: AdvancedAlphaInputs, signal_is_long: bool) -> AlphaGateDecision`
 - `AlphaGateDecision` variants are unit (no data): `Allow | Reduce | Block`

@@ -590,25 +590,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                         .lock()
                         .insert(v.proposal.symbol.clone(), v.proposal.entry);
 
-                    let mut req = build_entry_request(&v);
-                    // Apply last-mile lesson-derived size multiplier so
-                    // derate/boost policies also influence final execution.
-                    req.size *= exec_policy.size_multiplier.clamp(0.0, 2.0);
-                    if req.size <= 0.0 {
-                        let reason = "execution blocked by lesson size multiplier".to_string();
-                        info!(
-                            symbol = %v.proposal.symbol,
-                            strategy = %v.proposal.strategy,
-                            regime = %v.proposal.regime,
-                            size_mult = exec_policy.size_multiplier,
-                            "execution: blocked by lesson size multiplier"
-                        );
-                        bus.publish(AgentEvent::ExecutionFailed {
-                            symbol: v.proposal.symbol.clone(),
-                            reason,
-                        });
-                        continue;
-                    }
+                    let req = build_entry_request(&v);
 
                     if let Some(reason) = below_min_margin_reason(&req, &risk) {
                         info!(
@@ -814,12 +796,12 @@ fn build_entry_request(v: &ManagerVerdict) -> OrderRequest {
     let (size, sl, tp) = match &v.action {
         ManagerAction::Approve | ManagerAction::Veto { .. } => (p.size, p.stop_loss, p.take_profit),
         ManagerAction::Adjust {
-            size_multiplier,
             sl_offset_bps,
             tp_offset_bps,
             ..
         } => {
-            let size = p.size * size_multiplier;
+            // Size is controlled solely by risk agent — manager SL/TP adjustments only
+            let size = p.size;
             let sl_adj = bps_offset(p.entry, *sl_offset_bps, p.side, true);
             let tp_adj = bps_offset(p.entry, *tp_offset_bps, p.side, false);
             (size, p.stop_loss + sl_adj, p.take_profit + tp_adj)
@@ -844,15 +826,12 @@ fn below_min_margin_reason(req: &OrderRequest, risk: &Arc<RiskManager>) -> Optio
     if limits.min_margin_usd <= 0.0 || req.size <= 0.0 {
         return None;
     }
-    let entry = req.price.unwrap_or(0.0);
-    if entry <= 0.0 {
-        return None;
-    }
-    let notional = req.size * entry;
-    let margin = notional / limits.max_leverage.max(1) as f64;
-    (margin < limits.min_margin_usd).then(|| {
+    // Compare against actual USD at risk (equity * risk_pct), not exchange margin.
+    // Exchange margin = notional/leverage is misleading at high leverage.
+    let risk_amount = risk.equity() * limits.risk_per_trade_pct / 100.0;
+    (risk_amount < limits.min_margin_usd).then(|| {
         format!(
-            "margin ${margin:.2} < min_margin_usd ${:.2}",
+            "risk_amount ${risk_amount:.2} < min_margin_usd ${:.2}",
             limits.min_margin_usd
         )
     })
@@ -1020,6 +999,7 @@ mod tests {
 
     #[test]
     fn below_min_margin_blocks_dust_order() {
+        // equity=$100, risk_pct=1% => risk_amount=$1.0; min_margin_usd=$2.0 => blocked
         let risk = Arc::new(RiskManager::new(
             crate::execution::risk::RiskLimits {
                 risk_per_trade_pct: 1.0,
@@ -1032,12 +1012,11 @@ mod tests {
                 max_position_notional_pct: 100.0,
                 min_net_edge_bps: 0.0,
                 assumed_daily_volume_usd: 1_000_000_000.0,
-                min_margin_usd: 1.0,
+                min_margin_usd: 2.0,
             },
             100.0,
         ));
-        let mut order = req(Side::Long, 2_000.0, 1_990.0, 2_020.0);
-        order.size = 0.0019; // ~$3.80 notional / 100x = ~$0.04 margin
+        let order = req(Side::Long, 2_000.0, 1_990.0, 2_020.0);
 
         let reason = below_min_margin_reason(&order, &risk).expect("dust order must be blocked");
         assert!(reason.contains("min_margin_usd"));
@@ -1045,9 +1024,10 @@ mod tests {
 
     #[test]
     fn below_min_margin_allows_configured_margin() {
+        // equity=$100, risk_pct=2% => risk_amount=$2.0; min_margin_usd=$1.0 => allowed
         let risk = Arc::new(RiskManager::new(
             crate::execution::risk::RiskLimits {
-                risk_per_trade_pct: 1.0,
+                risk_per_trade_pct: 2.0,
                 max_open_positions: 3,
                 max_daily_loss_pct: 3.0,
                 max_drawdown_pct: 10.0,
@@ -1061,8 +1041,7 @@ mod tests {
             },
             100.0,
         ));
-        let mut order = req(Side::Long, 2_000.0, 1_990.0, 2_020.0);
-        order.size = 0.05; // $100 notional / 100x = $1 margin
+        let order = req(Side::Long, 2_000.0, 1_990.0, 2_020.0);
 
         assert!(below_min_margin_reason(&order, &risk).is_none());
     }

@@ -187,16 +187,13 @@ pub fn spawn(
                     // confidence) still release the reservation and do not trade.
                     if final_decision.decision != Decision::Go {
                         if should_override_soft_brain_reject(&final_decision, &signal) {
-                            adjusted_risk.size *= 0.35;
-                            adjusted_risk
-                                .matched_lessons
-                                .push("brain soft reject overridden => probe size x0.35".into());
+                            // Size stays unchanged — risk agent already set the correct size
                             final_decision.decision = Decision::Go;
                             final_decision.confidence = final_decision.confidence.max(45);
                             final_decision.position_size_pct =
                                 final_decision.position_size_pct.max(0.25);
                             final_decision.reasoning.summary = format!(
-                                "SOFT_OVERRIDE: {}; deterministic risk gate approved, trading probe size",
+                                "SOFT_OVERRIDE: {}; deterministic risk gate approved",
                                 final_decision.reasoning.summary
                             );
                             info!(
@@ -297,10 +294,8 @@ pub fn spawn(
                         continue;
                     }
 
-                    // Regime conflict is a sizing problem, not an automatic veto.
-                    // 1m scalps (especially order-flow/reversion) can legitimately fade
-                    // a higher-timeframe move. Keep the bot active but cut risk when
-                    // direction and detected regime disagree.
+                    // Regime conflict is noted for logging only — size unchanged.
+                    // Risk agent is the sole authority on position sizing.
                     {
                         let states_r = states.lock().await;
                         if let Some(st) = states_r.get(&symbol) {
@@ -310,16 +305,14 @@ pub fn spawn(
                             let bearish = regime_str.contains("bear");
                             let bullish = regime_str.contains("bull");
                             if (is_long && bearish) || (!is_long && bullish) {
-                                adjusted_risk.size *= 0.5;
                                 adjusted_risk
                                     .matched_lessons
-                                    .push("brain regime conflict => size x0.50".into());
+                                    .push("brain regime conflict noted (size unchanged)".into());
                                 info!(
                                     symbol = %symbol,
                                     regime = %detected_regime.as_str(),
                                     side = ?signal.side,
-                                    adjusted_size = adjusted_risk.size,
-                                    "brain: regime conflict — allowing at reduced size"
+                                    "brain: regime conflict noted — size controlled by risk agent"
                                 );
                             }
                         }
@@ -329,22 +322,14 @@ pub fn spawn(
                     // Previously the brain validated final_entry/final_sl/final_tp but
                     // manager/execution still received the original strategy brackets,
                     // so live risk/reward could differ from the approved setup.
-                    let original_risk_dist = (signal.entry - signal.stop_loss).abs();
+                    let _original_risk_dist = (signal.entry - signal.stop_loss).abs();
                     adjusted_signal.entry = final_entry;
                     adjusted_signal.stop_loss = final_sl;
                     adjusted_signal.take_profit = final_tp;
                     adjusted_risk.signal = Box::new(adjusted_signal.clone());
 
-                    // If the LLM widens the stop, scale size down so dollar risk
-                    // cannot exceed the RiskAgent-approved amount. If it tightens the
-                    // stop, do not increase size here; keep the original risk cap.
-                    if risk_dist > original_risk_dist && original_risk_dist > 0.0 {
-                        let risk_scale = (original_risk_dist / risk_dist).clamp(0.0, 1.0);
-                        adjusted_risk.size *= risk_scale;
-                        adjusted_risk
-                            .matched_lessons
-                            .push(format!("LLM widened stop => size x{risk_scale:.2}"));
-                    }
+                    // LLM stop adjustment noted for logging — size unchanged.
+                    // Risk agent is the sole authority on position sizing.
 
                     info!(
                         symbol = %symbol,
@@ -357,23 +342,13 @@ pub fn spawn(
                         "brain: final executable setup"
                     );
 
-                    // Confidence floor from config only — no dynamic raising.
-                    // Learning policy handles size reduction, not signal gating.
+                    // Low confidence noted — size unchanged, risk agent controls sizing.
                     let live_conf_floor = min_confidence;
-                    // Low-confidence GO is a size cut, not another rejection gate.
                     if final_decision.confidence < live_conf_floor {
-                        adjusted_risk.size *= 0.5;
                         adjusted_risk.matched_lessons.push(format!(
-                            "brain confidence {} < {} => size x0.50",
+                            "brain confidence {} < {} (size unchanged)",
                             final_decision.confidence, live_conf_floor
                         ));
-                        info!(
-                            symbol = %symbol,
-                            confidence = final_decision.confidence,
-                            conf_floor = live_conf_floor,
-                            adjusted_size = adjusted_risk.size,
-                            "brain: low confidence — allowing at reduced size"
-                        );
                     }
 
                     bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
