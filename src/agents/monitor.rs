@@ -509,12 +509,18 @@ pub fn spawn(
                         })
                         .unwrap_or((0.0, 0.0, "—".to_string()));
 
-                    if let Some(b) = &brain {
-                        if let Err(e) =
-                            log_open_trade(&journal, &client_id, &symbol, side, size, &ack, b)
-                        {
-                            warn!(error = %e, "monitor: insert_trade failed");
-                        }
+                    // Always insert into the journal — brain data is optional enrichment.
+                    // Previously: insert was SKIPPED if brain=None (timing race between
+                    // BrainOutcomeReady and OrderFilled could leave last_brain empty for
+                    // the symbol). Result: close_trade UPDATE found 0 rows → history stayed
+                    // empty despite dozens of trades executing.
+                    let log_result = if let Some(b) = &brain {
+                        log_open_trade(&journal, &client_id, &symbol, side, size, &ack, b)
+                    } else {
+                        log_open_trade_minimal(&journal, &client_id, &symbol, side, size, &ack)
+                    };
+                    if let Err(e) = log_result {
+                        warn!(error = %e, "monitor: insert_trade failed (client_id={client_id})");
                     }
 
                     let side_label = if side == crate::data::Side::Long {
@@ -564,11 +570,11 @@ pub fn spawn(
                     reason,
                     strategy: _,
                 } => {
-                    let pnl_pct = if entry_price > 0.0 {
-                        (exit_price - entry_price) / entry_price * 100.0
-                    } else {
-                        0.0
-                    };
+                    // BUG FIX: old formula (exit-entry)/entry gives negative pnl_pct for
+                    // profitable SHORT positions. Use pnl_usd/notional which is always
+                    // correct regardless of direction: positive for wins, negative for losses.
+                    let notional = entry_price * size;
+                    let pnl_pct = if notional > 0.0 { pnl_usd / notional * 100.0 } else { 0.0 };
                     if let Err(e) = journal.close_trade(
                         &client_id,
                         Utc::now(),
@@ -578,7 +584,7 @@ pub fn spawn(
                         pnl_pct,
                         0.0,
                     ) {
-                        warn!(error = %e, "monitor: close_trade failed");
+                        warn!(error = %e, client_id = %client_id, "monitor: close_trade failed");
                     }
                     metrics.update(|m| {
                         m.daily_pnl += pnl_usd;
@@ -1132,6 +1138,65 @@ fn manager_action_summary(action: &ManagerAction) -> String {
             "adjust size={size_multiplier:.2} sl={sl_offset_bps:.1}bps tp={tp_offset_bps:.1}bps: {reason}"
         ),
     }
+}
+
+/// Insert a minimal trade record when brain outcome is unavailable.
+/// All LLM/TA fields are NULL — close_trade will fill in exit fields later.
+/// This ensures every OrderFilled has a matching DB row so close_trade UPDATE
+/// always succeeds and the trade appears in /history.
+fn log_open_trade_minimal(
+    journal: &TradeJournal,
+    client_id: &str,
+    symbol: &str,
+    side: crate::data::Side,
+    size: f64,
+    ack: &crate::execution::OrderAck,
+) -> anyhow::Result<()> {
+    let record = TradeRecord {
+        client_order_id: client_id.to_string(),
+        symbol: symbol.to_string(),
+        direction: side.as_str().to_string(),
+        strategy: "—".to_string(),
+        market_regime: "—".to_string(),
+        entry_time: Utc::now(),
+        entry_price: ack.avg_fill_price,
+        size,
+        stop_loss: 0.0,
+        take_profit: 0.0,
+        exit_time: None,
+        exit_price: None,
+        exit_reason: None,
+        pnl_usd: None,
+        pnl_pct: None,
+        fees_paid: None,
+        ta_confidence: None,
+        rsi: None,
+        adx: None,
+        vwap_delta_pct: None,
+        ema_alignment: None,
+        llm_model: None,
+        llm_decision: None,
+        llm_confidence: None,
+        llm_ta_score: None,
+        llm_sentiment_score: None,
+        llm_fundamental_score: None,
+        llm_composite: None,
+        llm_summary: None,
+        llm_ta_analysis: None,
+        llm_sentiment: None,
+        llm_fundamental: None,
+        llm_risks: None,
+        llm_invalidation: None,
+        llm_latency_ms: None,
+        fear_greed: None,
+        social_sentiment: None,
+        news_score: None,
+        funding_rate: None,
+        top_news_titles: None,
+        user_id: 7773988648,
+    };
+    journal.insert_trade(&record)?;
+    Ok(())
 }
 
 fn log_open_trade(

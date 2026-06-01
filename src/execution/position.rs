@@ -532,6 +532,7 @@ mod tests {
             partial_taken: false,
             breakeven_activated: false,
             trailing_activated: false,
+            partial_realized_pnl: 0.0,
             peak_price: 100.0,
             trough_price: 100.0,
         }
@@ -552,6 +553,7 @@ mod tests {
             partial_taken: false,
             breakeven_activated: false,
             trailing_activated: false,
+            partial_realized_pnl: 0.0,
             peak_price: 100.0,
             trough_price: 100.0,
         }

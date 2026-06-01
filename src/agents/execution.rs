@@ -737,6 +737,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 }),
                                 partial_taken: false,
                                 breakeven_activated: false,
+                                partial_realized_pnl: 0.0,
                                 strategy: v.proposal.strategy.clone(),
                             };
                             book.open(pos.clone());
