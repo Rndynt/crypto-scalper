@@ -793,6 +793,11 @@ async fn reconcile_startup_positions(
                 snap.side.as_str(),
                 now.timestamp_millis()
             ),
+            signal_id: format!(
+                "recovered-{}-{}",
+                snap.symbol,
+                now.timestamp_millis()
+            ),
             symbol: snap.symbol.clone(),
             side: snap.side,
             size: snap.size.abs(),
