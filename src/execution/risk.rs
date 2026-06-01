@@ -394,10 +394,16 @@ impl RiskManager {
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
         let qty = qty.min(leverage_cap);
 
-        // Enforce max position notional cap (e.g. 150% of equity)
-        // Prevents absurd sizes when SL is very tight
+        // Enforce max position notional cap as a fraction of total leveraged capacity
+        // (equity × max_leverage), NOT bare equity. This makes the config meaningful
+        // for high-leverage accounts: 150% means max notional = 1.5× full capacity,
+        // which is effectively a no-op since the leverage_cap above already binds at 100%.
+        // Values below 100% let operators limit per-position size as a fraction of max.
         if i.limits.max_position_notional_pct > 0.0 {
-            let max_notional = i.equity * i.limits.max_position_notional_pct / 100.0;
+            let max_notional = i.equity
+                * i.limits.max_leverage as f64
+                * i.limits.max_position_notional_pct
+                / 100.0;
             let notional_cap = max_notional / entry.max(1e-9);
             qty.min(notional_cap).max(0.0)
         } else {
