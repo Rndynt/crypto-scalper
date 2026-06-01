@@ -21,7 +21,7 @@ leverage        = 100
 position_mode   = "dual-side"
 
 [pairs]
-symbols    = ["BTCUSDT", "ETHUSDT"]
+symbols    = ["BTCUSDT"]
 timeframes = ["1m","15m"]
 
 [strategy]
