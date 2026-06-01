@@ -777,6 +777,7 @@ async fn reconcile_startup_positions(
             atr_at_entry: 0.0,
             partial_taken: false,
             breakeven_activated: false,
+            partial_realized_pnl: 0.0,
             strategy: "recovered".to_string(),
         };
         bus.publish(AgentEvent::PositionRecovered {
