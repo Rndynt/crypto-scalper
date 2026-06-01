@@ -722,6 +722,14 @@ pub fn spawn(
                     reason,
                     ..
                 } => {
+                    // BUG FIX: update session daily_pnl counter so Session Stats
+                    // in the NEXT close notification reflects partial TP profit.
+                    {
+                        let mut c = counters.lock();
+                        c.daily_pnl += pnl_usd;
+                    }
+                    metrics.update(|m| m.daily_pnl += pnl_usd);
+
                     let side_label = if side == crate::data::Side::Long {
                         "BUY"
                     } else {
@@ -736,11 +744,16 @@ pub fn spawn(
                         reason = %reason.as_str(),
                         "📉 partial TP taken"
                     );
+                    // Running session daily PnL for display
+                    let session_daily = counters.lock().daily_pnl;
+                    let daily_sign = if session_daily >= 0.0 { "+" } else { "" };
                     let msg = format!(
                         "🎯 <b>PARTIAL TP</b> · <code>{sym}</code> {side}\n\
                          📍 Entry: <code>{entry:.4}</code> → Exit: <code>{exit:.4}</code>\n\
                          📦 Reduced: <code>{red:.4}</code> · Remaining: <code>{rem:.4}</code>\n\
-                         💵 PnL: <code>{pnl:+.4}$</code>\n\
+                         💵 Partial PnL: <code>{pnl:+.4}$</code>\n\
+                         🛡 Runner SL → Breakeven (entry)\n\
+                         📊 Session Daily: <code>{daily_sign}{session_daily:.2}$</code>\n\
                          🤖 ARIA v1.0",
                         sym = short_sym(&symbol),
                         side = side_label,
@@ -749,6 +762,8 @@ pub fn spawn(
                         red = reduced_size,
                         rem = remaining_size,
                         pnl = pnl_usd,
+                        daily_sign = daily_sign,
+                        session_daily = session_daily,
                     );
                     let tg = telegram.clone();
                     tokio::spawn(async move {

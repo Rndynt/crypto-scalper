@@ -176,6 +176,16 @@ pub fn spawn(deps: SurvivalAgentDeps) -> JoinHandle<()> {
                     apply_state(&risk_ev, &state);
                     bus_for_publish.publish(AgentEvent::SurvivalUpdated(state));
                 }
+                // BUG FIX: partial TP (PositionReduced) must also update survival's
+                // daily_pnl and streak counters. Previously only PositionClosed fed
+                // survival, so partial TP profits were completely invisible to drawdown
+                // and loss-streak calculations.
+                AgentEvent::PositionReduced { pnl_usd, .. } => {
+                    on_position_closed(&inner_ev, pnl_usd, &cfg_ev);
+                    let state = recompute(&inner_ev, &risk_ev, &cfg_ev, initial_equity);
+                    apply_state(&risk_ev, &state);
+                    bus_for_publish.publish(AgentEvent::SurvivalUpdated(state));
+                }
                 AgentEvent::FeedsSnapshot(FeedsSnapshotMsg { snapshot, .. }) => {
                     let mut g = inner_ev.lock();
                     if let Some(news) = &snapshot.news {

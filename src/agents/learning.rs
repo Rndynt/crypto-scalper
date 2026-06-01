@@ -343,6 +343,21 @@ pub fn spawn(
                     if let AgentEvent::Shutdown = ev {
                         break;
                     }
+                    // BUG FIX: PositionReduced (partial TP) must also update equity
+                    // and strategy health. Previously only PositionClosed did this,
+                    // so partial TP profits were never reflected in equity or daily PnL.
+                    if let AgentEvent::PositionReduced {
+                        pnl_usd,
+                        ref strategy,
+                        ..
+                    } = ev
+                    {
+                        if let Some(ref qe) = qe_rt {
+                            qe.record_trade(pnl_usd);
+                        }
+                        ss_rt.update_equity(pnl_usd);
+                        ss_rt.record_strategy_trade(strategy, pnl_usd);
+                    }
                 }
             });
         }

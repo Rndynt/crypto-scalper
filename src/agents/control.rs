@@ -201,6 +201,12 @@ pub fn spawn(deps: ControlAgentDeps) -> JoinHandle<()> {
                     AgentEvent::PositionClosed { pnl_usd, .. } => {
                         ctrl_state.lock().stats.record_closed_trade(pnl_usd);
                     }
+                    // BUG FIX: partial TP must add to daily_pnl shown in Session Stats.
+                    // Does NOT increment trade count or win/loss — the position is not
+                    // fully closed yet. Only daily_pnl needs updating here.
+                    AgentEvent::PositionReduced { pnl_usd, .. } => {
+                        ctrl_state.lock().stats.daily_pnl += pnl_usd;
+                    }
                     AgentEvent::PolicyRefreshed { lessons_count, .. } => {
                         ctrl_state.lock().stats.active_lessons = lessons_count as u64;
                     }
@@ -1596,6 +1602,22 @@ fn cmd_positions(
             notional_usd
         };
 
+        // Partial TP realized PnL — only show when partial was taken
+        let partial_line = if p.partial_taken && p.partial_realized_pnl.abs() > 0.001 {
+            let sign = if p.partial_realized_pnl >= 0.0 { "+" } else { "" };
+            format!(
+                "├ 💰 Partial Realized: <code>{}{:.2}$</code>\n",
+                sign, p.partial_realized_pnl
+            )
+        } else {
+            String::new()
+        };
+
+        // Add partial realized to the position total so the footer "Total PnL"
+        // reflects runner unrealized + what was already banked on this position.
+        // (Runner unrealized was already accumulated in total_pnl above.)
+        total_pnl += p.partial_realized_pnl;
+
         lines.push(format!(
             "{side_emoji} <b>#{idx} {sym}</b> — {side_label}{trailing}{be}\n\
              ├ Entry: <code>{entry:.4}</code>\n\
@@ -1603,6 +1625,7 @@ fn cmd_positions(
              ├ SL: <code>{sl:.4}</code> · TP: <code>{tp:.4}</code>\n\
              ├ Size: <code>{size:.4}</code> ({notional:.2}$)\n\
              ├ ⚡ {leverage:.0}x · Margin: <code>{margin:.2}$</code>\n\
+             {partial_line}\
              ├ {pnl_emoji} PnL: <code>{pnl}</code> {pnl_pct}\n\
              └ Duration: <code>{duration}</code> · Opened: <code>{opened}</code>",
             idx = i + 1,
@@ -1615,6 +1638,7 @@ fn cmd_positions(
             notional = notional_usd,
             leverage = max_lev,
             margin = margin_usd,
+            partial_line = partial_line,
             pnl_emoji = pnl_emoji,
             pnl = pnl_str,
             pnl_pct = pnl_pct_str,
@@ -1623,12 +1647,12 @@ fn cmd_positions(
         ));
     }
 
-    // Total unrealized PnL
+    // Total PnL = unrealized (runners) + partial realized (banked from partial TP closes)
     let total_sign = if total_pnl >= 0.0 { "+" } else { "" };
     let total_emoji = if total_pnl >= 0.0 { "📈" } else { "📉" };
     lines.push("──────────".to_string());
     lines.push(format!(
-        "{emoji} <b>Unrealized PnL:</b> <code>{sign}{pnl:.2}$</code>",
+        "{emoji} <b>Total PnL (Unrealized + Partial):</b> <code>{sign}{pnl:.2}$</code>",
         emoji = total_emoji,
         sign = total_sign,
         pnl = total_pnl

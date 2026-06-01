@@ -41,6 +41,10 @@ pub struct Position {
     /// Whether SL has been moved to breakeven.
     #[serde(default)]
     pub breakeven_activated: bool,
+    /// Cumulative realized PnL from partial TP closes on this position.
+    /// Populated by check_exits when Reduce fires so cmd_positions can display it.
+    #[serde(default)]
+    pub partial_realized_pnl: f64,
     /// Strategy name that opened this position.
     #[serde(default)]
     pub strategy: String,
@@ -270,6 +274,11 @@ impl PositionBook {
                     if p.stop_loss > 0.0 && price <= p.stop_loss {
                         let reason = if is_breakeven_stop(p) {
                             PositionExitReason::Breakeven
+                        } else if p.trailing_activated {
+                            // BUG FIX: trailing SL is stored in p.stop_loss just like a hard SL.
+                            // Hard SL check fires first and would label this as StopLoss.
+                            // When trailing was active the correct label is Trailing.
+                            PositionExitReason::Trailing
                         } else {
                             PositionExitReason::StopLoss
                         };
@@ -290,6 +299,10 @@ impl PositionBook {
                     if p.stop_loss > 0.0 && price >= p.stop_loss {
                         let reason = if is_breakeven_stop(p) {
                             PositionExitReason::Breakeven
+                        } else if p.trailing_activated {
+                            // BUG FIX: same as Long — trailing SL stored in p.stop_loss,
+                            // hard check fires first and would mislabel it as StopLoss.
+                            PositionExitReason::Trailing
                         } else {
                             PositionExitReason::StopLoss
                         };
@@ -327,6 +340,10 @@ impl PositionBook {
                             size: reduce_size,
                             ..p.clone()
                         };
+                        // Accumulate realized PnL from this partial close on the position
+                        // so cmd_positions can show "already realized: $X" while the runner is open.
+                        let partial_pnl = pnl_usd(&reduce_pos, price);
+                        p.partial_realized_pnl += partial_pnl;
                         // Reduce remaining size in book
                         p.size -= reduce_size;
                         // Move SL to breakeven in book
@@ -402,6 +419,8 @@ impl PositionBook {
                             size: reduce_size,
                             ..p.clone()
                         };
+                        let partial_pnl = pnl_usd(&reduce_pos, price);
+                        p.partial_realized_pnl += partial_pnl;
                         p.size -= reduce_size;
                         let old_sl = p.stop_loss;
                         p.stop_loss = new_sl;
