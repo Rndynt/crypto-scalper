@@ -459,6 +459,7 @@ async fn telegram_loop(
                         let cmd = match data {
                             "btn_status" => "/status",
                             "btn_positions" => "/positions",
+                            "btn_refresh_positions" => "/positions",
                             "btn_signals" => "/signals",
                             "btn_performance" => "/performance",
                             "btn_risk" => "/risk",
@@ -1096,6 +1097,10 @@ fn help_buttons() -> Vec<Vec<InlineButton>> {
                 callback_data: "btn_positions".into(),
             },
             InlineButton {
+                text: "🔄 Refresh Pos".into(),
+                callback_data: "btn_refresh_positions".into(),
+            },
+            InlineButton {
                 text: "🔔 Signals".into(),
                 callback_data: "btn_signals".into(),
             },
@@ -1183,6 +1188,10 @@ fn command_buttons(cmd: &str) -> Vec<Vec<InlineButton>> {
             help_btn,
         ]],
         "/positions" | "positions" => vec![vec![
+            InlineButton {
+                text: "🔄 Refresh".into(),
+                callback_data: "btn_refresh_positions".into(),
+            },
             InlineButton {
                 text: "📊 Status".into(),
                 callback_data: "btn_status".into(),
