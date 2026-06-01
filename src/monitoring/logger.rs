@@ -23,6 +23,7 @@ pub const SQLITE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     client_order_id TEXT UNIQUE NOT NULL,
+    signal_id TEXT DEFAULT '',
     user_id INTEGER NOT NULL DEFAULT 7773988648,
     symbol TEXT NOT NULL,
     direction TEXT NOT NULL,
@@ -96,6 +97,7 @@ const PG_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS trades (
     id BIGSERIAL PRIMARY KEY,
     client_order_id TEXT UNIQUE NOT NULL,
+    signal_id TEXT DEFAULT '',
     user_id BIGINT NOT NULL DEFAULT 7773988648,
     symbol TEXT NOT NULL,
     direction TEXT NOT NULL,
@@ -169,6 +171,9 @@ CREATE TABLE IF NOT EXISTS llm_decisions (
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeRecord {
     pub client_order_id: String,
+    /// Signal ID that originated this trade (e.g. "S-00001").
+    #[serde(default)]
+    pub signal_id: String,
     pub symbol: String,
     pub direction: String,
     pub strategy: String,
@@ -225,6 +230,7 @@ fn default_user_id() -> i64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedTrade {
+    pub signal_id: String,
     pub symbol: String,
     pub direction: String,
     pub strategy: String,
@@ -284,6 +290,7 @@ enum PgReq {
     RecentPnl(mpsc::SyncSender<f64>),
     TradeCount(mpsc::SyncSender<i64>),
     ClosedTrades(i64, mpsc::SyncSender<Vec<ClosedTrade>>),
+    MaxSignalId(mpsc::SyncSender<u64>),
 }
 
 /// Spawn a background thread owning a `postgres::Client`.
@@ -390,6 +397,10 @@ fn spawn_pg_worker(url: String) -> Result<mpsc::SyncSender<PgReq>> {
                         let v = pg_closed_trades(&mut client, limit).unwrap_or_default();
                         let _ = tx.send(v);
                     }
+                    PgReq::MaxSignalId(tx) => {
+                        let v = pg_max_signal_id(&mut client).unwrap_or(0);
+                        let _ = tx.send(v);
+                    }
                 }
             }
         })
@@ -409,7 +420,7 @@ fn pg_insert(client: &mut postgres::Client, t: &TradeRecord) -> std::result::Res
     client
         .execute(
             "INSERT INTO trades (
-                client_order_id, user_id, symbol, direction, strategy, market_regime,
+                client_order_id, signal_id, user_id, symbol, direction, strategy, market_regime,
                 entry_time, entry_price, size, stop_loss, take_profit,
                 exit_time, exit_price, exit_reason, pnl_usd, pnl_pct, fees_paid,
                 ta_confidence, rsi, adx, vwap_delta_pct, ema_alignment,
@@ -421,10 +432,11 @@ fn pg_insert(client: &mut postgres::Client, t: &TradeRecord) -> std::result::Res
             ) VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                 $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                $39,$40,$41
+                $39,$40,$41,$42
             )",
             &[
                 &t.client_order_id,
+                &t.signal_id,
                 &t.user_id,
                 &t.symbol,
                 &t.direction,
@@ -562,7 +574,7 @@ fn pg_closed_trades(
 ) -> std::result::Result<Vec<ClosedTrade>, String> {
     let rows = client
         .query(
-            "SELECT symbol, direction, strategy, market_regime, entry_time, exit_time,
+            "SELECT signal_id, symbol, direction, strategy, market_regime, entry_time, exit_time,
                     pnl_usd, pnl_pct, ta_confidence, llm_confidence
              FROM trades
              WHERE exit_time IS NOT NULL AND pnl_usd IS NOT NULL
@@ -574,19 +586,35 @@ fn pg_closed_trades(
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
         out.push(ClosedTrade {
-            symbol: r.get(0),
-            direction: r.get(1),
-            strategy: r.get(2),
-            regime: r.get(3),
-            entry_time: r.get(4),
-            exit_time: r.get(5),
-            pnl_usd: r.get(6),
-            pnl_pct: r.get::<_, Option<f64>>(7).unwrap_or(0.0),
-            ta_confidence: r.get::<_, Option<i16>>(8).map(|v| v as u8),
-            llm_confidence: r.get::<_, Option<i16>>(9).map(|v| v as u8),
+            signal_id: r.get::<_, Option<String>>(0).unwrap_or_default(),
+            symbol: r.get(1),
+            direction: r.get(2),
+            strategy: r.get(3),
+            regime: r.get(4),
+            entry_time: r.get(5),
+            exit_time: r.get(6),
+            pnl_usd: r.get(7),
+            pnl_pct: r.get::<_, Option<f64>>(8).unwrap_or(0.0),
+            ta_confidence: r.get::<_, Option<i16>>(9).map(|v| v as u8),
+            llm_confidence: r.get::<_, Option<i16>>(10).map(|v| v as u8),
         });
     }
     Ok(out)
+}
+
+fn pg_max_signal_id(client: &mut postgres::Client) -> std::result::Result<u64, String> {
+    let row = client
+        .query_opt(
+            "SELECT signal_id FROM trades WHERE signal_id != '' ORDER BY CAST(SUBSTRING(signal_id FROM 3) AS BIGINT) DESC LIMIT 1",
+            &[],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(row
+        .and_then(|r| {
+            let s: Option<String> = r.get(0);
+            s.and_then(|s| s.strip_prefix("S-").and_then(|n| n.parse::<u64>().ok()))
+        })
+        .unwrap_or(0))
 }
 
 // ── TradeJournal ───────────────────────────────────────────────────────
@@ -652,7 +680,7 @@ impl TradeJournal {
                 let conn = conn.lock();
                 conn.execute(
                     "INSERT INTO trades (
-                        client_order_id, user_id, symbol, direction, strategy, market_regime,
+                        client_order_id, signal_id, user_id, symbol, direction, strategy, market_regime,
                         entry_time, entry_price, size, stop_loss, take_profit,
                         exit_time, exit_price, exit_reason, pnl_usd, pnl_pct, fees_paid,
                         ta_confidence, rsi, adx, vwap_delta_pct, ema_alignment,
@@ -664,10 +692,11 @@ impl TradeJournal {
                     ) VALUES (
                         ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,
                         ?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34,?35,?36,?37,?38,
-                        ?39,?40,?41
+                        ?39,?40,?41,?42
                     )",
                     params![
                         t.client_order_id,
+                        t.signal_id,
                         t.user_id,
                         t.symbol,
                         t.direction,
@@ -888,7 +917,7 @@ impl TradeJournal {
             JournalBackend::Sqlite(conn) => {
                 let conn = conn.lock();
                 let mut stmt = conn.prepare(
-                    "SELECT symbol, direction, strategy, market_regime, entry_time, exit_time,
+                    "SELECT signal_id, symbol, direction, strategy, market_regime, entry_time, exit_time,
                             pnl_usd, pnl_pct, ta_confidence, llm_confidence
                      FROM trades
                      WHERE exit_time IS NOT NULL AND pnl_usd IS NOT NULL
@@ -897,16 +926,17 @@ impl TradeJournal {
                 )?;
                 let rows = stmt.query_map(params![limit], |r| {
                     Ok(ClosedTrade {
-                        symbol: r.get(0)?,
-                        direction: r.get(1)?,
-                        strategy: r.get(2)?,
-                        regime: r.get(3)?,
-                        entry_time: r.get(4)?,
-                        exit_time: r.get(5)?,
-                        pnl_usd: r.get(6)?,
-                        pnl_pct: r.get(7).unwrap_or(0.0),
-                        ta_confidence: r.get::<_, Option<i64>>(8)?.map(|v| v as u8),
-                        llm_confidence: r.get::<_, Option<i64>>(9)?.map(|v| v as u8),
+                        signal_id: r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        symbol: r.get(1)?,
+                        direction: r.get(2)?,
+                        strategy: r.get(3)?,
+                        regime: r.get(4)?,
+                        entry_time: r.get(5)?,
+                        exit_time: r.get(6)?,
+                        pnl_usd: r.get(7)?,
+                        pnl_pct: r.get(8).unwrap_or(0.0),
+                        ta_confidence: r.get::<_, Option<i64>>(9)?.map(|v| v as u8),
+                        llm_confidence: r.get::<_, Option<i64>>(10)?.map(|v| v as u8),
                     })
                 })?;
                 let mut out = Vec::new();
@@ -929,6 +959,96 @@ impl TradeJournal {
     /// Whether this journal is backed by PostgreSQL.
     pub fn is_pg(&self) -> bool {
         matches!(self.backend, JournalBackend::Postgres { .. })
+    }
+
+    /// Get the maximum signal ID number from the database for counter initialization.
+    /// Returns 0 if no signals exist yet.
+    pub fn max_signal_id_number(&self) -> u64 {
+        match &self.backend {
+            JournalBackend::Sqlite(conn) => {
+                let conn = conn.lock();
+                let v: Option<String> = conn
+                    .query_row(
+                        "SELECT signal_id FROM trades WHERE signal_id != '' ORDER BY CAST(SUBSTR(signal_id, 3) AS INTEGER) DESC LIMIT 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(None);
+                v.and_then(|s| s.strip_prefix("S-").and_then(|n| n.parse::<u64>().ok()))
+                    .unwrap_or(0)
+            }
+            JournalBackend::Postgres { tx } => {
+                // For PG, we'll use a sync query via the worker
+                let (resp_tx, resp_rx) = mpsc::sync_channel(1);
+                let _ = tx.send(PgReq::MaxSignalId(resp_tx));
+                resp_rx.recv().unwrap_or(0)
+            }
+        }
+    }
+
+    /// Log a partial close event as a separate trade record.
+    /// This ensures partial TP appears in /history with the same signal_id.
+    pub fn log_partial_close(
+        &self,
+        signal_id: &str,
+        parent_client_id: &str,
+        symbol: &str,
+        side: &str,
+        strategy: &str,
+        regime: &str,
+        entry_price: f64,
+        exit_price: f64,
+        reduced_size: f64,
+        pnl_usd: f64,
+    ) -> Result<()> {
+        let partial_client_id = format!("{}-partial-{}", parent_client_id, Utc::now().timestamp_millis());
+        let notional = entry_price * reduced_size;
+        let pnl_pct = if notional > 0.0 { pnl_usd / notional * 100.0 } else { 0.0 };
+        let record = TradeRecord {
+            client_order_id: partial_client_id,
+            signal_id: signal_id.to_string(),
+            symbol: symbol.to_string(),
+            direction: side.to_string(),
+            strategy: strategy.to_string(),
+            market_regime: regime.to_string(),
+            entry_time: Utc::now(),
+            entry_price,
+            size: reduced_size,
+            stop_loss: 0.0,
+            take_profit: 0.0,
+            exit_time: Some(Utc::now()),
+            exit_price: Some(exit_price),
+            exit_reason: Some("PARTIAL_TP".to_string()),
+            pnl_usd: Some(pnl_usd),
+            pnl_pct: Some(pnl_pct),
+            fees_paid: Some(0.0),
+            ta_confidence: None,
+            rsi: None,
+            adx: None,
+            vwap_delta_pct: None,
+            ema_alignment: None,
+            llm_model: None,
+            llm_decision: None,
+            llm_confidence: None,
+            llm_ta_score: None,
+            llm_sentiment_score: None,
+            llm_fundamental_score: None,
+            llm_composite: None,
+            llm_summary: None,
+            llm_ta_analysis: None,
+            llm_sentiment: None,
+            llm_fundamental: None,
+            llm_risks: None,
+            llm_invalidation: None,
+            llm_latency_ms: None,
+            fear_greed: None,
+            social_sentiment: None,
+            news_score: None,
+            funding_rate: None,
+            top_news_titles: None,
+            user_id: 7773988648,
+        };
+        self.insert_trade(&record)
     }
 }
 

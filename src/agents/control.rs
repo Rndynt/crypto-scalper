@@ -1620,6 +1620,7 @@ fn cmd_positions(
 
         lines.push(format!(
             "{side_emoji} <b>#{idx} {sym}</b> — {side_label}{trailing}{be}\n\
+             🆔 <code>{signal_id}</code>\n\
              ├ Entry: <code>{entry:.4}</code>\n\
              {price_line}\
              ├ SL: <code>{sl:.4}</code> · TP: <code>{tp:.4}</code>\n\
@@ -1630,6 +1631,7 @@ fn cmd_positions(
              └ Duration: <code>{duration}</code> · Opened: <code>{opened}</code>",
             idx = i + 1,
             sym = short_sym_ctrl(&p.symbol),
+            signal_id = if p.signal_id.is_empty() { "—" } else { &p.signal_id },
             entry = p.entry_price,
             price_line = price_line,
             sl = p.stop_loss,
@@ -2087,12 +2089,14 @@ fn cmd_history(journal: &Option<Arc<TradeJournal>>) -> String {
         let emoji = if t.is_win() { "🟢" } else { "🔴" };
         let pnl_s = if t.pnl_usd >= 0.0 { "+" } else { "" };
         let ts = t.entry_time.format("%m/%d %H:%M").to_string();
+        let sid = if t.signal_id.is_empty() { "—" } else { &t.signal_id };
         lines.push(format!(
-            "{emoji} {ts} · {dir} <code>{sym}</code> · {pnl_s}{pnl:.2}$",
+            "{emoji} {ts} · {sid} · {dir} <code>{sym}</code> · {pnl_s}{pnl:.2}$",
             dir = t.direction,
             sym = short_sym_ctrl(&t.symbol),
             pnl_s = pnl_s,
             pnl = t.pnl_usd,
+            sid = sid,
         ));
     }
 

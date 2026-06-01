@@ -436,7 +436,9 @@ pub fn spawn(
                         )
                     };
 
-                    if let Some(signal) = best {
+                    if let Some(mut signal) = best {
+                        // Assign sequential signal ID for tracking across all events
+                        signal.signal_id = shared_state.next_signal_id();
                         // P0-3: Hard gate — only emit PreSignalEmitted when bias allows the side.
                         if !current_bias.allows(&signal.side) {
                             info!(

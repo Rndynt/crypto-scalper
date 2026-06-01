@@ -487,6 +487,7 @@ pub fn spawn(
                     side,
                     size,
                     ack,
+                    signal_id,
                 } => {
                     // Scope lock strictly — must not cross .await boundary
                     let trade_no = {
@@ -542,7 +543,6 @@ pub fn spawn(
                     // ─── Enhanced open notification ────────────────────────
                     let msg = build_open_notification(
                         side_label,
-                        trade_no,
                         &symbol,
                         ack.avg_fill_price,
                         &sl_line,
@@ -552,6 +552,7 @@ pub fn spawn(
                         &strategy,
                         brain.as_ref(),
                         max_leverage,
+                        &signal_id,
                     );
                     // Spawn — don't block the event loop
                     let tg = telegram.clone();
@@ -569,6 +570,7 @@ pub fn spawn(
                     pnl_usd,
                     reason,
                     strategy: _,
+                    signal_id,
                 } => {
                     // BUG FIX: old formula (exit-entry)/entry gives negative pnl_pct for
                     // profitable SHORT positions. Use pnl_usd/notional which is always
@@ -665,7 +667,8 @@ pub fn spawn(
                     let msg = format!(
                         "{header}\n\
                          ──────────\n\
-                         📊 <b>{side_label}</b> #{trade_no} · <code>{sym}</code>\n\
+                         🆔 <code>{signal_id}</code>\n\
+                         📊 <b>{side_label}</b> · <code>{sym}</code>\n\
                          📍 Entry: <code>{entry:.4}</code>\n\
                          🏁 Exit:  <code>{exit:.4}</code>\n\
                          💼 Size:  <code>{size:.4}</code> {sym_short} (<code>${notional:.2}</code>)\n\
@@ -680,8 +683,8 @@ pub fn spawn(
                          └ Total Trades: {total}\n\
                          🤖 ARIA v1.0",
                         header = header,
+                        signal_id = signal_id,
                         side_label = side_label,
-                        trade_no = trade_no,
                         sym = short_sym(&symbol),
                         entry = entry_price,
                         exit = exit_price,
@@ -726,6 +729,7 @@ pub fn spawn(
                     exit_price,
                     pnl_usd,
                     reason,
+                    signal_id,
                     ..
                 } => {
                     // BUG FIX: update session daily_pnl counter so Session Stats
@@ -735,6 +739,23 @@ pub fn spawn(
                         c.daily_pnl += pnl_usd;
                     }
                     metrics.update(|m| m.daily_pnl += pnl_usd);
+
+                    // Persist partial close to journal so it appears in /history
+                    let side_str = if side == crate::data::Side::Long { "LONG" } else { "SHORT" };
+                    if let Err(e) = journal.log_partial_close(
+                        &signal_id,
+                        &client_id,
+                        &symbol,
+                        side_str,
+                        &reason.as_str(), // use reason as strategy placeholder
+                        "UNKNOWN",
+                        entry_price,
+                        exit_price,
+                        reduced_size,
+                        pnl_usd,
+                    ) {
+                        warn!(error = %e, "monitor: log_partial_close failed");
+                    }
 
                     let side_label = if side == crate::data::Side::Long {
                         "BUY"
@@ -755,6 +776,7 @@ pub fn spawn(
                     let daily_sign = if session_daily >= 0.0 { "+" } else { "" };
                     let msg = format!(
                         "🎯 <b>PARTIAL TP</b> · <code>{sym}</code> {side}\n\
+                         🆔 <code>{signal_id}</code>\n\
                          📍 Entry: <code>{entry:.4}</code> → Exit: <code>{exit:.4}</code>\n\
                          📦 Reduced: <code>{red:.4}</code> · Remaining: <code>{rem:.4}</code>\n\
                          💵 Partial PnL: <code>{pnl:+.4}$</code>\n\
@@ -763,6 +785,7 @@ pub fn spawn(
                          🤖 ARIA v1.0",
                         sym = short_sym(&symbol),
                         side = side_label,
+                        signal_id = signal_id,
                         entry = entry_price,
                         exit = exit_price,
                         red = reduced_size,
@@ -819,7 +842,6 @@ pub fn spawn(
 #[allow(clippy::too_many_arguments)]
 fn build_open_notification(
     side_label: &str,
-    trade_no: u64,
     symbol: &str,
     entry_price: f64,
     sl_line: &str,
@@ -829,6 +851,7 @@ fn build_open_notification(
     strategy: &str,
     brain: Option<&BrainOutcome>,
     max_leverage: f64,
+    signal_id: &str,
 ) -> String {
     let side_emoji = if side_label == "BUY" { "🟢" } else { "🔴" };
 
@@ -947,7 +970,8 @@ fn build_open_notification(
     format!(
         "{side_emoji} <b>POSITION OPENED</b>\n\
          ──────────\n\
-         📊 <b>{side_label}</b> #{trade_no} · <code>{sym}</code>\n\
+         🆔 <code>{signal_id}</code>\n\
+         📊 <b>{side_label}</b> · <code>{sym}</code>\n\
          📍 Entry: <code>{entry:.4}</code>\n\
          🛡 SL: <code>{sl}</code>\n\
          🎯 TP: <code>{tp}</code>\n\
@@ -961,7 +985,7 @@ fn build_open_notification(
          🤖 ARIA v1.0",
         side_emoji = side_emoji,
         side_label = side_label,
-        trade_no = trade_no,
+        signal_id = signal_id,
         sym = short_sym(symbol),
         entry = entry_price,
         sl = sl_line,

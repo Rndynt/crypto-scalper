@@ -22,6 +22,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
     pub client_id: String,
+    /// Signal ID that originated this trade (e.g. "S-00001").
+    #[serde(default)]
+    pub signal_id: String,
     pub symbol: String,
     pub side: Side,
     pub size: f64,

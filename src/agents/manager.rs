@@ -231,6 +231,7 @@ fn build_proposal(brain: &BrainOutcome) -> ManagerProposal {
     // Use the RISK-MANAGED signal (with capped SL/TP) instead of raw signal
     let signal = &brain.risk.signal;
     ManagerProposal {
+        signal_id: signal.signal_id.clone(),
         symbol: signal.symbol.clone(),
         side: signal.side,
         strategy: signal.strategy.as_str().to_string(),

@@ -120,6 +120,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     pnl_usd: pnl,
                                     reason,
                                     strategy: pos.strategy.clone(),
+                                    signal_id: pos.signal_id.clone(),
                                 });
                             }
                             // P0-4: Partial TP → Reduce, NOT Close. Emit PositionReduced.
@@ -162,6 +163,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     pnl_usd: pnl,
                                     reason,
                                     strategy: pos.strategy.clone(),
+                                    signal_id: pos.signal_id.clone(),
                                 });
                             }
                             // P0-5: SL moved — cancel old broker SL order + place new one.
@@ -194,6 +196,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                             old_stop,
                                             new_stop: new_sl,
                                             reason: "breakeven_or_trailing".to_string(),
+                                            signal_id: pos.signal_id.clone(),
                                         });
                                     }
                                     Err(e) => {
@@ -260,6 +263,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     pnl_usd: pnl,
                                     reason,
                                     strategy: pos.strategy.clone(),
+                                    signal_id: pos.signal_id.clone(),
                                 });
                             }
                             // P0-4: Partial TP → Reduce. Emit PositionReduced (NOT PositionClosed).
@@ -310,6 +314,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                     pnl_usd: pnl,
                                     reason,
                                     strategy: pos.strategy.clone(),
+                                    signal_id: pos.signal_id.clone(),
                                 });
                             }
                             // P0-5: SL moved (breakeven/trailing) — cancel old broker order + place new.
@@ -342,6 +347,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                             old_stop,
                                             new_stop: new_sl,
                                             reason: "breakeven_or_trailing".to_string(),
+                                            signal_id: pos.signal_id.clone(),
                                         });
                                     }
                                     Err(e) => {
@@ -435,6 +441,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 pnl_usd: pnl,
                                 reason: PositionExitReason::Manual,
                                 strategy: closed.strategy.clone(),
+                                signal_id: closed.signal_id.clone(),
                             });
                         }
                     }
@@ -491,6 +498,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 pnl_usd: pnl,
                                 reason: PositionExitReason::Manual,
                                 strategy: closed.strategy.clone(),
+                                signal_id: closed.signal_id.clone(),
                             });
                         }
                     }
@@ -722,6 +730,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                             );
                             let pos = Position {
                                 client_id: req.client_id.clone(),
+                                signal_id: v.proposal.signal_id.clone(),
                                 symbol: req.symbol.clone(),
                                 side: req.side,
                                 size: req.size,
@@ -765,6 +774,7 @@ pub fn spawn(deps: ExecutionAgentDeps) -> JoinHandle<()> {
                                 side: req.side,
                                 size: req.size,
                                 ack,
+                                signal_id: v.proposal.signal_id,
                             });
                         }
                         Err(e) => {

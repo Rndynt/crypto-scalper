@@ -429,6 +429,10 @@ async fn run_agents(cfg: Config) -> Result<()> {
     // --- SharedState for cross-agent coordination ---
     let shared_state = SharedState::new(cfg.risk.equity_usd, cfg.risk.max_open_positions as u64);
     shared_state.sync_from_persisted(); // Sync SharedState with persisted equity
+    // Initialize signal counter from DB so sequential IDs survive restarts
+    let max_sig = journal.max_signal_id_number();
+    shared_state.set_signal_counter(max_sig);
+    info!(counter = max_sig, "signal_id counter initialized from DB");
     info!("SharedState initialized — all agents will coordinate through shared context");
 
     reconcile_startup_positions(

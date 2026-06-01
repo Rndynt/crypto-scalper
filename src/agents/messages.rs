@@ -108,6 +108,9 @@ pub enum AgentEvent {
         side: Side,
         size: f64,
         ack: OrderAck,
+        /// Signal ID that originated this trade (e.g. "S-00001").
+        #[serde(default)]
+        signal_id: String,
     },
     /// `ExecutionAgent` failed to place or confirm an order for this symbol.
     /// The `RiskAgent` listens for this to release `pending_symbols` so the
@@ -150,6 +153,9 @@ pub enum AgentEvent {
         pnl_usd: f64,
         reason: PositionExitReason,
         strategy: String,
+        /// Signal ID that originated this trade (e.g. "S-00001").
+        #[serde(default)]
+        signal_id: String,
     },
     /// Position partially closed (partial TP taken). The position remains open
     /// at reduced size. Never triggers `risk.on_position_closed` or learning.
@@ -166,6 +172,9 @@ pub enum AgentEvent {
         pnl_usd: f64,
         reason: PositionExitReason,
         strategy: String,
+        /// Signal ID that originated this trade (e.g. "S-00001").
+        #[serde(default)]
+        signal_id: String,
     },
     /// `ExecutionAgent` moved (replaced) the broker-side stop-loss order.
     /// Emitted after cancel + re-place of protective SL succeeds.
@@ -175,6 +184,9 @@ pub enum AgentEvent {
         old_stop: f64,
         new_stop: f64,
         reason: String,
+        /// Signal ID that originated this trade (e.g. "S-00001").
+        #[serde(default)]
+        signal_id: String,
     },
     /// Heartbeat for liveness monitoring.
     Heartbeat {
@@ -372,6 +384,9 @@ pub struct BrainOutcome {
 
 #[derive(Debug, Clone)]
 pub struct ManagerProposal {
+    /// Signal ID that originated this trade (e.g. "S-00001").
+    #[serde(default)]
+    pub signal_id: String,
     pub symbol: String,
     pub side: Side,
     pub strategy: String,

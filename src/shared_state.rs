@@ -7,6 +7,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Strategy health tracking
@@ -163,6 +164,11 @@ pub struct SharedState {
     // === LEARNING FEEDBACK ===
     pub strategy_adjustments: RwLock<HashMap<String, f64>>,
     pub recent_lessons: RwLock<Vec<String>>,
+
+    // === SIGNAL ID COUNTER ===
+    /// Global sequential signal counter for generating "S-00001" style IDs.
+    /// Loaded from DB on startup, incremented atomically per new signal.
+    pub signal_counter: AtomicU64,
 }
 
 /// Local survival mode for SharedState display only.
@@ -225,6 +231,7 @@ impl SharedState {
 
             strategy_adjustments: RwLock::new(HashMap::new()),
             recent_lessons: RwLock::new(Vec::new()),
+            signal_counter: AtomicU64::new(0),
         })
     }
 
@@ -475,5 +482,20 @@ impl SharedState {
             open,
             regime
         )
+    }
+
+    // === SIGNAL ID ===
+
+    /// Generate the next sequential signal ID in "S-00001" format.
+    /// Thread-safe via atomic increment. Counter persists across restarts
+    /// by loading from DB on startup.
+    pub fn next_signal_id(&self) -> String {
+        let n = self.signal_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        format!("S-{:05}", n)
+    }
+
+    /// Set the signal counter to a specific value (used on startup to sync with DB).
+    pub fn set_signal_counter(&self, value: u64) {
+        self.signal_counter.store(value, Ordering::SeqCst);
     }
 }
