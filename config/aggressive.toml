@@ -64,18 +64,18 @@ fail_open_on_error    = false  # FIXED: was true — don't auto-approve on LLM e
 
 [risk]
 equity_usd                = 300.0
-risk_per_trade_pct        = 5.0    # REDUCED: was 2% — 1% risk per trade is standard
-max_open_positions        = 3      # REDUCED: was 5 — $300 equity, max 2 concurrent positions
-max_daily_loss_pct        = 30.0    # TIGHTENED: was 5% — protect capital
-max_drawdown_pct          = 60.0    # TIGHTENED: was 10%
+risk_per_trade_pct        = 5.0
+max_open_positions        = 3
+max_daily_loss_pct        = 30.0
+max_drawdown_pct          = 60.0
 max_leverage              = 100
-max_spread_pct            = 0.08   # TIGHTENED: was 0.1
-min_reward_risk           = 1.4    # 1.4 minimum — screened_vwap targets 2.0
-min_net_edge_bps          = 0.0    # disabled: paper mode, no real costs
-max_position_notional_pct = 150.0  # REDUCED: was 200%
+max_spread_pct            = 0.08
+min_reward_risk           = 1.4
+min_net_edge_bps          = 0.0
+max_position_notional_pct = 150.0
 assumed_daily_volume_usd  = 1_000_000_000.0
-min_margin_usd            = 8.0
-max_hold_secs             = 3600  # 60-minute max hold; /hold can override at runtime
+min_margin_usd            = 0.0
+max_hold_secs             = 3600
 
 [schedule]
 dead_zone_start_hour_wib = 0
@@ -112,20 +112,20 @@ trades_per_day        = 12.0
 
 [survival]
 enabled                        = true
-death_line_pct                 = 0.40   # TIGHTENED: was 0.50 — stop at -60% drawdown
-loss_streak_short              = 3      # TIGHTENED: was 5 — 3 losses → cooldown
-loss_streak_short_cooldown_min = 30     # RAISED: was 15 — longer cooldown
-loss_streak_long               = 5      # TIGHTENED: was 8
+death_line_pct                 = 0.40
+loss_streak_short              = 8
+loss_streak_short_cooldown_min = 15
+loss_streak_long               = 12
 loss_streak_long_window_min    = 60
-loss_streak_long_cooldown_min  = 120    # RAISED: was 60 — serious cooldown
-daily_loss_count               = 6      # TIGHTENED: was 10
-auto_flat_drawdown_pct         = 5.0    # TIGHTENED: was 8%
+loss_streak_long_cooldown_min  = 60
+daily_loss_count               = 15
+auto_flat_drawdown_pct         = 20.0
 refresh_secs                   = 10
 equity_refresh_secs            = 30
-vol_spike_mult                 = 2.5    # TIGHTENED: was 3.0
+vol_spike_mult                 = 3.0
 news_panic_threshold           = -0.7
 news_euphoria_threshold        = 0.8
-daily_pnl_ratchet_pct          = 1.5    # TIGHTENED: was 2% — protect smaller gains
+daily_pnl_ratchet_pct          = 1.5
 
 [control]
 telegram_commands_enabled = true
@@ -133,20 +133,7 @@ allowed_user_ids          = [7773988648]
 poll_secs                 = 2
 
 [quant]
-enabled                  = true
-kelly_cap                = 0.15    # REDUCED: was 0.20 — more conservative sizing
-kelly_min_trades         = 20
-target_vol_annual        = 0.30
-max_vol_multiplier       = 2.0
-vol_window               = 30
-var_confidence           = 0.95
-max_var_pct              = 0.05
-ic_window                = 30
-ic_min_abs               = 0.03
-ic_max_boost             = 10
-kalman_process_noise     = 0.005
-kalman_measurement_noise = 0.5
-kalman_min_velocity_bps  = 2.0
+enabled                  = false
 
 [screening]
 enabled               = true
