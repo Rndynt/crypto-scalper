@@ -563,7 +563,10 @@ async fn run_agents(cfg: Config) -> Result<()> {
             max_hold_secs: cfg.risk.max_hold_secs,
             trail_atr_mult: 0.3,
             trail_activate_r: 1.0,
-            breakeven_r: 0.6,
+            // Disable pre-TP breakeven by default. Partial TP at 1R still moves
+            // the remaining runner SL to entry; this avoids premature scratch
+            // stop-outs before any profit is banked.
+            breakeven_r: 0.0,
             partial_tp_enabled: true,
             partial_tp_r: 1.0,
         },

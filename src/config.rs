@@ -267,12 +267,16 @@ pub struct RiskCfg {
     pub max_hold_secs: i64,
     /// Minimum margin USD per trade. Ensures position is never tiny
     /// even when SL distance is wide. 0 = disabled (use risk% only).
-    #[serde(default)]
+    #[serde(default = "default_min_margin_usd")]
     pub min_margin_usd: f64,
 }
 
 fn default_max_hold_secs() -> i64 {
     900
+}
+
+fn default_min_margin_usd() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
