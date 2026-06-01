@@ -309,13 +309,13 @@ impl MarketContext {
         } else if self.strategy_total_trades >= 3 && self.strategy_win_rate < 0.40 {
             let _ = writeln!(
                 s,
-                "  ⚠️ WARNING: This strategy has LOW win rate — be EXTRA selective!"
+                "  ℹ️ LOW WR NOTE: Do not block for WR alone; reduce size only if dollar PnL/flow is bad."
             );
         }
         if self.strategy_loss_streak >= 3 {
             let _ = writeln!(
                 s,
-                "  ⚠️ WARNING: {} consecutive losses — consider WAITING!",
+                "  ℹ️ LOSS STREAK: {} consecutive losses — prefer smaller probe size, not automatic WAIT.",
                 self.strategy_loss_streak
             );
         }

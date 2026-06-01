@@ -384,13 +384,12 @@ impl RiskManager {
         }
         // Risk-based: qty = risk_amount / sl_distance_per_unit
         let qty = risk_amount / sl_distance;
-        // Enforce min margin floor
-        let margin_usd = qty * entry / i.limits.max_leverage.max(1) as f64;
-        let qty = if margin_usd < i.limits.min_margin_usd && i.limits.min_margin_usd > 0.0 {
-            i.limits.min_margin_usd * i.limits.max_leverage.max(1) as f64 / entry.max(1e-9)
-        } else {
-            qty
-        };
+        // Never lift size to satisfy a minimum-margin preference. This
+        // function is the source of truth for risk-per-trade sizing, so
+        // increasing qty here would silently risk more than the configured
+        // percent whenever the stop distance is wide or policy multipliers
+        // have reduced the trade. Exchange minimums must be handled as an
+        // execution/risk rejection, not by overriding the risk budget.
         // Respect leverage cap
         let leverage_cap = i.equity * i.limits.max_leverage as f64 / entry.max(1e-9);
         let qty = qty.min(leverage_cap);
@@ -490,8 +489,8 @@ mod tests {
     fn size_calculation() {
         let r = RiskManager::new(default_limits(), 10_000.0);
         let size = r.calculate_size(100.0, 99.0);
-        // equity 10000 * 1% = $100 margin; notional = 100 * 5 = 500; qty = 500/100 = 5.0
-        approx::assert_abs_diff_eq!(size, 5.0, epsilon = 1e-6);
+        // equity 10000 * 1% = $100 risk; SL distance = $1; qty = 100 / 1 = 100.
+        approx::assert_abs_diff_eq!(size, 100.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -563,10 +562,9 @@ mod tests {
         limits.risk_per_trade_pct = 1.0;
         let r = RiskManager::new(limits, 1000.0);
         let size = r.calculate_size(100.0, 99.0);
-        // margin = 1000 * 1% = $10; notional = 10 * 1 = 10; qty = 10/100 = 0.1
-        // leverage_cap = 1000 * 1 / 100 = 10
-        // min(0.1, 10) = 0.1
-        approx::assert_abs_diff_eq!(size, 0.1, epsilon = 1e-6);
+        // risk = 1000 * 1% = $10; SL distance = $1; qty = 10,
+        // which is exactly the 1x leverage cap.
+        approx::assert_abs_diff_eq!(size, 10.0, epsilon = 1e-6);
     }
 
     #[test]
