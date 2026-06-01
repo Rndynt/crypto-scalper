@@ -21,5 +21,7 @@ COPY config ./config
 ENV ARIA_CONFIG_OVERLAY=config/aggressive.toml
 
 EXPOSE 3000
+EXPOSE 8080
+EXPOSE 8081
 
 CMD ["aria"]
