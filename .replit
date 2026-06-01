@@ -42,3 +42,4 @@ build = ["cargo", "build", "--release"]
 [userenv]
 
 [userenv.shared]
+RUST_LOG = "info"
