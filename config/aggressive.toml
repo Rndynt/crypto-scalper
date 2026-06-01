@@ -21,8 +21,8 @@ leverage        = 100
 position_mode   = "dual-side"
 
 [pairs]
-symbols    = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-timeframes = ["1m", "5m", "15m"]
+symbols    = ["BTCUSDT", "ETHUSDT"]
+timeframes = ["1m","15m"]
 
 [strategy]
 mode                = "adaptive"
@@ -63,7 +63,7 @@ http_app_title        = "ARIA TraderManager"
 fail_open_on_error    = false  # FIXED: was true — don't auto-approve on LLM error
 
 [risk]
-equity_usd                = 300.0
+equity_usd                = 1000.0
 risk_per_trade_pct        = 5.0    # REDUCED: was 2% — 1% risk per trade is standard
 max_open_positions        = 3      # REDUCED: was 5 — $300 equity, max 2 concurrent positions
 max_daily_loss_pct        = 30.0    # TIGHTENED: was 5% — protect capital
@@ -74,7 +74,7 @@ min_reward_risk           = 1.4    # 1.4 minimum — screened_vwap targets 2.0
 min_net_edge_bps          = 0.0    # disabled: paper mode, no real costs
 max_position_notional_pct = 150.0  # REDUCED: was 200%
 assumed_daily_volume_usd  = 1_000_000_000.0
-min_margin_usd            = 8.0
+min_margin_usd            = 0.0
 max_hold_secs             = 3600  # 60-minute max hold; /hold can override at runtime
 
 [schedule]
