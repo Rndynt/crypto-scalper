@@ -116,6 +116,7 @@ impl Strategy for KalmanTrendStrategy {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::VwapScalp,
             side,

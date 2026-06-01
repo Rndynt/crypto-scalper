@@ -62,6 +62,7 @@ impl Strategy for VwapScalp {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::VwapScalp,
             side,

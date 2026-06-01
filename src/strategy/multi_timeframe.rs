@@ -102,6 +102,7 @@ mod tests {
     #[test]
     fn confirms_signal_direction() {
         let signal = PreSignal {
+                signal_id: String::new(),
             symbol: "BTCUSDT".into(),
             strategy: StrategyName::Momentum,
             side: Side::Long,

@@ -641,6 +641,7 @@ fn paper_scout_signal(
     };
 
     Some(PreSignal {
+        signal_id: String::new(), // assigned later when emitted
         symbol: state.symbol.clone(),
         strategy: StrategyName::VwapScalp,
         side,

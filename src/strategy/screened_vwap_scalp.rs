@@ -94,6 +94,7 @@ impl Strategy for ScreenedVwapScalp {
             }
 
             return Some(PreSignal {
+                signal_id: String::new(),
                 symbol: state.symbol.clone(),
                 strategy: StrategyName::ScreenedVwapScalp,
                 side: Side::Long,
@@ -140,6 +141,7 @@ impl Strategy for ScreenedVwapScalp {
             }
 
             return Some(PreSignal {
+                signal_id: String::new(),
                 symbol: state.symbol.clone(),
                 strategy: StrategyName::ScreenedVwapScalp,
                 side: Side::Short,

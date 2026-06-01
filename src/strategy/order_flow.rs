@@ -91,6 +91,7 @@ impl Strategy for OrderFlow {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::EmaRibbon, // mapped to this slot
             side,

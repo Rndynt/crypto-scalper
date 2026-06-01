@@ -56,6 +56,7 @@ impl Strategy for EmaRibbon {
                     score += 5.0;
                 }
                 return Some(PreSignal {
+                signal_id: String::new(),
                     symbol: s.symbol.clone(),
                     strategy: StrategyName::EmaRibbon,
                     side: Side::Long,
@@ -82,6 +83,7 @@ impl Strategy for EmaRibbon {
                     score += 5.0;
                 }
                 return Some(PreSignal {
+                signal_id: String::new(),
                     symbol: s.symbol.clone(),
                     strategy: StrategyName::EmaRibbon,
                     side: Side::Short,

@@ -35,7 +35,7 @@ use axum::{
     routing::get,
 };
 use futures_util::stream::Stream;
-use parking_lot::{Mutex as PlMutex, RwLock as PlRwLock};
+use parking_lot::RwLock as PlRwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -443,10 +443,8 @@ async fn sse_handler(
                 Ok(api_event) => {
                     let event_type = api_event.event_type.clone();
                     let data = serde_json::to_string(&api_event).unwrap_or_default();
-                    match Event::default().event(&event_type).data(&data) {
-                        Ok(event) => yield Ok(event),
-                        Err(_) => continue,
-                    }
+                    let event = Event::default().event(&event_type).data(&data);
+                    yield Ok(event);
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     warn!(skipped = n, "SSE subscriber lagged");
@@ -563,7 +561,7 @@ pub fn build_config_summary(cfg: &Config) -> ConfigSummary {
     ConfigSummary {
         mode: cfg.mode.run_mode.clone(),
         exchange: cfg.exchange.name.clone(),
-        symbol_count: cfg.symbols.len(),
+        symbol_count: cfg.pairs.symbols.len(),
         max_leverage: cfg.risk.max_leverage,
         risk_per_trade_pct: cfg.risk.risk_per_trade_pct,
         max_drawdown_pct: cfg.risk.max_drawdown_pct,

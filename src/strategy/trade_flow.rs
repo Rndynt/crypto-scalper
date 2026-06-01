@@ -96,6 +96,7 @@ impl Strategy for TradeFlow {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::Momentum,
             side,

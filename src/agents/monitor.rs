@@ -1178,6 +1178,7 @@ fn log_open_trade_minimal(
 ) -> anyhow::Result<()> {
     let record = TradeRecord {
         client_order_id: client_id.to_string(),
+        signal_id: String::new(), // minimal record — no signal context available
         symbol: symbol.to_string(),
         direction: side.as_str().to_string(),
         strategy: "—".to_string(),
@@ -1235,6 +1236,7 @@ fn log_open_trade(
     let signal = &brain.signal;
     let record = TradeRecord {
         client_order_id: client_id.to_string(),
+        signal_id: signal.signal_id.clone(),
         symbol: symbol.to_string(),
         direction: side.as_str().to_string(),
         strategy: signal.strategy.as_str().to_string(),

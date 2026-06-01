@@ -103,6 +103,7 @@ impl Strategy for MicrostructureReversion {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::MeanReversion,
             side,

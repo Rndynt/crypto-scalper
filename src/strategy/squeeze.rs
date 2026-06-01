@@ -62,6 +62,7 @@ impl Strategy for Squeeze {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::Squeeze,
             side,

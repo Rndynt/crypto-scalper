@@ -67,6 +67,7 @@ impl Strategy for MeanReversion {
 
         let confidence = score_confidence(rsi, vol_ratio, adx);
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::MeanReversion,
             side,

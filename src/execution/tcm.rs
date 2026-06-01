@@ -65,6 +65,7 @@ mod tests {
         approx::assert_abs_diff_eq!(tcm.round_trip_cost_bps(10_000.0, 100_000_000.0), 12.2);
 
         let sig = PreSignal {
+            signal_id: String::new(),
             symbol: "BTCUSDT".into(),
             strategy: StrategyName::Momentum,
             side: Side::Long,

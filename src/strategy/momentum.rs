@@ -81,6 +81,7 @@ impl Strategy for Momentum {
         }
 
         Some(PreSignal {
+                signal_id: String::new(),
             symbol: s.symbol.clone(),
             strategy: StrategyName::Momentum,
             side,
