@@ -721,6 +721,7 @@ pub fn spawn(
                     metrics.update(|m| m.active_lessons = lessons_count as u64);
                 }
                 AgentEvent::PositionReduced {
+                    client_id,
                     symbol,
                     side,
                     reduced_size,
@@ -730,6 +731,7 @@ pub fn spawn(
                     pnl_usd,
                     reason,
                     signal_id,
+                    strategy,
                     ..
                 } => {
                     // BUG FIX: update session daily_pnl counter so Session Stats
@@ -747,7 +749,7 @@ pub fn spawn(
                         &client_id,
                         &symbol,
                         side_str,
-                        &reason.as_str(), // use reason as strategy placeholder
+                        &strategy,
                         "UNKNOWN",
                         entry_price,
                         exit_price,

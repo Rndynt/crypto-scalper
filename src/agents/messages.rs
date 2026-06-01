@@ -109,7 +109,6 @@ pub enum AgentEvent {
         size: f64,
         ack: OrderAck,
         /// Signal ID that originated this trade (e.g. "S-00001").
-        #[serde(default)]
         signal_id: String,
     },
     /// `ExecutionAgent` failed to place or confirm an order for this symbol.
@@ -154,7 +153,6 @@ pub enum AgentEvent {
         reason: PositionExitReason,
         strategy: String,
         /// Signal ID that originated this trade (e.g. "S-00001").
-        #[serde(default)]
         signal_id: String,
     },
     /// Position partially closed (partial TP taken). The position remains open
@@ -173,7 +171,6 @@ pub enum AgentEvent {
         reason: PositionExitReason,
         strategy: String,
         /// Signal ID that originated this trade (e.g. "S-00001").
-        #[serde(default)]
         signal_id: String,
     },
     /// `ExecutionAgent` moved (replaced) the broker-side stop-loss order.
@@ -185,7 +182,6 @@ pub enum AgentEvent {
         new_stop: f64,
         reason: String,
         /// Signal ID that originated this trade (e.g. "S-00001").
-        #[serde(default)]
         signal_id: String,
     },
     /// Heartbeat for liveness monitoring.
@@ -385,7 +381,6 @@ pub struct BrainOutcome {
 #[derive(Debug, Clone)]
 pub struct ManagerProposal {
     /// Signal ID that originated this trade (e.g. "S-00001").
-    #[serde(default)]
     pub signal_id: String,
     pub symbol: String,
     pub side: Side,
