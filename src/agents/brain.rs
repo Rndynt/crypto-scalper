@@ -145,31 +145,16 @@ pub fn spawn(
                         }
                     };
 
-                    // Risk engine already calculates optimal size using
-                    // survival score, learning policy, quant engine (Kelly, vol-target, VaR).
-                    // Brain LLM should NOT further reduce size — it only decides GO/NOGO.
-                    // Use risk.size directly (already well-calibrated).
-                    let adjusted_size = risk.size;
-
-                    info!(
-                        symbol = %symbol,
-                        risk_size = risk.size,
-                        adjusted_size = adjusted_size,
-                        "brain: position sizing (risk engine direct)"
-                    );
-
-                    // Update risk size with LLM-adjusted size
                     let mut adjusted_risk = risk.clone();
-                    adjusted_risk.size = adjusted_size;
-
-                    let final_decision = llm_out.decision.clone();
+                    let mut adjusted_signal = signal.clone();
+                    let mut final_decision = llm_out.decision.clone();
 
                     info!(
                         symbol = %symbol,
-                        decision = ?final_decision.decision,
-                        confidence = final_decision.confidence,
+                        decision = ?llm_out.decision.decision,
+                        confidence = llm_out.decision.confidence,
                         offline_fallback = llm_out.offline_fallback,
-                        reason = %final_decision.reasoning.summary,
+                        reason = %llm_out.decision.reasoning.summary,
                         "brain: decision"
                     );
 
@@ -194,30 +179,53 @@ pub fn spawn(
                         continue;
                     }
 
-                    // Publish every real LLM decision, including NoGo/Wait, so status
-                    // counters and /signals do not stay stuck on the last GO while the
-                    // brain is actively rejecting new candidates. Manager/execution
-                    // already ignore non-GO outcomes.
+                    // Convert soft LLM NoGo/Wait into a tiny exploratory trade when
+                    // the deterministic TA+risk gates already approved the setup. This
+                    // prevents the LLM from turning the scalper into a tuning/status bot
+                    // because of WR, VPIN caution, or mixed regime narrative. Truly
+                    // unsafe responses (parse failure, invalid geometry, or very low
+                    // confidence) still release the reservation and do not trade.
                     if final_decision.decision != Decision::Go {
-                        bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
-                            signal: Box::new(signal),
-                            regime,
-                            risk: adjusted_risk,
-                            decision: final_decision.clone(),
-                            latency_ms: llm_out.latency_ms,
-                            offline_fallback: llm_out.offline_fallback,
-                        }));
-                        info!(
-                            symbol = %symbol,
-                            decision = ?final_decision.decision,
-                            "brain: REJECTED — not Go"
-                        );
-                        release_risk_reservation(
-                            &bus,
-                            &symbol,
-                            format!("brain rejected: {:?}", final_decision.decision),
-                        );
-                        continue;
+                        if should_override_soft_brain_reject(&final_decision, &signal) {
+                            adjusted_risk.size *= 0.35;
+                            adjusted_risk
+                                .matched_lessons
+                                .push("brain soft reject overridden => probe size x0.35".into());
+                            final_decision.decision = Decision::Go;
+                            final_decision.confidence = final_decision.confidence.max(45);
+                            final_decision.position_size_pct =
+                                final_decision.position_size_pct.max(0.25);
+                            final_decision.reasoning.summary = format!(
+                                "SOFT_OVERRIDE: {}; deterministic risk gate approved, trading probe size",
+                                final_decision.reasoning.summary
+                            );
+                            info!(
+                                symbol = %symbol,
+                                decision = ?llm_out.decision.decision,
+                                adjusted_size = adjusted_risk.size,
+                                "brain: soft LLM reject overridden to keep scalper trading"
+                            );
+                        } else {
+                            bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
+                                signal: Box::new(signal),
+                                regime,
+                                risk: adjusted_risk,
+                                decision: final_decision.clone(),
+                                latency_ms: llm_out.latency_ms,
+                                offline_fallback: llm_out.offline_fallback,
+                            }));
+                            info!(
+                                symbol = %symbol,
+                                decision = ?final_decision.decision,
+                                "brain: REJECTED — hard unsafe reject"
+                            );
+                            release_risk_reservation(
+                                &bus,
+                                &symbol,
+                                format!("brain rejected: {:?}", final_decision.decision),
+                            );
+                            continue;
+                        }
                     }
 
                     // Use LLM-adjusted SL/TP — brain sets exact levels
@@ -289,82 +297,87 @@ pub fn spawn(
                         continue;
                     }
 
-                    // HARD RULE: regime alignment — never trade against the trend
-                    // LONG in BEARISH or SHORT in BULLISH = instant reject
+                    // Regime conflict is a sizing problem, not an automatic veto.
+                    // 1m scalps (especially order-flow/reversion) can legitimately fade
+                    // a higher-timeframe move. Keep the bot active but cut risk when
+                    // direction and detected regime disagree.
                     {
                         let states_r = states.lock().await;
                         if let Some(st) = states_r.get(&symbol) {
-                            let regime = crate::strategy::RegimeDetector::detect(st);
+                            let detected_regime = crate::strategy::RegimeDetector::detect(st);
                             let is_long = matches!(signal.side, crate::data::Side::Long);
-                            let regime_str = regime.as_str().to_lowercase();
+                            let regime_str = detected_regime.as_str().to_lowercase();
                             let bearish = regime_str.contains("bear");
                             let bullish = regime_str.contains("bull");
                             if (is_long && bearish) || (!is_long && bullish) {
+                                adjusted_risk.size *= 0.5;
+                                adjusted_risk
+                                    .matched_lessons
+                                    .push("brain regime conflict => size x0.50".into());
                                 info!(
                                     symbol = %symbol,
-                                    regime = %regime.as_str(),
+                                    regime = %detected_regime.as_str(),
                                     side = ?signal.side,
-                                    "brain: BLOCKED — trade against regime trend"
+                                    adjusted_size = adjusted_risk.size,
+                                    "brain: regime conflict — allowing at reduced size"
                                 );
-                                publish_rejected_brain(
-                                    &bus,
-                                    signal.clone(),
-                                    regime,
-                                    adjusted_risk.clone(),
-                                    final_decision.clone(),
-                                    llm_out.latency_ms,
-                                    llm_out.offline_fallback,
-                                    "trade against regime trend",
-                                );
-                                release_risk_reservation(
-                                    &bus,
-                                    &symbol,
-                                    "brain blocked: trade against regime trend",
-                                );
-                                continue;
                             }
                         }
                     }
 
+                    // Persist LLM-adjusted brackets into the downstream signal.
+                    // Previously the brain validated final_entry/final_sl/final_tp but
+                    // manager/execution still received the original strategy brackets,
+                    // so live risk/reward could differ from the approved setup.
+                    let original_risk_dist = (signal.entry - signal.stop_loss).abs();
+                    adjusted_signal.entry = final_entry;
+                    adjusted_signal.stop_loss = final_sl;
+                    adjusted_signal.take_profit = final_tp;
+                    adjusted_risk.signal = Box::new(adjusted_signal.clone());
+
+                    // If the LLM widens the stop, scale size down so dollar risk
+                    // cannot exceed the RiskAgent-approved amount. If it tightens the
+                    // stop, do not increase size here; keep the original risk cap.
+                    if risk_dist > original_risk_dist && original_risk_dist > 0.0 {
+                        let risk_scale = (original_risk_dist / risk_dist).clamp(0.0, 1.0);
+                        adjusted_risk.size *= risk_scale;
+                        adjusted_risk
+                            .matched_lessons
+                            .push(format!("LLM widened stop => size x{risk_scale:.2}"));
+                    }
+
+                    info!(
+                        symbol = %symbol,
+                        risk_size = risk.size,
+                        adjusted_size = adjusted_risk.size,
+                        final_entry,
+                        final_sl,
+                        final_tp,
+                        rr = %format!("{:.2}", rr),
+                        "brain: final executable setup"
+                    );
+
                     // Confidence floor from config only — no dynamic raising.
                     // Learning policy handles size reduction, not signal gating.
                     let live_conf_floor = min_confidence;
-                    // REJECT low-confidence GOs with calibrated floor.
-                    if llm_out.decision.decision == Decision::Go
-                        && llm_out.decision.confidence < live_conf_floor
-                    {
+                    // Low-confidence GO is a size cut, not another rejection gate.
+                    if final_decision.confidence < live_conf_floor {
+                        adjusted_risk.size *= 0.5;
+                        adjusted_risk.matched_lessons.push(format!(
+                            "brain confidence {} < {} => size x0.50",
+                            final_decision.confidence, live_conf_floor
+                        ));
                         info!(
                             symbol = %symbol,
-                            confidence = llm_out.decision.confidence,
+                            confidence = final_decision.confidence,
                             conf_floor = live_conf_floor,
-                            "brain: REJECTED — confidence below calibrated floor"
+                            adjusted_size = adjusted_risk.size,
+                            "brain: low confidence — allowing at reduced size"
                         );
-                        publish_rejected_brain(
-                            &bus,
-                            signal.clone(),
-                            regime,
-                            adjusted_risk.clone(),
-                            final_decision.clone(),
-                            llm_out.latency_ms,
-                            llm_out.offline_fallback,
-                            format!(
-                                "confidence {} < {}",
-                                llm_out.decision.confidence, live_conf_floor
-                            ),
-                        );
-                        release_risk_reservation(
-                            &bus,
-                            &symbol,
-                            format!(
-                                "brain rejected: confidence {} < {}",
-                                llm_out.decision.confidence, live_conf_floor
-                            ),
-                        );
-                        continue;
                     }
 
                     bus.publish(AgentEvent::BrainOutcomeReady(BrainOutcome {
-                        signal: Box::new(signal),
+                        signal: Box::new(adjusted_signal),
                         regime,
                         risk: adjusted_risk,
                         decision: final_decision,
@@ -377,6 +390,34 @@ pub fn spawn(
             }
         }
     })
+}
+
+fn should_override_soft_brain_reject(
+    decision: &crate::llm::engine::TradeDecision,
+    signal: &crate::strategy::state::PreSignal,
+) -> bool {
+    if decision.confidence < 35 || signal.ta_confidence < 60 || signal.rr() < 0.8 {
+        return false;
+    }
+    let text = format!(
+        "{} {} {}",
+        decision.reasoning.summary,
+        decision.reasoning.risk_factors,
+        decision.reasoning.invalidation
+    )
+    .to_ascii_lowercase();
+    let hard_reject_terms = [
+        "parse failure",
+        "malformed",
+        "invalid geometry",
+        "wrong side",
+        "circuit",
+        "frozen",
+        "daily loss",
+        "drawdown",
+        "no liquidity",
+    ];
+    !hard_reject_terms.iter().any(|term| text.contains(term))
 }
 
 fn publish_rejected_brain(

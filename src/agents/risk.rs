@@ -465,7 +465,7 @@ pub fn spawn(
                     let base_size = risk.calculate_size(effective_entry, effective_sl);
 
                     // Apply quant engine sizing (Kelly, vol-target, VaR, Kalman)
-                    let (mut size, _quant_reason) = if let Some(ref qe) = quant_engine {
+                    let (size, _quant_reason) = if let Some(ref qe) = quant_engine {
                         let qr = qe.compute_sizing(QuantSizingInput {
                             symbol: &signal.symbol,
                             strategy: signal.strategy.as_str(),
@@ -495,17 +495,25 @@ pub fn spawn(
                         (base_size * verdict.size_multiplier, String::new())
                     };
 
-                    // Enforce minimum margin — learning/quant multipliers can
-                    // shrink size below usable levels. Floor: min_margin_usd.
+                    // min_margin_usd is telemetry/advisory here, not a signal gate.
+                    // Blocking tiny-but-valid risk-sized trades made the bot sit idle;
+                    // exchange-level minimums can still reject later and release the
+                    // reservation through ExecutionFailed.
                     {
                         let limits = risk.limits();
                         let notional = size * effective_entry;
                         let margin = notional / limits.max_leverage.max(1) as f64;
                         if margin < limits.min_margin_usd && size > 0.0 {
-                            let floor_size = limits.min_margin_usd
-                                * limits.max_leverage.max(1) as f64
-                                / effective_entry.max(1e-9);
-                            size = floor_size;
+                            warn!(
+                                symbol = %signal.symbol,
+                                margin,
+                                min_margin_usd = limits.min_margin_usd,
+                                "risk: allowing below advisory min_margin_usd to keep trading"
+                            );
+                            verdict.matched_lessons.push(format!(
+                                "margin ${margin:.2} below advisory min ${:.2}; allowed at risk-sized qty",
+                                limits.min_margin_usd
+                            ));
                         }
                     }
 
