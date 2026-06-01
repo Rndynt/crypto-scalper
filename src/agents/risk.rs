@@ -495,28 +495,6 @@ pub fn spawn(
                         (base_size * verdict.size_multiplier, String::new())
                     };
 
-                    // min_margin_usd is telemetry/advisory here, not a signal gate.
-                    // Blocking tiny-but-valid risk-sized trades made the bot sit idle;
-                    // exchange-level minimums can still reject later and release the
-                    // reservation through ExecutionFailed.
-                    {
-                        let limits = risk.limits();
-                        let notional = size * effective_entry;
-                        let margin = notional / limits.max_leverage.max(1) as f64;
-                        if margin < limits.min_margin_usd && size > 0.0 {
-                            warn!(
-                                symbol = %signal.symbol,
-                                margin,
-                                min_margin_usd = limits.min_margin_usd,
-                                "risk: allowing below advisory min_margin_usd to keep trading"
-                            );
-                            verdict.matched_lessons.push(format!(
-                                "margin ${margin:.2} below advisory min ${:.2}; allowed at risk-sized qty",
-                                limits.min_margin_usd
-                            ));
-                        }
-                    }
-
                     if size <= 0.0 {
                         bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
                             signal: signal.clone(),
@@ -530,6 +508,37 @@ pub fn spawn(
                             reason: Some("size <= 0".into()),
                         }));
                         continue;
+                    }
+
+                    {
+                        let limits = risk.limits();
+                        let notional = size * effective_entry;
+                        let margin = notional / limits.max_leverage.max(1) as f64;
+                        if limits.min_margin_usd > 0.0 && margin < limits.min_margin_usd {
+                            warn!(
+                                symbol = %signal.symbol,
+                                margin,
+                                min_margin_usd = limits.min_margin_usd,
+                                notional,
+                                size,
+                                "risk: blocked dust-sized position below min_margin_usd"
+                            );
+                            bus.publish(AgentEvent::RiskVerdict(RiskVerdictMsg {
+                                signal: signal.clone(),
+                                regime,
+                                outcome: RiskOutcome::Blocked,
+                                size: 0.0,
+                                size_multiplier: verdict.size_multiplier,
+                                effective_ta_threshold,
+                                effective_llm_floor: llm_floor,
+                                matched_lessons: verdict.matched_lessons,
+                                reason: Some(format!(
+                                    "margin ${margin:.2} < min_margin_usd ${:.2}",
+                                    limits.min_margin_usd
+                                )),
+                            }));
+                            continue;
+                        }
                     }
 
                     // Update signal with capped SL/TP for downstream (brain, execution)

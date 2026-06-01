@@ -94,7 +94,10 @@ impl Default for PositionConfig {
             max_hold_secs: 1800, // 30 minutes
             trail_atr_mult: 0.5,
             trail_activate_r: 1.0,
-            breakeven_r: 0.5,
+            // Disabled by default: moving SL to entry before TP1 creates
+            // many fee/slippage "scratch" losses in high-leverage scalps.
+            // Partial TP still moves the runner SL to entry after 1R.
+            breakeven_r: 0.0,
             partial_tp_enabled: true,
             partial_tp_r: 1.0,
         }
@@ -265,10 +268,12 @@ impl PositionBook {
             match p.side {
                 Side::Long => {
                     if p.stop_loss > 0.0 && price <= p.stop_loss {
-                        out.push(PositionAction::Close(
-                            p.clone(),
-                            PositionExitReason::StopLoss,
-                        ));
+                        let reason = if is_breakeven_stop(p) {
+                            PositionExitReason::Breakeven
+                        } else {
+                            PositionExitReason::StopLoss
+                        };
+                        out.push(PositionAction::Close(p.clone(), reason));
                         to_remove.push(id.clone());
                         continue;
                     }
@@ -283,10 +288,12 @@ impl PositionBook {
                 }
                 Side::Short => {
                     if p.stop_loss > 0.0 && price >= p.stop_loss {
-                        out.push(PositionAction::Close(
-                            p.clone(),
-                            PositionExitReason::StopLoss,
-                        ));
+                        let reason = if is_breakeven_stop(p) {
+                            PositionExitReason::Breakeven
+                        } else {
+                            PositionExitReason::StopLoss
+                        };
+                        out.push(PositionAction::Close(p.clone(), reason));
                         to_remove.push(id.clone());
                         continue;
                     }
@@ -343,8 +350,12 @@ impl PositionBook {
                         }
                     }
 
-                    // Breakeven: move SL to entry after 0.5R profit (if partial not taken).
-                    if !p.breakeven_activated && !p.partial_taken && profit_r >= cfg.breakeven_r {
+                    // Optional pre-TP breakeven: disabled when breakeven_r == 0.
+                    if cfg.breakeven_r > 0.0
+                        && !p.breakeven_activated
+                        && !p.partial_taken
+                        && profit_r >= cfg.breakeven_r
+                    {
                         p.breakeven_activated = true;
                         let new_sl = p.entry_price;
                         if new_sl > p.stop_loss {
@@ -410,7 +421,11 @@ impl PositionBook {
                         }
                     }
 
-                    if !p.breakeven_activated && !p.partial_taken && profit_r >= cfg.breakeven_r {
+                    if cfg.breakeven_r > 0.0
+                        && !p.breakeven_activated
+                        && !p.partial_taken
+                        && profit_r >= cfg.breakeven_r
+                    {
                         p.breakeven_activated = true;
                         let new_sl = p.entry_price;
                         if new_sl < p.stop_loss {
@@ -457,6 +472,11 @@ impl PositionBook {
         }
         out
     }
+}
+
+fn is_breakeven_stop(p: &Position) -> bool {
+    (p.breakeven_activated || p.partial_taken)
+        && (p.stop_loss - p.entry_price).abs() <= p.entry_price.abs().max(1.0) * 1e-9
 }
 
 pub fn pnl_usd(p: &Position, exit_price: f64) -> f64 {
@@ -723,6 +743,61 @@ mod tests {
         assert_eq!(
             move_count, 0,
             "MoveSL should not fire a second time after breakeven_activated=true"
+        );
+    }
+
+    #[test]
+    fn test_breakeven_zero_disables_pre_tp_move() {
+        let pos = base_short();
+        let book = book_with(pos);
+        let cfg = PositionConfig {
+            max_hold_secs: 0,
+            partial_tp_enabled: false,
+            partial_tp_r: 1.0,
+            breakeven_r: 0.0,
+            trail_activate_r: 1.5,
+            trail_atr_mult: 0.5,
+        };
+
+        // Even after a favorable move, breakeven_r=0 means "disabled",
+        // not "move SL immediately".
+        let actions = book.check_exits("BTCUSDT", 95.0, &cfg);
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, PositionAction::MoveSL(_, _))),
+            "breakeven_r=0 must disable pre-TP MoveSL"
+        );
+        let remaining = book.inner.lock().get("test-short").cloned().unwrap();
+        assert!((remaining.stop_loss - 110.0).abs() < 1e-9);
+        assert!(!remaining.breakeven_activated);
+    }
+
+    #[test]
+    fn test_entry_stop_after_breakeven_reports_breakeven_not_stop_loss() {
+        let mut pos = base_short();
+        pos.stop_loss = pos.entry_price;
+        pos.breakeven_activated = true;
+        let book = book_with(pos);
+        let cfg = PositionConfig {
+            max_hold_secs: 0,
+            partial_tp_enabled: false,
+            partial_tp_r: 1.0,
+            breakeven_r: 0.5,
+            trail_activate_r: 1.5,
+            trail_atr_mult: 0.5,
+        };
+
+        let actions = book.check_exits("BTCUSDT", 100.0, &cfg);
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, PositionAction::Close(_, PositionExitReason::Breakeven)))
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, PositionAction::Close(_, PositionExitReason::StopLoss)))
         );
     }
 

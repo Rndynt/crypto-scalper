@@ -830,7 +830,7 @@ fn build_open_notification(
             format!(
                 "\n📊 <b>TP Plan</b>\n\
                  ├ 🎯 TP₁ (50%): <code>{tp1:.4}</code> @ 1R\n\
-                 ├ 🛡 SL → Breakeven: <code>{be:.4}</code>\n\
+                 ├ 🛡 After TP₁: SL → BE <code>{be:.4}</code>\n\
                  ├ 🎯 TP₂ (50%): <code>{tp2:.4}</code>\n\
                  └ 📐 Risk: <code>{risk:.4}$</code>\n",
                 tp1 = partial_tp_price,
