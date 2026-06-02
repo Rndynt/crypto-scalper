@@ -11,10 +11,6 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 7999
-externalPort = 3000
-
-[[ports]]
 localPort = 8000
 externalPort = 8000
 
@@ -55,7 +51,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd dashboard && pnpm build && pnpm start"
+args = "cd dashboard && pnpm start"
 waitForPort = 5000
 
 [deployment]
