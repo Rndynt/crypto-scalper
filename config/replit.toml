@@ -1,0 +1,10 @@
+# Replit overlay — merged on top of config/default.toml.
+# Sets paper mode and binds the API to port 8081 (metrics_bind+1)
+# so the Next.js proxy at /aria-api → localhost:8081 works correctly.
+
+[mode]
+run_mode = "paper"
+dry_run  = true
+
+[monitoring]
+metrics_bind = "0.0.0.0:7999"

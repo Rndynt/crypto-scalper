@@ -4,7 +4,7 @@ const nextConfig = {
     return [
       {
         source: "/aria-api/:path*",
-        destination: "http://localhost:8081/:path*",
+        destination: "http://localhost:8000/:path*",
       },
     ];
   },
@@ -19,6 +19,8 @@ const nextConfig = {
       },
     ];
   },
+  // Required for Replit's proxied iframe preview
+  allowedDevOrigins: ["*"],
 };
 
 export default nextConfig;

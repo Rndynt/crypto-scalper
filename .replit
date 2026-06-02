@@ -1,4 +1,4 @@
-modules = ["rust-stable", "nix", "nodejs-20"]
+modules = ["rust-stable", "nodejs-20", "web"]
 [agent]
 expertMode = true
 stack = "BEST_EFFORT_FALLBACK"
@@ -43,20 +43,20 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cargo build 2>&1 && ./target/debug/aria"
-waitForPort = 8080
+args = "ARIA_CONFIG_OVERLAY=config/replit.toml cargo build 2>&1 && ARIA_CONFIG_OVERLAY=config/replit.toml ./target/debug/aria"
+waitForPort = 8000
 
 [[workflows.workflow]]
 name = "Dashboard"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "webview"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd dashboard && pnpm dev"
 waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [deployment]
 deploymentTarget = "vm"
