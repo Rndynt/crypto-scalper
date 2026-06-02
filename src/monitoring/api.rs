@@ -14,7 +14,7 @@
 //!   GET /healthz          — Health check
 
 use crate::agents::messages::{
-    AgentEvent, ScreeningBias, SurvivalState,
+    AgentEvent, ControlCommand, ScreeningBias, SurvivalState,
 };
 use crate::agents::MessageBus;
 use crate::config::Config;
@@ -32,7 +32,7 @@ use axum::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::get,
+    routing::{get, post},
 };
 use futures_util::stream::Stream;
 use parking_lot::RwLock as PlRwLock;
@@ -65,6 +65,8 @@ pub struct ApiState {
     pub screening_bias: Arc<PlRwLock<HashMap<String, ScreeningBiasEntry>>>,
     /// Recent signals (ring buffer of last 50).
     pub recent_signals: Arc<PlRwLock<Vec<SignalEntry>>>,
+    /// Message bus — used by control POST endpoints.
+    pub bus: MessageBus,
 }
 
 // ── API Response Types ────────────────────────────────────────────────
@@ -247,6 +249,12 @@ pub fn spawn_api_server(state: ApiState, bind: SocketAddr) -> JoinHandle<()> {
         .route("/api/lessons", get(lessons_handler))
         .route("/api/config", get(config_handler))
         .route("/api/events", get(sse_handler))
+        // Control POST endpoints
+        .route("/api/control/freeze", post(control_freeze_handler))
+        .route("/api/control/unfreeze", post(control_unfreeze_handler))
+        .route("/api/control/flat", post(control_flat_handler))
+        .route("/api/control/close", post(control_close_handler))
+        .route("/api/control/config", post(control_config_handler))
         // Root info
         .route("/", get(|| async {
             "ARIA Dashboard API — see /api/status, /api/metrics, /api/positions, /api/trades, /api/signals, /api/screening, /api/events"
@@ -470,6 +478,126 @@ async fn sse_handler(
     };
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ── Control POST Handlers ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ControlReasonBody {
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControlCloseBody {
+    symbol: String,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ControlConfigBody {
+    max_leverage: Option<u32>,
+    risk_per_trade_pct: Option<f64>,
+    max_open_positions: Option<u32>,
+    max_daily_loss_pct: Option<f64>,
+    max_hold_secs: Option<i64>,
+    breakeven_r: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ControlResponse {
+    ok: bool,
+    message: String,
+}
+
+async fn control_freeze_handler(
+    State(state): State<ApiState>,
+    body: Option<Json<ControlReasonBody>>,
+) -> Json<ControlResponse> {
+    let reason = body
+        .and_then(|b| b.reason.clone())
+        .unwrap_or_else(|| "manual via dashboard".into());
+    state.bus.publish(AgentEvent::ControlCommand(ControlCommand::Freeze { reason: reason.clone() }));
+    info!(reason = %reason, "control: freeze published via API");
+    Json(ControlResponse { ok: true, message: format!("Freeze published: {reason}") })
+}
+
+async fn control_unfreeze_handler(
+    State(state): State<ApiState>,
+) -> Json<ControlResponse> {
+    state.bus.publish(AgentEvent::ControlCommand(ControlCommand::Unfreeze));
+    info!("control: unfreeze published via API");
+    Json(ControlResponse { ok: true, message: "Unfreeze published".into() })
+}
+
+async fn control_flat_handler(
+    State(state): State<ApiState>,
+    body: Option<Json<ControlReasonBody>>,
+) -> Json<ControlResponse> {
+    let reason = body
+        .and_then(|b| b.reason.clone())
+        .unwrap_or_else(|| "manual flat via dashboard".into());
+    state.bus.publish(AgentEvent::ControlCommand(ControlCommand::FlatAll { reason: reason.clone() }));
+    info!(reason = %reason, "control: flat_all published via API");
+    Json(ControlResponse { ok: true, message: format!("FlatAll published: {reason}") })
+}
+
+async fn control_close_handler(
+    State(state): State<ApiState>,
+    Json(body): Json<ControlCloseBody>,
+) -> impl IntoResponse {
+    if body.symbol.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ControlResponse { ok: false, message: "symbol required".into() }),
+        ).into_response();
+    }
+    let symbol = body.symbol.trim().to_uppercase();
+    state.bus.publish(AgentEvent::ControlCommand(ControlCommand::ClosePosition { symbol: symbol.clone() }));
+    info!(symbol = %symbol, "control: close_position published via API");
+    (
+        StatusCode::OK,
+        Json(ControlResponse { ok: true, message: format!("ClosePosition published for {symbol}") }),
+    ).into_response()
+}
+
+async fn control_config_handler(
+    State(state): State<ApiState>,
+    Json(body): Json<ControlConfigBody>,
+) -> Json<ControlResponse> {
+    let mut changes: Vec<String> = Vec::new();
+
+    if let Some(lev) = body.max_leverage {
+        state.risk.set_max_leverage(lev);
+        changes.push(format!("max_leverage={lev}"));
+    }
+    if let Some(pct) = body.risk_per_trade_pct {
+        state.risk.set_risk_per_trade_pct(pct);
+        changes.push(format!("risk_per_trade_pct={pct:.2}%"));
+    }
+    if let Some(n) = body.max_open_positions {
+        state.risk.set_max_open_positions(n);
+        changes.push(format!("max_open_positions={n}"));
+    }
+    if let Some(pct) = body.max_daily_loss_pct {
+        state.risk.set_max_daily_loss_pct(pct);
+        changes.push(format!("max_daily_loss_pct={pct:.2}%"));
+    }
+    if let Some(secs) = body.max_hold_secs {
+        state.bus.publish(AgentEvent::ControlCommand(ControlCommand::SetMaxHold { secs }));
+        changes.push(format!("max_hold_secs={secs}"));
+    }
+    if let Some(r) = body.breakeven_r {
+        state.bus.publish(AgentEvent::ControlCommand(ControlCommand::SetBreakevenR { r }));
+        changes.push(format!("breakeven_r={r:.2}"));
+    }
+
+    if changes.is_empty() {
+        return Json(ControlResponse { ok: false, message: "No valid fields provided".into() });
+    }
+
+    let msg = format!("Updated: {}", changes.join(", "));
+    info!(changes = %msg, "control: config updated via API");
+    Json(ControlResponse { ok: true, message: msg })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

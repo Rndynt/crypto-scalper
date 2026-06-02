@@ -463,6 +463,7 @@ async fn run_agents(cfg: Config) -> Result<()> {
             event_tx: event_tx.clone(),
             screening_bias: Arc::new(PlRwLock::new(HashMap::new())),
             recent_signals: Arc::new(PlRwLock::new(Vec::new())),
+            bus: bus.clone(),
         };
         // Spawn event bridge (MessageBus → SSE)
         crypto_scalper::monitoring::api::spawn_event_bridge(bus.clone(), api_state.clone());

@@ -2,7 +2,7 @@
 import { useStatus } from "@/hooks/useAriaData";
 import { fmt, fmtPct } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { RefreshCw, TrendingUp, TrendingDown } from "lucide-react";
+import { RefreshCw, TrendingUp, TrendingDown, Brain, Snowflake } from "lucide-react";
 
 export function Header({ title }: { title: string }) {
   const { data, isLoading, mutate } = useStatus();
@@ -11,12 +11,31 @@ export function Header({ title }: { title: string }) {
   const pnlToday  = data?.shared?.realized_pnl_today ?? 0;
   const mode      = data?.config?.mode ?? "—";
   const positions = data?.shared?.open_positions ?? 0;
+  const llmFallbacks = data?.metrics?.llm_offline_fallbacks ?? 0;
+  const isFrozen  = data?.survival?.is_frozen ?? false;
 
   return (
     <header className="flex h-[52px] shrink-0 items-center border-b border-border px-4 md:px-5 gap-4">
       <h1 className="text-[13px] font-semibold text-foreground tracking-wide">{title}</h1>
 
-      <div className="ml-auto flex items-center gap-3 overflow-hidden">
+      <div className="ml-auto flex items-center gap-2 overflow-hidden">
+        {/* LLM offline indicator */}
+        {llmFallbacks > 0 && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-destructive/15 border border-destructive/30">
+            <Brain className="h-3 w-3 text-destructive shrink-0" />
+            <span className="hidden sm:block text-[10px] font-bold text-destructive">LLM OFFLINE</span>
+            <span className="text-[10px] font-mono text-destructive">{llmFallbacks}</span>
+          </div>
+        )}
+
+        {/* Frozen indicator */}
+        {isFrozen && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-warning/10 border border-warning/30">
+            <Snowflake className="h-3 w-3 text-warning shrink-0 animate-pulse" />
+            <span className="hidden sm:block text-[10px] font-bold text-warning">FROZEN</span>
+          </div>
+        )}
+
         {/* Mode pill */}
         <span className={cn(
           "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md",

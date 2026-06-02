@@ -85,6 +85,11 @@ export interface SignalEntry {
   regime: string;
   reason: string;
   ts: number;
+  llm_confidence?: number;
+  llm_decision?: string;
+  llm_summary?: string;
+  offline_fallback?: boolean;
+  indicators?: Record<string, number | string>;
 }
 
 export interface ScreeningBiasEntry {
@@ -166,24 +171,64 @@ export interface ApiEvent {
   ts: number;
 }
 
+export interface ControlResponse {
+  ok: boolean;
+  message: string;
+}
+
+export interface ControlConfigPayload {
+  max_leverage?: number;
+  risk_per_trade_pct?: number;
+  max_open_positions?: number;
+  max_daily_loss_pct?: number;
+  max_hold_secs?: number;
+  breakeven_r?: number;
+}
+
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`API ${path} returned ${res.status}`);
   return res.json();
 }
 
+async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`POST ${path} returned ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 export const api = {
-  status: () => apiFetch<StatusResponse>("/api/status"),
-  metrics: () => apiFetch<MetricsSnapshot>("/api/metrics"),
-  positions: () => apiFetch<PositionEntry[]>("/api/positions"),
-  trades: (page = 1, per_page = 50) =>
+  status:   () => apiFetch<StatusResponse>("/api/status"),
+  metrics:  () => apiFetch<MetricsSnapshot>("/api/metrics"),
+  positions:() => apiFetch<PositionEntry[]>("/api/positions"),
+  trades:   (page = 1, per_page = 50) =>
     apiFetch<PaginatedResponse<TradeEntry>>(`/api/trades?page=${page}&per_page=${per_page}`),
-  signals: () => apiFetch<SignalEntry[]>("/api/signals"),
-  screening: () => apiFetch<ScreeningBiasEntry[]>("/api/screening"),
+  signals:  () => apiFetch<SignalEntry[]>("/api/signals"),
+  screening:() => apiFetch<ScreeningBiasEntry[]>("/api/screening"),
   survival: () => apiFetch<SurvivalState>("/api/survival"),
-  lessons: () => apiFetch<Lesson[]>("/api/lessons"),
-  config: () => apiFetch<ConfigSummary>("/api/config"),
-  healthz: () => fetch(`${API_BASE}/healthz`).then((r) => r.text()),
+  lessons:  () => apiFetch<Lesson[]>("/api/lessons"),
+  config:   () => apiFetch<ConfigSummary>("/api/config"),
+  healthz:  () => fetch(`${API_BASE}/healthz`).then((r) => r.text()),
+
+  control: {
+    freeze:   (reason?: string) =>
+      apiPost<ControlResponse>("/api/control/freeze", reason ? { reason } : {}),
+    unfreeze: () =>
+      apiPost<ControlResponse>("/api/control/unfreeze"),
+    flat:     (reason?: string) =>
+      apiPost<ControlResponse>("/api/control/flat", reason ? { reason } : {}),
+    close:    (symbol: string) =>
+      apiPost<ControlResponse>("/api/control/close", { symbol }),
+    updateConfig: (payload: ControlConfigPayload) =>
+      apiPost<ControlResponse>("/api/control/config", payload),
+  },
 };
 
 export function fmt(n: number, decimals = 2): string {
