@@ -241,6 +241,13 @@ pub struct ClosedTrade {
     pub pnl_pct: f64,
     pub ta_confidence: Option<u8>,
     pub llm_confidence: Option<u8>,
+    pub entry_price: f64,
+    pub exit_price: f64,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub size: f64,
+    pub partial_taken: bool,
+    pub partial_realized_pnl: f64,
 }
 
 impl ClosedTrade {
@@ -575,7 +582,8 @@ fn pg_closed_trades(
     let rows = client
         .query(
             "SELECT signal_id, symbol, direction, strategy, market_regime, entry_time, exit_time,
-                    pnl_usd, pnl_pct, ta_confidence, llm_confidence
+                    pnl_usd, pnl_pct, ta_confidence, llm_confidence,
+                    entry_price, exit_price, stop_loss, take_profit, size
              FROM trades
              WHERE exit_time IS NOT NULL AND pnl_usd IS NOT NULL
              ORDER BY exit_time DESC
@@ -597,6 +605,13 @@ fn pg_closed_trades(
             pnl_pct: r.get::<_, Option<f64>>(8).unwrap_or(0.0),
             ta_confidence: r.get::<_, Option<i16>>(9).map(|v| v as u8),
             llm_confidence: r.get::<_, Option<i16>>(10).map(|v| v as u8),
+            entry_price: r.get::<_, Option<f64>>(11).unwrap_or(0.0),
+            exit_price: r.get::<_, Option<f64>>(12).unwrap_or(0.0),
+            stop_loss: r.get::<_, Option<f64>>(13).unwrap_or(0.0),
+            take_profit: r.get::<_, Option<f64>>(14).unwrap_or(0.0),
+            size: r.get::<_, Option<f64>>(15).unwrap_or(0.0),
+            partial_taken: false,
+            partial_realized_pnl: 0.0,
         });
     }
     Ok(out)
@@ -918,7 +933,8 @@ impl TradeJournal {
                 let conn = conn.lock();
                 let mut stmt = conn.prepare(
                     "SELECT signal_id, symbol, direction, strategy, market_regime, entry_time, exit_time,
-                            pnl_usd, pnl_pct, ta_confidence, llm_confidence
+                            pnl_usd, pnl_pct, ta_confidence, llm_confidence,
+                            entry_price, exit_price, stop_loss, take_profit, size
                      FROM trades
                      WHERE exit_time IS NOT NULL AND pnl_usd IS NOT NULL
                      ORDER BY exit_time DESC
@@ -937,6 +953,13 @@ impl TradeJournal {
                         pnl_pct: r.get(8).unwrap_or(0.0),
                         ta_confidence: r.get::<_, Option<i64>>(9)?.map(|v| v as u8),
                         llm_confidence: r.get::<_, Option<i64>>(10)?.map(|v| v as u8),
+                        entry_price: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
+                        exit_price: r.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
+                        stop_loss: r.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
+                        take_profit: r.get::<_, Option<f64>>(14)?.unwrap_or(0.0),
+                        size: r.get::<_, Option<f64>>(15)?.unwrap_or(0.0),
+                        partial_taken: false,
+                        partial_realized_pnl: 0.0,
                     })
                 })?;
                 let mut out = Vec::new();

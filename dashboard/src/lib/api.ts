@@ -64,6 +64,13 @@ export interface TradeEntry {
   is_win: boolean;
   ta_confidence?: number;
   llm_confidence?: number;
+  entry_price: number;
+  exit_price: number;
+  stop_loss: number;
+  take_profit: number;
+  size: number;
+  partial_taken: boolean;
+  partial_realized_pnl: number;
 }
 
 export interface SignalEntry {

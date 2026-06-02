@@ -12,7 +12,7 @@
       "static/chunks/e00c9843-32fc02d752161144.js",
       "static/chunks/199-a332913c3c835ab3.js",
       "static/chunks/main-app-d0c3e427e9e2bcb4.js",
-      "static/css/c2a45e6ebbbb596e.css",
+      "static/css/340da33789d06a36.css",
       "static/chunks/205-aaa6a835b539c8f6.js",
       "static/chunks/app/layout-c1c7cec3bf9bf0fc.js"
     ],
@@ -67,23 +67,14 @@
       "static/chunks/158-6e7f2526525a7e56.js",
       "static/chunks/app/(dashboard)/config/page-e84be2380bfb6548.js"
     ],
-    "/(dashboard)/strategies/page": [
+    "/(dashboard)/trades/page": [
       "static/chunks/webpack-86d0af20bd342382.js",
       "static/chunks/e00c9843-32fc02d752161144.js",
       "static/chunks/199-a332913c3c835ab3.js",
       "static/chunks/main-app-d0c3e427e9e2bcb4.js",
       "static/chunks/205-aaa6a835b539c8f6.js",
       "static/chunks/158-6e7f2526525a7e56.js",
-      "static/chunks/app/(dashboard)/strategies/page-3fdf708e9b1f8df4.js"
-    ],
-    "/(dashboard)/survival/page": [
-      "static/chunks/webpack-86d0af20bd342382.js",
-      "static/chunks/e00c9843-32fc02d752161144.js",
-      "static/chunks/199-a332913c3c835ab3.js",
-      "static/chunks/main-app-d0c3e427e9e2bcb4.js",
-      "static/chunks/205-aaa6a835b539c8f6.js",
-      "static/chunks/158-6e7f2526525a7e56.js",
-      "static/chunks/app/(dashboard)/survival/page-9eec5b29d7269b72.js"
+      "static/chunks/app/(dashboard)/trades/page-3a02a10bd9f68b2b.js"
     ],
     "/(dashboard)/overview/page": [
       "static/chunks/webpack-86d0af20bd342382.js",
@@ -95,6 +86,15 @@
       "static/chunks/805-17e695f671652127.js",
       "static/chunks/app/(dashboard)/overview/page-ffbc0efd3cf1d17a.js"
     ],
+    "/(dashboard)/survival/page": [
+      "static/chunks/webpack-86d0af20bd342382.js",
+      "static/chunks/e00c9843-32fc02d752161144.js",
+      "static/chunks/199-a332913c3c835ab3.js",
+      "static/chunks/main-app-d0c3e427e9e2bcb4.js",
+      "static/chunks/205-aaa6a835b539c8f6.js",
+      "static/chunks/158-6e7f2526525a7e56.js",
+      "static/chunks/app/(dashboard)/survival/page-9eec5b29d7269b72.js"
+    ],
     "/(dashboard)/signals/page": [
       "static/chunks/webpack-86d0af20bd342382.js",
       "static/chunks/e00c9843-32fc02d752161144.js",
@@ -104,14 +104,14 @@
       "static/chunks/158-6e7f2526525a7e56.js",
       "static/chunks/app/(dashboard)/signals/page-97a15f59b30a9806.js"
     ],
-    "/(dashboard)/trades/page": [
+    "/(dashboard)/strategies/page": [
       "static/chunks/webpack-86d0af20bd342382.js",
       "static/chunks/e00c9843-32fc02d752161144.js",
       "static/chunks/199-a332913c3c835ab3.js",
       "static/chunks/main-app-d0c3e427e9e2bcb4.js",
       "static/chunks/205-aaa6a835b539c8f6.js",
       "static/chunks/158-6e7f2526525a7e56.js",
-      "static/chunks/app/(dashboard)/trades/page-7edcb1d10cb661ff.js"
+      "static/chunks/app/(dashboard)/strategies/page-3fdf708e9b1f8df4.js"
     ]
   }
 }

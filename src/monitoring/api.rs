@@ -165,6 +165,13 @@ pub struct TradeEntry {
     pub is_win: bool,
     pub ta_confidence: Option<u8>,
     pub llm_confidence: Option<u8>,
+    pub entry_price: f64,
+    pub exit_price: f64,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub size: f64,
+    pub partial_taken: bool,
+    pub partial_realized_pnl: f64,
 }
 
 /// Signal entry for /api/signals.
@@ -367,6 +374,13 @@ async fn trades_handler(
             is_win: t.is_win(),
             ta_confidence: t.ta_confidence,
             llm_confidence: t.llm_confidence,
+            entry_price: t.entry_price,
+            exit_price: t.exit_price,
+            stop_loss: t.stop_loss,
+            take_profit: t.take_profit,
+            size: t.size,
+            partial_taken: t.partial_taken,
+            partial_realized_pnl: t.partial_realized_pnl,
         })
         .collect();
 
