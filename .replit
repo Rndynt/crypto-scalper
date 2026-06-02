@@ -7,16 +7,16 @@ stack = "BEST_EFFORT_FALLBACK"
 channel = "stable-25_05"
 
 [[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
-localPort = 8081
-externalPort = 80
-
-[[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 7999
+externalPort = 3000
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
 
 [workflows]
 runButton = "Project"
@@ -43,7 +43,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "ARIA_CONFIG_OVERLAY=config/replit.toml cargo build 2>&1 && ARIA_CONFIG_OVERLAY=config/replit.toml ./target/debug/aria"
+args = "./target/debug/aria"
 waitForPort = 8000
 
 [[workflows.workflow]]

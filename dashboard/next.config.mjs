@@ -19,8 +19,6 @@ const nextConfig = {
       },
     ];
   },
-  // Required for Replit's proxied iframe preview
-  allowedDevOrigins: ["*"],
 };
 
 export default nextConfig;

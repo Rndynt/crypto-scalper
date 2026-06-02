@@ -116,7 +116,7 @@ telegram_bot_token = ""   # env TELEGRAM_BOT_TOKEN
 telegram_chat_id   = ""   # env TELEGRAM_CHAT_ID
 log_level          = "info"
 db_path            = "trades.db"
-metrics_bind       = "0.0.0.0:9184"
+metrics_bind       = "0.0.0.0:7999"
 
 [backtest]
 data_dir = "data/historical"
