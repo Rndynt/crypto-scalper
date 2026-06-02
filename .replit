@@ -11,6 +11,14 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 7999
+externalPort = 3000
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
+
+[[ports]]
 localPort = 8081
 externalPort = 80
 
@@ -56,7 +64,7 @@ waitForPort = 5000
 
 [deployment]
 deploymentTarget = "vm"
-run = ["bash", "-c", "ARIA_CONFIG_OVERLAY=config/replit.toml ./target/release/aria"]
+run = ["bash", "-c", "ARIA_CONFIG_OVERLAY=config/aggressive.toml ./target/release/aria"]
 build = ["cargo", "build", "--release"]
 
 [userenv]
