@@ -94,10 +94,10 @@ export default function OverviewPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Overview" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
 
         {/* KPI Row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <KpiCard
             title="Equity"
             value={`$${fmt(equity)}`}
@@ -121,7 +121,7 @@ export default function OverviewPage() {
             color={drawdown > 5 ? "loss" : drawdown > 2 ? "warning" : "profit"}
           />
           <KpiCard
-            title="Open Positions"
+            title="Open"
             value={String(openPositions)}
             sub={`Max ${status?.config?.max_open_positions ?? "—"}`}
             icon={Layers}
@@ -130,8 +130,7 @@ export default function OverviewPage() {
         </div>
 
         {/* Charts Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Equity chart */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4">
           <Card className="lg:col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -145,7 +144,7 @@ export default function OverviewPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="h-40">
+              <div className="h-36 md:h-40">
                 <EquityMiniChart
                   data={equityHistory}
                   color={totalPnlPct >= 0 ? "#22c55e" : "#ef4444"}
@@ -154,7 +153,6 @@ export default function OverviewPage() {
             </CardContent>
           </Card>
 
-          {/* Win rate donut */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -163,7 +161,7 @@ export default function OverviewPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="h-40">
+              <div className="h-36 md:h-40">
                 <WinRateDonut winRate={winRate} wins={wins} losses={losses} />
               </div>
             </CardContent>
@@ -171,13 +169,13 @@ export default function OverviewPage() {
         </div>
 
         {/* Trade PnL bars + Stats */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4">
           <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle>Last 30 Trades (P&L per trade)</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-32">
+              <div className="h-28 md:h-32">
                 <PnlBarChart trades={closedTrades} />
               </div>
             </CardContent>
@@ -219,21 +217,17 @@ export default function OverviewPage() {
                 {positions.map((p) => (
                   <div
                     key={p.client_id}
-                    className="flex items-center gap-4 rounded-lg bg-muted/50 px-3 py-2.5 text-xs"
+                    className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-xs"
                   >
                     <Badge variant={p.side === "LONG" ? "profit" : "loss"}>{p.side}</Badge>
                     <span className="font-medium">{p.symbol}</span>
-                    <span className="text-muted-foreground font-mono">{p.strategy}</span>
+                    <span className="text-muted-foreground font-mono hidden sm:inline">{p.strategy}</span>
                     <span className="text-muted-foreground">@{fmt(p.entry_price)}</span>
                     <span className="text-muted-foreground ml-auto flex items-center gap-1">
                       <Clock className="h-3 w-3" /> {formatDuration(p.duration_mins)}
                     </span>
-                    {p.trailing_activated && (
-                      <Badge variant="info">trailing</Badge>
-                    )}
-                    {p.breakeven_activated && (
-                      <Badge variant="secondary">BE</Badge>
-                    )}
+                    {p.trailing_activated && <Badge variant="info">trailing</Badge>}
+                    {p.breakeven_activated && <Badge variant="secondary">BE</Badge>}
                   </div>
                 ))}
               </div>
@@ -242,7 +236,7 @@ export default function OverviewPage() {
         )}
 
         {/* LLM + Regime */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
@@ -253,14 +247,14 @@ export default function OverviewPage() {
             <CardContent>
               <div className="space-y-2.5">
                 {[
-                  { label: "Provider / Model", value: `${status?.config?.active_strategies?.join(", ") ?? "—"}` },
+                  { label: "Active Strategies", value: `${status?.config?.active_strategies?.join(", ") ?? "—"}` },
                   { label: "Offline Fallbacks", value: String(metrics?.llm_offline_fallbacks ?? 0) },
                   { label: "Active Lessons", value: String(metrics?.active_lessons ?? 0) },
                   { label: "Signals Today", value: String(metrics?.signals_today ?? 0) },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex items-center justify-between text-xs">
                     <span className="text-muted-foreground">{label}</span>
-                    <span className="font-mono text-foreground">{value}</span>
+                    <span className="font-mono text-foreground truncate max-w-[55%] text-right">{value}</span>
                   </div>
                 ))}
               </div>

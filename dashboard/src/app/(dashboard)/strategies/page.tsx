@@ -16,7 +16,7 @@ export default function StrategiesPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Strategy Health" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
 
         {strategies.length === 0 && (
           <Card>
@@ -27,7 +27,7 @@ export default function StrategiesPage() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
           {sorted.map((s) => {
             const winRate = s.win_rate * 100;
             const winPct = s.total_trades > 0 ? (s.wins / s.total_trades) * 100 : 0;
@@ -39,17 +39,15 @@ export default function StrategiesPage() {
                 !s.enabled && "opacity-60 border-dashed"
               )}>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <CardTitle>{s.name.replace(/_/g, " ")}</CardTitle>
                       {!s.enabled && <Badge variant="muted">Disabled</Badge>}
                       {s.enabled && s.size_multiplier < 1 && (
                         <Badge variant="warning">×{fmt(s.size_multiplier, 2)} size</Badge>
                       )}
                     </div>
-                    <Badge
-                      variant={s.total_pnl >= 0 ? "profit" : "loss"}
-                    >
+                    <Badge variant={s.total_pnl >= 0 ? "profit" : "loss"}>
                       {fmtPnl(s.total_pnl)}
                     </Badge>
                   </div>
@@ -96,7 +94,7 @@ export default function StrategiesPage() {
                     ))}
                   </div>
 
-                  {/* P&L visualization */}
+                  {/* P&L bar */}
                   <div className="flex items-center gap-2">
                     {s.total_pnl >= 0 ? (
                       <TrendingUp className="h-4 w-4 text-profit shrink-0" />
@@ -106,9 +104,7 @@ export default function StrategiesPage() {
                     <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                       <div
                         className={cn("h-full rounded-full", s.total_pnl >= 0 ? "bg-profit" : "bg-loss")}
-                        style={{
-                          width: `${Math.min(Math.abs(s.total_pnl) / 100 * 20 + 10, 100)}%`,
-                        }}
+                        style={{ width: `${Math.min(Math.abs(s.total_pnl) / 100 * 20 + 10, 100)}%` }}
                       />
                     </div>
                     <span className={cn("text-xs font-mono tabular-nums", s.total_pnl >= 0 ? "text-profit" : "text-loss")}>

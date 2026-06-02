@@ -16,7 +16,7 @@ export default function PositionsPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Open Positions" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
 
         {isLoading && (
           <div className="flex items-center justify-center py-20 text-sm text-muted-foreground">
@@ -47,19 +47,18 @@ export default function PositionsPage() {
               p.side === "LONG" ? "border-profit/20" : "border-loss/20"
             )}>
               <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  {/* Left: Symbol + side */}
+                {/* Top row: symbol + PnL */}
+                <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-3">
                     <Badge variant={p.side === "LONG" ? "profit" : "loss"} className="text-sm px-3 py-1">
                       {p.side}
                     </Badge>
                     <div>
                       <p className="text-base font-semibold">{p.symbol}</p>
-                      <p className="text-xs text-muted-foreground">{p.strategy} · sig {p.signal_id}</p>
+                      <p className="text-xs text-muted-foreground truncate max-w-[160px] sm:max-w-none">{p.strategy}</p>
                     </div>
                   </div>
 
-                  {/* Right: PnL + duration */}
                   <div className="text-right">
                     {p.unrealized_pnl != null ? (
                       <p className={cn(
@@ -86,12 +85,12 @@ export default function PositionsPage() {
                 </div>
 
                 {/* Price levels */}
-                <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 md:gap-3">
                   {[
-                    { label: "Entry", value: fmt(p.entry_price), color: "text-foreground" },
-                    { label: "Stop Loss", value: fmt(p.stop_loss), color: "text-loss" },
+                    { label: "Entry",       value: fmt(p.entry_price), color: "text-foreground" },
+                    { label: "Stop Loss",   value: fmt(p.stop_loss),   color: "text-loss" },
                     { label: "Take Profit", value: fmt(p.take_profit), color: "text-profit" },
-                    { label: "Size", value: fmt(p.size, 4), color: "text-foreground" },
+                    { label: "Size",        value: fmt(p.size, 4),     color: "text-foreground" },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="rounded-md bg-muted/50 px-3 py-2">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{label}</p>
@@ -100,11 +99,9 @@ export default function PositionsPage() {
                   ))}
                 </div>
 
-                {/* Flags + R:R */}
+                {/* Flags + hold bar */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {rr != null && (
-                    <Badge variant="secondary">R:R {fmt(rr, 2)}</Badge>
-                  )}
+                  {rr != null && <Badge variant="secondary">R:R {fmt(rr, 2)}</Badge>}
                   {p.trailing_activated && (
                     <Badge variant="info" className="flex items-center gap-1">
                       <TrendingUp className="h-3 w-3" /> Trailing SL
@@ -117,13 +114,12 @@ export default function PositionsPage() {
                   )}
                   {p.partial_taken && (
                     <Badge variant="profit" className="flex items-center gap-1">
-                      ⚡ Partial TP +${fmt(p.partial_realized_pnl)}
+                      ⚡ Partial +${fmt(p.partial_realized_pnl)}
                     </Badge>
                   )}
-                  {/* Hold time bar */}
                   <div className="ml-auto flex items-center gap-2">
                     <span className="text-[10px] text-muted-foreground">Hold</span>
-                    <div className="w-24 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div className="w-16 sm:w-24 h-1.5 rounded-full bg-muted overflow-hidden">
                       <div
                         className={cn("h-full rounded-full transition-all", nearExpiry ? "bg-warning" : "bg-primary")}
                         style={{ width: `${Math.min(holdPct * 100, 100)}%` }}

@@ -51,20 +51,20 @@ export default function SurvivalPage() {
   const isFrozen = survival?.is_frozen ?? false;
 
   const modeConfig = {
-    nominal: { icon: ShieldCheck, color: "text-profit", badge: "profit" as const, label: "Nominal" },
-    caution: { icon: ShieldAlert, color: "text-warning", badge: "warning" as const, label: "Caution" },
-    danger: { icon: ShieldAlert, color: "text-loss", badge: "loss" as const, label: "Danger" },
-    frozen: { icon: ShieldX, color: "text-loss", badge: "loss" as const, label: "Frozen" },
-    cooldown: { icon: Snowflake, color: "text-info", badge: "info" as const, label: "Cooldown" },
-    flat: { icon: ShieldX, color: "text-warning", badge: "warning" as const, label: "Flat-All" },
-  }[mode] ?? { icon: ShieldCheck, color: "text-muted-foreground", badge: "muted" as const, label: mode };
+    nominal:  { icon: ShieldCheck, color: "text-profit",          badge: "profit"  as const, label: "Nominal" },
+    caution:  { icon: ShieldAlert, color: "text-warning",         badge: "warning" as const, label: "Caution" },
+    danger:   { icon: ShieldAlert, color: "text-loss",            badge: "loss"    as const, label: "Danger" },
+    frozen:   { icon: ShieldX,     color: "text-loss",            badge: "loss"    as const, label: "Frozen" },
+    cooldown: { icon: Snowflake,   color: "text-info",            badge: "info"    as const, label: "Cooldown" },
+    flat:     { icon: ShieldX,     color: "text-warning",         badge: "warning" as const, label: "Flat-All" },
+  }[mode] ?? { icon: ShieldCheck, color: "text-muted-foreground", badge: "muted"   as const, label: mode };
 
   const Icon = modeConfig.icon;
 
   return (
     <div className="flex flex-col h-full">
       <Header title="Survival Monitor" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
 
         {/* Status hero */}
         <Card className={cn(
@@ -73,17 +73,17 @@ export default function SurvivalPage() {
           mode === "caution" ? "border-warning/30" :
           "border-profit/20"
         )}>
-          <CardContent className="p-6">
+          <CardContent className="p-4 md:p-6">
             <div className="flex items-center gap-4">
               <div className={cn(
-                "flex items-center justify-center h-14 w-14 rounded-xl",
+                "flex items-center justify-center h-12 w-12 md:h-14 md:w-14 rounded-xl shrink-0",
                 isFrozen ? "bg-loss/10" : mode === "caution" ? "bg-warning/10" : "bg-profit/10"
               )}>
-                <Icon className={cn("h-8 w-8", modeConfig.color)} />
+                <Icon className={cn("h-6 w-6 md:h-8 md:w-8", modeConfig.color)} />
               </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <h2 className="text-xl font-bold">{modeConfig.label}</h2>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <h2 className="text-lg md:text-xl font-bold">{modeConfig.label}</h2>
                   <Badge variant={modeConfig.badge}>{mode}</Badge>
                   {isFrozen && (
                     <Badge variant="loss" className="flex items-center gap-1">
@@ -92,7 +92,7 @@ export default function SurvivalPage() {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Survival score: <span className={cn("font-mono font-medium", modeConfig.color)}>{fmt(score * 100, 1)}</span>
+                  Score: <span className={cn("font-mono font-medium", modeConfig.color)}>{fmt(score * 100, 1)}</span>
                 </p>
                 {survival?.cooldown_until && (
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
@@ -106,7 +106,7 @@ export default function SurvivalPage() {
         </Card>
 
         {/* Gauges */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4">
           <Card>
             <CardHeader>
               <CardTitle>Risk Gauges</CardTitle>

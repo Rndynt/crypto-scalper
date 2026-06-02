@@ -27,7 +27,7 @@ export default function SignalsPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Signal Feed" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
 
         {/* Screening biases */}
         {biases && biases.length > 0 && (
@@ -81,8 +81,7 @@ export default function SignalsPage() {
             <div className="divide-y divide-border/50">
               {signals?.map((s) => (
                 <div key={s.signal_id} className="px-4 py-3 hover:bg-muted/20 transition-colors">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {/* Side */}
+                  <div className="flex items-center gap-2 flex-wrap">
                     {s.side === "LONG" ? (
                       <TrendingUp className="h-4 w-4 text-profit shrink-0" />
                     ) : (
@@ -91,13 +90,13 @@ export default function SignalsPage() {
                     <Badge variant={s.side === "LONG" ? "profit" : "loss"}>{s.side}</Badge>
                     <span className="font-semibold text-sm">{s.symbol}</span>
                     <Badge variant="secondary" className="font-mono text-[10px]">
-                      {s.strategy.replace("_", " ")}
+                      {s.strategy.replace(/_/g, " ")}
                     </Badge>
-                    <Badge variant="muted" className="font-mono text-[10px]">{s.regime}</Badge>
-                    <span className="ml-auto text-[11px] text-muted-foreground">{timeAgo(s.ts)}</span>
+                    <Badge variant="muted" className="font-mono text-[10px] hidden sm:inline-flex">{s.regime}</Badge>
+                    <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">{timeAgo(s.ts)}</span>
                   </div>
 
-                  <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 md:gap-3">
                     <div>
                       <p className="text-[10px] text-muted-foreground mb-0.5">Entry</p>
                       <p className="text-xs font-mono tabular-nums">{fmt(s.entry)}</p>
@@ -111,7 +110,7 @@ export default function SignalsPage() {
                       <p className="text-xs font-mono tabular-nums text-profit">{fmt(s.take_profit)}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-muted-foreground mb-0.5">TA Confidence</p>
+                      <p className="text-[10px] text-muted-foreground mb-0.5">TA Conf</p>
                       <ConfidenceBar value={s.ta_confidence} />
                     </div>
                   </div>
