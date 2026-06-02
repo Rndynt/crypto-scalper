@@ -55,7 +55,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd dashboard && pnpm dev"
+args = "cd dashboard && pnpm build && pnpm start"
 waitForPort = 5000
 
 [deployment]

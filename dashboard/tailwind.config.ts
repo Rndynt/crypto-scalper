@@ -43,10 +43,10 @@ const config: Config = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        profit: "#22c55e",
-        loss: "#ef4444",
-        warning: "#f59e0b",
-        info: "#3b82f6",
+        profit:  "#16c784",
+        loss:    "#ea3943",
+        warning: "#f0a500",
+        info:    "#4f8ef7",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -59,21 +59,26 @@ const config: Config = {
       keyframes: {
         "pulse-green": {
           "0%, 100%": { opacity: "1" },
-          "50%": { opacity: "0.4" },
+          "50%":       { opacity: "0.3" },
         },
         "slide-in": {
-          from: { opacity: "0", transform: "translateX(-8px)" },
-          to: { opacity: "1", transform: "translateX(0)" },
+          from: { opacity: "0", transform: "translateY(6px)" },
+          to:   { opacity: "1", transform: "translateY(0)" },
         },
         "fade-in": {
           from: { opacity: "0" },
-          to: { opacity: "1" },
+          to:   { opacity: "1" },
+        },
+        "shimmer": {
+          "0%":   { backgroundPosition: "-200% 0" },
+          "100%": { backgroundPosition: "200% 0" },
         },
       },
       animation: {
         "pulse-green": "pulse-green 2s ease-in-out infinite",
-        "slide-in": "slide-in 0.2s ease-out",
-        "fade-in": "fade-in 0.3s ease-out",
+        "slide-in":    "slide-in 0.15s ease-out",
+        "fade-in":     "fade-in 0.2s ease-out",
+        "shimmer":     "shimmer 1.6s linear infinite",
       },
     },
   },
