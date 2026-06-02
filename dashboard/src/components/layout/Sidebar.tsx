@@ -10,14 +10,23 @@ import {
 import { useHealth } from "@/hooks/useAriaData";
 
 const nav = [
-  { href: "/overview",   label: "Overview",    icon: LayoutDashboard },
-  { href: "/positions",  label: "Positions",   icon: TrendingUp },
-  { href: "/trades",     label: "Trades",      icon: History },
-  { href: "/signals",    label: "Signals",     icon: Radio },
-  { href: "/survival",   label: "Survival",    icon: ShieldAlert },
-  { href: "/strategies", label: "Strategies",  icon: BarChart2 },
-  { href: "/lessons",    label: "Lessons",     icon: BookOpen },
-  { href: "/config",     label: "Config",      icon: Settings },
+  { href: "/overview",   label: "Overview",   icon: LayoutDashboard },
+  { href: "/positions",  label: "Positions",  icon: TrendingUp },
+  { href: "/trades",     label: "Trades",     icon: History },
+  { href: "/signals",    label: "Signals",    icon: Radio },
+  { href: "/survival",   label: "Survival",   icon: ShieldAlert },
+  { href: "/strategies", label: "Strategies", icon: BarChart2 },
+  { href: "/lessons",    label: "Lessons",    icon: BookOpen },
+  { href: "/config",     label: "Config",     icon: Settings },
+];
+
+// Only 5 items in mobile bottom nav
+const mobileNav = [
+  { href: "/overview",  label: "Overview",  icon: LayoutDashboard },
+  { href: "/positions", label: "Positions", icon: TrendingUp },
+  { href: "/trades",    label: "Trades",    icon: History },
+  { href: "/signals",   label: "Signals",   icon: Radio },
+  { href: "/config",    label: "Config",    icon: Settings },
 ];
 
 export function Sidebar() {
@@ -35,14 +44,14 @@ export function Sidebar() {
 
   return (
     <>
-      {/* ── Desktop sidebar ── */}
+      {/* ── Desktop sidebar (always visible on md+) ── */}
       <aside className="hidden md:flex h-screen flex-col border-r border-border bg-card shrink-0 w-[180px]">
         <div className="flex h-12 items-center gap-3 px-4 border-b border-border shrink-0">
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 ring-1 ring-primary/30 shrink-0">
             <Zap className="h-3.5 w-3.5 text-primary" />
           </div>
           <div>
-            <p className="text-[13px] font-bold leading-none tracking-widest text-foreground">ARIA</p>
+            <p className="text-[13px] font-bold leading-none tracking-widest">ARIA</p>
             <p className="text-[10px] text-muted-foreground leading-none mt-1">Crypto Scalper</p>
           </div>
         </div>
@@ -81,59 +90,34 @@ export function Sidebar() {
       </aside>
 
       {/* ── Mobile top bar ── */}
-      <div className="md:hidden fixed top-0 inset-x-0 z-40 flex h-12 items-center gap-3 px-4 border-b border-border bg-card/95 backdrop-blur">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 ring-1 ring-primary/30 shrink-0">
+      <div className="md:hidden fixed top-0 inset-x-0 z-40 flex h-12 items-center px-4 gap-3 border-b border-border bg-card/95 backdrop-blur shrink-0">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 ring-1 ring-primary/30">
           <Zap className="h-3.5 w-3.5 text-primary" />
         </div>
-        <p className="text-[13px] font-bold tracking-widest text-foreground">ARIA</p>
+        <span className="text-[13px] font-bold tracking-widest">ARIA</span>
         <span className={cn("h-1.5 w-1.5 rounded-full", online ? "bg-primary animate-pulse" : "bg-muted-foreground/40")} />
-        <span className="ml-auto text-[10px] font-medium text-muted-foreground">{online ? "● live" : "○ offline"}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground">{online ? "● live" : "○ offline"}</span>
       </div>
 
-      {/* ── Mobile bottom nav ── */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-card/95 backdrop-blur border-t border-border">
-        {/* Row 1: first 4 items */}
-        <div className="grid grid-cols-4 h-14">
-          {nav.slice(0, 4).map(({ href, label, icon: Icon }) => {
-            const active = isActive(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                onClick={() => setPending(href)}
-                className={cn(
-                  "flex flex-col items-center justify-center gap-1 select-none transition-colors",
-                  active ? "text-primary" : "text-muted-foreground"
-                )}
-              >
-                <Icon className="h-5 w-5 shrink-0" />
-                <span className="text-[10px] font-medium leading-none">{label}</span>
-              </Link>
-            );
-          })}
-        </div>
-        {/* Divider */}
-        <div className="h-px bg-border/50 mx-4" />
-        {/* Row 2: last 4 items */}
-        <div className="grid grid-cols-4 h-14">
-          {nav.slice(4).map(({ href, label, icon: Icon }) => {
-            const active = isActive(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                onClick={() => setPending(href)}
-                className={cn(
-                  "flex flex-col items-center justify-center gap-1 select-none transition-colors",
-                  active ? "text-primary" : "text-muted-foreground"
-                )}
-              >
-                <Icon className="h-5 w-5 shrink-0" />
-                <span className="text-[10px] font-medium leading-none">{label}</span>
-              </Link>
-            );
-          })}
-        </div>
+      {/* ── Mobile bottom nav — 5 items, single row ── */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 flex h-16 items-stretch border-t border-border bg-card/95 backdrop-blur">
+        {mobileNav.map(({ href, label, icon: Icon }) => {
+          const active = isActive(href);
+          return (
+            <Link
+              key={href}
+              href={href}
+              onClick={() => setPending(href)}
+              className={cn(
+                "flex flex-1 flex-col items-center justify-center gap-1.5 select-none transition-colors duration-100",
+                active ? "text-primary" : "text-muted-foreground"
+              )}
+            >
+              <Icon className="h-5 w-5 shrink-0" />
+              <span className="text-[10px] font-medium leading-none">{label}</span>
+            </Link>
+          );
+        })}
       </nav>
     </>
   );

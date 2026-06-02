@@ -1,1 +1,21 @@
-[]
+[
+  {
+    "client_id": "aria-BTCUSDT-S-1e4e3d1bb45ff301",
+    "signal_id": "S-00008",
+    "symbol": "BTCUSDT",
+    "side": "Short",
+    "size": 0.364338039725731,
+    "entry_price": 69725.5396,
+    "stop_loss": 69876.45646915428,
+    "take_profit": 69384.8588271143,
+    "opened_at": "2026-06-02T08:56:00.821290879Z",
+    "trailing_activated": false,
+    "peak_price": 69725.5396,
+    "trough_price": 69725.5396,
+    "atr_at_entry": 175.5705864428513,
+    "partial_taken": false,
+    "breakeven_activated": false,
+    "partial_realized_pnl": 0.0,
+    "strategy": "order_flow"
+  }
+]
