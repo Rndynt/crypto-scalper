@@ -4,18 +4,18 @@
     "signal_id": "S-00006",
     "symbol": "BTCUSDT",
     "side": "Short",
-    "size": 0.30328821639931774,
+    "size": 0.15164410819965887,
     "entry_price": 70069.28803000001,
-    "stop_loss": 70244.65968559415,
+    "stop_loss": 69941.1223820978,
     "take_profit": 69667.65078601465,
     "opened_at": "2026-06-02T07:36:00.673791438Z",
-    "trailing_activated": false,
+    "trailing_activated": true,
     "peak_price": 70069.28803000001,
     "trough_price": 70069.28803000001,
     "atr_at_entry": 206.07460699267511,
-    "partial_taken": false,
+    "partial_taken": true,
     "breakeven_activated": false,
-    "partial_realized_pnl": 0.0,
+    "partial_realized_pnl": 26.626890219887,
     "strategy": "order_flow"
   }
 ]

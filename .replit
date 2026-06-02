@@ -43,7 +43,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "./target/debug/aria"
+args = "cargo build && ./target/debug/aria"
 waitForPort = 8000
 
 [[workflows.workflow]]
